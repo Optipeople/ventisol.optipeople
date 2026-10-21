@@ -1,0 +1,501 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+using Ventisol.Station.Core;
+using Ventisol.Station.ViewModels;
+
+namespace Ventisol.Station;
+
+public partial class MainWindow : Window
+{
+    // The report page goes back to the stations after this long without a touch.
+    static readonly TimeSpan ReportIdle = TimeSpan.FromSeconds(60);
+
+    readonly MainViewModel _vm = new(StationConfig.Defaults);
+    readonly DemoScanner _demo;
+    readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    readonly bool _kiosk;
+    readonly Dictionary<string, Tile> _tiles = [];
+    readonly List<Button> _dots = [];
+
+    StationLayout _layout;
+    bool _editing;
+    DateTimeOffset _lastTouch = DateTimeOffset.Now;
+
+    // A block on the stations page: a station or a widget, plus the frame, grip and (for widgets)
+    // remove button shown while arranging. Station is the scanner number, for a tap to scan in the demo.
+    sealed record Tile(Grid Root, Rectangle Frame, Thumb Grip, Button? Remove, TranslateTransform Shift, int? Station);
+
+    static string StationId(int number) => $"station-{number}";
+
+    public MainWindow(bool kiosk, bool showcase)
+    {
+        InitializeComponent();
+        DataContext = _vm;
+        _demo = new DemoScanner(_vm);
+        _kiosk = kiosk;
+
+        var (layout, widgets) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
+        _layout = layout;
+        foreach (var spec in widgets) _vm.AddWidget(spec);
+        BuildTiles();
+        BuildGuides();
+        BuildDots();
+        BuildPicker();
+        if (showcase) _demo.Showcase(DateTimeOffset.Now);
+
+        if (kiosk)
+        {
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Maximized;
+            Topmost = true;
+        }
+        else
+        {
+            WindowPlacement.Track(this);
+            SourceInitialized += (_, _) => Ui.RoundCorners(this);
+        }
+
+        Menu.CloseRequested += (_, _) => CloseMenu();
+        Menu.ArrangeRequested += (_, _) => { CloseMenu(); StartEditing(); };
+
+        // A scan always brings the stations back, so its answer is seen.
+        _vm.Scanned += (_, _) => { CloseMenu(); ShowReport(false); };
+
+        _clock.Tick += (_, _) => OnTick();
+        _clock.Start();
+    }
+
+    void OnTick()
+    {
+        var now = DateTimeOffset.Now;
+        _vm.Tick(now);
+        if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
+    }
+
+    protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
+    {
+        base.OnPreviewMouseDown(e);
+        _lastTouch = DateTimeOffset.Now;
+    }
+
+    // ===== Stations page =====
+
+    void BuildTiles()
+    {
+        for (var c = 0; c < StationLayout.Columns; c++) StationsGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var r = 0; r < StationLayout.Rows; r++) StationsGrid.RowDefinitions.Add(new RowDefinition());
+
+        foreach (var station in _vm.Stations) CreateTile(StationId(station.Number), station, station.Number);
+        foreach (var widget in _vm.Widgets) CreateTile(widget.Id, widget, null);
+        PlaceTiles(animate: false);
+    }
+
+    void CreateTile(string id, object content, int? station)
+    {
+        var shift = new TranslateTransform();
+        var frame = new Rectangle
+        {
+            Margin = new Thickness(6), RadiusX = 10, RadiusY = 10, StrokeThickness = 2, StrokeDashArray = [4, 3],
+            Stroke = (Brush)FindResource("Ink3"), IsHitTestVisible = false, Visibility = Visibility.Collapsed,
+        };
+        var grip = new Thumb
+        {
+            Style = (Style)FindResource("ResizeGrip"), Margin = new Thickness(0, 0, 4, 4),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+            Visibility = _editing ? Visibility.Visible : Visibility.Collapsed,
+        };
+        var root = new Grid { RenderTransform = shift, Background = Brushes.Transparent, Cursor = _editing ? Cursors.SizeAll : null };
+        root.Children.Add(new ContentControl { Content = content, Focusable = false });
+        root.Children.Add(frame);
+        root.Children.Add(grip);
+        frame.Visibility = grip.Visibility;
+
+        Button? remove = null;
+        if (station is null)
+        {
+            remove = new Button
+            {
+                Style = (Style)FindResource("RemoveButton"), Margin = new Thickness(0, 4, 4, 0),
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Visibility = grip.Visibility, ToolTip = "Fjern",
+            };
+            remove.Click += (_, _) => RemoveWidget(id);
+            root.Children.Add(remove);
+        }
+
+        _tiles[id] = new Tile(root, frame, grip, remove, shift, station);
+        StationsGrid.Children.Add(root);
+
+        root.MouseLeftButtonDown += (_, e) => OnTileDown(id, e);
+        root.MouseMove += (_, e) => OnTileMove(id, e);
+        root.MouseLeftButtonUp += (_, e) => OnTileUp(id, e);
+        grip.DragStarted += (_, _) => OnGripStarted(id);
+        grip.DragDelta += (_, _) => OnGripDelta(id);
+        grip.DragCompleted += (_, _) => OnGripCompleted();
+    }
+
+    // With animate, blocks that change place glide there from where they were (a dropped block
+    // from where it was let go) instead of jumping: measure, re-place, then play the difference back.
+    void PlaceTiles(bool animate = true)
+    {
+        var before = _tiles.ToDictionary(t => t.Key, t => t.Value.Root.TranslatePoint(new Point(), StationsGrid));
+        foreach (var p in _layout.Tiles)
+        {
+            var root = _tiles[p.Id].Root;
+            Grid.SetColumn(root, p.Column);
+            Grid.SetRow(root, p.Row);
+            Grid.SetColumnSpan(root, p.ColumnSpan);
+            Grid.SetRowSpan(root, p.RowSpan);
+        }
+        if (!animate) return;
+
+        foreach (var t in _tiles.Values) Motion.Glide(t.Shift, new Vector());
+        StationsGrid.UpdateLayout();
+        foreach (var (id, t) in _tiles)
+            if (before.TryGetValue(id, out var was)) Motion.Glide(t.Shift, was - t.Root.TranslatePoint(new Point(), StationsGrid));
+    }
+
+    void SaveLayout() => LayoutStore.Save(_layout, _vm.Widgets.Select(w => w.Spec));
+
+    void BuildGuides()
+    {
+        for (var i = 0; i < StationLayout.Columns * StationLayout.Rows; i++)
+            Guides.Children.Add(new Border { Margin = new Thickness(6), CornerRadius = new CornerRadius(6), Background = (Brush)FindResource("Panel"), Opacity = 0.45 });
+    }
+
+    double CellWidth => StationsGrid.ActualWidth / StationLayout.Columns;
+    double CellHeight => StationsGrid.ActualHeight / StationLayout.Rows;
+
+    (int Column, int Row) CellAt(Point p) =>
+        (Math.Clamp((int)(p.X / CellWidth), 0, StationLayout.Columns - 1), Math.Clamp((int)(p.Y / CellHeight), 0, StationLayout.Rows - 1));
+
+    // ===== Widgets =====
+
+    void BuildPicker()
+    {
+        foreach (var (label, kind, metric, columns, rows) in WidgetViewModel.Catalog)
+        {
+            var item = new Button { Style = (Style)FindResource("PickerItem"), Content = label };
+            item.Click += (_, _) => AddWidget(new WidgetSpec($"widget-{Guid.NewGuid():N}"[..15], kind, metric), columns, rows);
+            PickerItems.Children.Add(item);
+        }
+    }
+
+    void OnAddWidget(object sender, RoutedEventArgs e) => Picker.IsOpen = !Picker.IsOpen;
+
+    void AddWidget(WidgetSpec spec, int columns, int rows)
+    {
+        Picker.IsOpen = false;
+        if (!_layout.TryAdd(spec.Id, columns, rows))
+        {
+            EditHint.Text = "Der er ikke plads. Gør en blok mindre først, så der er mindst 2 x 2 felter fri.";
+            EditHint.Foreground = (Brush)FindResource("Warn");
+            return;
+        }
+        CreateTile(spec.Id, _vm.AddWidget(spec), null);
+        PlaceTiles(animate: false);
+        Motion.Enter(_tiles[spec.Id].Root, fromY: 16);
+        SaveLayout();
+        ResetHint();
+    }
+
+    void RemoveWidget(string id)
+    {
+        var root = _tiles[id].Root;
+        root.IsHitTestVisible = false;
+        Motion.Leave(root, toY: 12, done: () => StationsGrid.Children.Remove(root));
+        _tiles.Remove(id);
+        _layout.Remove(id);
+        _vm.RemoveWidget(id);
+        SaveLayout();
+    }
+
+    void ResetHint()
+    {
+        EditHint.Text = "Træk en blok for at flytte den, slip den på en anden for at bytte. Træk i hjørnet for at ændre størrelsen.";
+        EditHint.Foreground = (Brush)FindResource("Ink3");
+    }
+
+    // ===== Arranging =====
+
+    Point? _dragFrom;
+    bool _dragged;
+
+    void StartEditing()
+    {
+        _editing = true;
+        ShowReport(false);
+        ResetHint();
+        Caption.Visibility = Visibility.Collapsed;
+        EditBar.Visibility = Visibility.Visible;
+        Guides.Visibility = Visibility.Visible;
+        Dots.Visibility = Visibility.Hidden;
+        Motion.Enter(EditBar, fromY: -8);
+        Motion.FadeIn(Guides, Motion.Normal);
+        SetEditChrome(true);
+    }
+
+    void StopEditing()
+    {
+        _editing = false;
+        Picker.IsOpen = false;
+        Caption.Visibility = Visibility.Visible;
+        EditBar.Visibility = Visibility.Collapsed;
+        Guides.Visibility = Visibility.Collapsed;
+        Dots.Visibility = Visibility.Visible;
+        Motion.Enter(Caption, fromY: -8);
+        Motion.FadeIn(Dots);
+        SetEditChrome(false);
+        SaveLayout();
+    }
+
+    void SetEditChrome(bool on)
+    {
+        var v = on ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var t in _tiles.Values)
+        {
+            t.Frame.Visibility = t.Grip.Visibility = v;
+            if (t.Remove is { } r) r.Visibility = v;
+            t.Root.Cursor = on ? Cursors.SizeAll : null;
+            if (!on) continue;
+            Motion.FadeIn(t.Frame);
+            Motion.Pop(t.Grip, 0.4);
+            if (t.Remove is { } x) Motion.Pop(x, 0.4);
+        }
+    }
+
+    void OnEditDone(object sender, RoutedEventArgs e) => StopEditing();
+
+    // Back to the stations only, four to a row.
+    void OnEditReset(object sender, RoutedEventArgs e)
+    {
+        foreach (var id in _vm.Widgets.Select(w => w.Id).ToList()) RemoveWidget(id);
+        _layout = StationLayout.Default(_vm.Stations.Select(s => StationId(s.Number)));
+        PlaceTiles();
+        SaveLayout();
+        ResetHint();
+    }
+
+    void OnTileDown(string id, MouseButtonEventArgs e)
+    {
+        if (!_editing || e.OriginalSource is DependencyObject d && (IsInside<Thumb>(d) || IsInside<Button>(d))) return;
+        _dragFrom = e.GetPosition(StationsGrid);
+        _dragged = false;
+        _tiles[id].Root.CaptureMouse();
+        Panel.SetZIndex(_tiles[id].Root, 1);
+        e.Handled = true;
+    }
+
+    void OnTileMove(string id, MouseEventArgs e)
+    {
+        if (_dragFrom is not { } from) return;
+        var p = e.GetPosition(StationsGrid);
+        var shift = _tiles[id].Shift;
+        (shift.X, shift.Y) = (p.X - from.X, p.Y - from.Y);
+        _dragged |= Math.Abs(shift.X) + Math.Abs(shift.Y) > 6;
+    }
+
+    void OnTileUp(string id, MouseButtonEventArgs e)
+    {
+        var tile = _tiles[id];
+        if (!_editing)
+        {
+            if (tile.Station is { } n) _demo.Scan(n); // Demo: a tap on a station scans.
+            return;
+        }
+        if (_dragFrom is not { } from) return;
+
+        tile.Root.ReleaseMouseCapture();
+        Panel.SetZIndex(tile.Root, 0);
+        var drop = e.GetPosition(StationsGrid);
+        _dragFrom = null;
+        if (!_dragged) { Motion.Glide(tile.Shift, new Vector(tile.Shift.X, tile.Shift.Y)); return; }
+
+        // On another block: trade places. On free cells: move there, keeping where it was grabbed.
+        var (col, row) = CellAt(drop);
+        if (_layout.IdAt(col, row) is { } other && other != id)
+        {
+            _layout.Swap(id, other);
+        }
+        else
+        {
+            var p = _layout[id];
+            var (grabCol, grabRow) = CellAt(from);
+            _layout.TryMove(id, p.Column + col - grabCol, p.Row + row - grabRow);
+        }
+        PlaceTiles();
+        SaveLayout();
+    }
+
+    // The size comes from where the pointer is on the grid, never from summed drag deltas:
+    // the grip moves every time the block snaps, so deltas measured from it would drift and jump.
+    void OnGripStarted(string id)
+    {
+        Ghost.Visibility = Visibility.Visible;
+        OnGripDelta(id);
+    }
+
+    void OnGripDelta(string id)
+    {
+        var p = _layout[id];
+        var at = Mouse.GetPosition(StationsGrid);
+        var (left, top) = (p.Column * CellWidth, p.Row * CellHeight);
+
+        Canvas.SetLeft(Ghost, left + 6);
+        Canvas.SetTop(Ghost, top + 6);
+        Ghost.Width = Math.Max(at.X - left - 6, CellWidth * StationLayout.MinSpan - 12);
+        Ghost.Height = Math.Max(at.Y - top - 6, CellHeight * StationLayout.MinSpan - 12);
+
+        // Snap the edge to the nearest cell line, then try the full size and each direction alone,
+        // so the block slides along a neighbour instead of stopping dead.
+        var columns = (int)Math.Round((at.X - left) / CellWidth);
+        var rows = (int)Math.Round((at.Y - top) / CellHeight);
+        if (columns == p.ColumnSpan && rows == p.RowSpan) return;
+        if (_layout.TryResize(id, columns, rows) || _layout.TryResize(id, columns, p.RowSpan) || _layout.TryResize(id, p.ColumnSpan, rows))
+            PlaceTiles();
+    }
+
+    void OnGripCompleted()
+    {
+        Ghost.Visibility = Visibility.Collapsed;
+        SaveLayout();
+    }
+
+    static bool IsInside<T>(DependencyObject d) where T : DependencyObject
+    {
+        for (var x = d; x is not null; x = VisualTreeHelper.GetParent(x))
+            if (x is T) return true;
+        return false;
+    }
+
+    // ===== Pages =====
+
+    void BuildDots()
+    {
+        foreach (var report in new[] { false, true })
+        {
+            var dot = new Button { Style = (Style)FindResource("DotButton"), ToolTip = report ? "Rapporter" : "Stationer" };
+            dot.Click += (_, _) => ShowReport(report);
+            _dots.Add(dot);
+            Dots.Children.Add(dot);
+        }
+        DrawDots();
+    }
+
+    // Like the dashboards: the current page is a white dot in a ring, the others small and grey.
+    void DrawDots(bool animate = false)
+    {
+        for (var i = 0; i < _dots.Count; i++)
+        {
+            var on = (i == 1) == _vm.ShowingReport;
+            var g = new Grid { Width = 24, Height = 24 };
+            if (on) g.Children.Add(new Ellipse { Stroke = Brushes.White, StrokeThickness = 2 });
+            g.Children.Add(new Ellipse
+            {
+                Width = on ? 14 : 12, Height = on ? 14 : 12,
+                Fill = on ? Brushes.White : (Brush)FindResource("Quiet"),
+            });
+            _dots[i].Content = g;
+            if (on && animate) Motion.Pop(g);
+        }
+    }
+
+    void ShowReport(bool report)
+    {
+        if (report && _editing) return;
+        if (_vm.ShowingReport == report) return;
+        _vm.ShowingReport = report;
+        _lastTouch = DateTimeOffset.Now;
+
+        var show = report ? (FrameworkElement)Reports : StationsGrid;
+        var hide = report ? (FrameworkElement)StationsGrid : Reports;
+        var way = report ? 1 : -1;
+        Motion.Leave(hide, toX: -40 * way, done: () =>
+        {
+            // Only if no other switch came in the meantime.
+            if (_vm.ShowingReport == report) hide.Visibility = Visibility.Collapsed;
+        });
+        show.Visibility = Visibility.Visible;
+        Motion.Enter(show, fromX: 56 * way);
+        if (report) Reports.PlayIn();
+        DrawDots(animate: true);
+    }
+
+    // ===== Menu =====
+
+    void OnLogo(object sender, RoutedEventArgs e)
+    {
+        if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
+        else OpenMenu();
+    }
+
+    void OpenMenu()
+    {
+        if (_editing) return;
+        MenuLayer.Visibility = Visibility.Visible;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        MenuShift.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(500, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease });
+        Scrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
+    }
+
+    void CloseMenu()
+    {
+        if (MenuLayer.Visibility != Visibility.Visible) return;
+        var slide = new DoubleAnimation(0, 500, TimeSpan.FromMilliseconds(200)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
+        slide.Completed += (_, _) => MenuLayer.Visibility = Visibility.Collapsed;
+        MenuShift.BeginAnimation(TranslateTransform.XProperty, slide);
+        Scrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
+    }
+
+    void OnScrim(object sender, MouseButtonEventArgs e) => CloseMenu();
+
+    // ===== Window =====
+
+    // No title bar: outside kiosk mode the empty space moves the window, a double click maximizes.
+    void OnPageMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_kiosk || _editing || e.OriginalSource != Root && e.OriginalSource != StationsGrid) return;
+        if (e.ClickCount == 2) ToggleMaximized();
+        else DragMove();
+    }
+
+    void ToggleMaximized() =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    // Demo: 1 to 7 scans with that scanner, Shift scans a different element, Ctrl takes the scanner
+    // away and back. Left and Right change page. Esc closes the menu or layout mode first;
+    // outside kiosk mode it then closes the app, and F11 fills the screen.
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        base.OnPreviewKeyDown(e);
+        _lastTouch = DateTimeOffset.Now;
+
+        if (e.Key == Key.Escape)
+        {
+            if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
+            else if (_editing) StopEditing();
+            else if (!_kiosk) Close();
+            return;
+        }
+        if (!_kiosk && e.Key == Key.F11) { ToggleMaximized(); return; }
+        if (e.Key is Key.Left or Key.Right) { ShowReport(e.Key == Key.Right); return; }
+
+        var n = e.Key switch
+        {
+            >= Key.D1 and <= Key.D7 => e.Key - Key.D0,
+            >= Key.NumPad1 and <= Key.NumPad7 => e.Key - Key.NumPad0,
+            _ => 0,
+        };
+        if (n == 0) return;
+
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) _demo.ToggleScanner(n);
+        else _demo.Scan(n, otherElement: Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+        e.Handled = true;
+    }
+}

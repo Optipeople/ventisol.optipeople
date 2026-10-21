@@ -1,0 +1,33 @@
+<!-- A railway station clock on a 200 x 200 face: thick hour bars, thin minute ticks, black hands,
+     and the seconds hand in the product's dark amber with a ring. The marks are drawn by code. -->
+<UserControl x:Class="Ventisol.Station.ClockFace"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Viewbox>
+        <Canvas x:Name="Face" Width="200" Height="200">
+            <!-- Hour hand: wide at the hub, a little narrower at the tip -->
+            <Polygon Points="94.5,118 105.5,118 104.5,42 95.5,42" Fill="#071818">
+                <Polygon.RenderTransform>
+                    <RotateTransform x:Name="HourAngle" CenterX="100" CenterY="100" />
+                </Polygon.RenderTransform>
+            </Polygon>
+
+            <!-- Minute hand -->
+            <Polygon Points="95.5,122 104.5,122 103.5,12 96.5,12" Fill="#071818">
+                <Polygon.RenderTransform>
+                    <RotateTransform x:Name="MinuteAngle" CenterX="100" CenterY="100" />
+                </Polygon.RenderTransform>
+            </Polygon>
+
+            <!-- Seconds hand with its ring -->
+            <Canvas Width="200" Height="200">
+                <Canvas.RenderTransform>
+                    <RotateTransform x:Name="SecondAngle" CenterX="100" CenterY="100" />
+                </Canvas.RenderTransform>
+                <Line X1="100" Y1="128" X2="100" Y2="62" Stroke="#8E6400" StrokeThickness="2.2" />
+                <Line X1="100" Y1="46" X2="100" Y2="6" Stroke="#8E6400" StrokeThickness="2.2" />
+                <Ellipse Canvas.Left="91" Canvas.Top="45" Width="18" Height="18" Stroke="#8E6400" StrokeThickness="4.5" Fill="White" />
+            </Canvas>
+        </Canvas>
+    </Viewbox>
+</UserControl>

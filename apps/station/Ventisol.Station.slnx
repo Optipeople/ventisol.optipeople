@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ventisol.Station.Core/Ventisol.Station.Core.csproj" />
+    <Project Path="src/Ventisol.Station/Ventisol.Station.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ventisol.Station.Tests/Ventisol.Station.Tests.csproj" />
+  </Folder>
+</Solution>

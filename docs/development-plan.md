@@ -1,0 +1,196 @@
+# Ventisol MES: development plan
+
+All software for the Ventisol MES project lives in this monorepo. The hardware is already on site at Ventisol (Vrå): PCs, screens, and Zebra LI3678-SR scanners. Only the software remains.
+
+**The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. We build no backend or database of our own.
+
+Updated 2026-10-21.
+
+## What we build
+
+| # | Part | Where it lives | Status |
+|---|---|---|---|
+| 1 | Station app | Native Windows app (this repo) | To build |
+| 2 | Scanner handling | Inside the station app | To build |
+| 3 | Backend | OptiPeople API and DB | Exists |
+| 4 | Admin setup | Inside the station app | To build |
+| 5 | Reports site | Next.js app, ventisol.optipeople.dk (this repo) | To build |
+| 6 | Schirmer start/stop | OptiPeople Dashboards | Exists |
+| 7 | KMW connector | With Mads Wested (IoT) | Blocked on KMW |
+| 8 | 3E connector | Inside the station app | Build last |
+| 9 | Chat interface | Opti Assist, or the reports site | To decide |
+| 10 | SchirmerFix | Done, signed off by Bente | Done |
+| 11 | CI/CD and auto-update | GitHub Actions | To build |
+| 12 | Technical docs | OptiCore | Ongoing |
+
+### 1. Station app (native Windows)
+
+One full-screen app on the central PC, where all 7 scanners connect.
+
+- takes scan-in and scan-out from all 7 scanners
+- shows a big "scan registered" confirmation
+- starts by itself on boot, runs as a kiosk, updates itself (see 11)
+
+Offline buffering (storing scans when the network is down) is left out for now. It comes later.
+
+The same app runs on the other PCs in **viewer mode** (see "Other screens" below).
+
+### 2. Scanner handling (in the station app)
+
+- 7 × Zebra LI3678-SR, all on the central PC.
+- Each scanner must be identifiable, so the app knows which station a scan came from. See "Scanners on one PC" below.
+- Scanner settings (symbologies, suffix, prefix) are kept as a 123Scan config file in this repo, so a replacement scanner can be set up the same way.
+
+### 3. Backend: OptiPeople API
+
+- Swagger saved in [`docs/api/optipeople.swagger.json`](api/optipeople.swagger.json) (fetched 2026-10-21 from `https://api.optipeople.dk/swagger/web/swagger.json?access=optipeople-1`, 749 paths).
+- Auth: JWT bearer, from `POST /api/Authentication/login`.
+- Likely endpoints for scans:
+  - `POST /api/ItemScan/Create/{accountId}` with `{ itemId, machineId, sourceId }`
+  - `GET /api/ItemScan/GetLatestForCurrentOrder/{accountId}/{machineId}`
+  - `GET /api/ItemScan/GetAll/{accountId}`
+- Orders: `PartOrderNumber` (21 endpoints) and `incomacapp/api/Order/*`.
+- `CreateItemScanRequest` has no scan time, so the server stamps the time on arrival. Fine while we send scans live. When offline buffering comes, we need a `scanTime` field (like `CreateOperatorScanRequest` has).
+- To work out: how each station maps to a `machineId`, and what `sourceId` should hold (scanner ID or station ID).
+
+### 4. Admin setup (in the station app)
+
+A setup button in the app, no login. It sets:
+
+- the OptiPeople account and API credentials
+- stations, and which scanner belongs to which station
+- the mode of this PC: scan station or viewer
+
+### 5. Reports site (Next.js)
+
+- Separate Next.js app on `ventisol.optipeople.dk`, built like the vola.optipeople.dk project.
+- Uses the OptiPeople API, with login through OptiPeople Auth.
+- Customized to Ventisol: time per order and per batch, as a timeline.
+
+### 6. Schirmer start/stop
+
+Uses the existing OptiPeople Dashboards on Ventisol's tablet. Nothing to build here, only to configure.
+
+### 7. KMW connector
+
+Blocked until the KMW meeting defines the tags KMW exposes. Mads Wested (IoT engineer) most likely builds it. Until then: a fixed time per batch.
+
+### 8. 3E connector (in the station app, built last)
+
+Searches Ventisol's folder of 3E PDFs and shows the work order or drawing for a scanned order on the station screen.
+
+### 9. Chat interface
+
+OptiPeople already has an MCP server. Ventisol needs a chat on top of it. Two options:
+
+- extend Opti Assist with what Ventisol needs
+- build the chat into the reports site (5)
+
+### 10. SchirmerFix
+
+Done and signed off by Bente. Move the source into the monorepo so everything is in one place.
+
+### 11. CI/CD and auto-update
+
+See "Advice: CI/CD and auto-update" below.
+
+### 12. Technical docs
+
+Short technical descriptions in OptiCore, written as we build.
+
+## Barcodes
+
+From the physical sample (`context/IMG_4723.jpg`, `context/IMG_4724.jpg`), a pallet label for order 58556:
+
+```
+0 58556 05 01 03
+| |     |  |  └ piece number within the position (01, 02, 03 ...)
+| |     |  └── sub-position (Pos. 5.1 → 01, Pos. 4 → 01)
+| |     └───── position (Pos. 5 → 05)
+| └─────────── order number (5 digits)
+└───────────── leading 0
+```
+
+- 12 digits, numbers only. 1D barcode (Code 128 or Interleaved 2 of 5, to be confirmed with a scan). The LI3678-SR reads both.
+- The batch number (Serienr., e.g. 260708) is not in the barcode, only printed as text. **We don't need it.** The goal is order time, and the order number is in the barcode. Batch time can be added later by looking up order → batch (3E or the Schirmer files).
+- The label also shows the element size (e.g. 1183 × 1539) and the shipping week (Afsendelse 2026/43).
+- The Schirmer XML `Barcode` field is 14 digits (e.g. `05866002010301`), not 12. Same start, two more digits. To compare against a real scan.
+
+## Advice: scanners on one PC
+
+**Recommendation: put each cradle in USB CDC mode (virtual COM port), not keyboard mode.**
+
+- In keyboard mode, all 7 scanners type into whatever window has focus. One stray click, and scans are lost or mixed.
+- In CDC mode, each cradle gets its own COM port. The app reads all of them in the background, with or without focus, and knows exactly which scanner sent what.
+- Map each cradle by its USB serial number, not by its COM port number. Windows can renumber COM ports.
+- As a safety net, also give each scanner a prefix with its station ID.
+- 7 cradles need 7 USB ports. Use a powered USB hub.
+
+## Advice: other screens
+
+**Recommendation: the same native app in viewer mode, reading from the OptiPeople API.**
+
+- One app to build, install and update. The setup button decides the mode.
+- Viewers read from OptiCloud, not from the central PC. So they keep working if the central PC restarts, and the platform stays the single source of truth.
+- Alternative: the central app serves a local web page that the other PCs open in a kiosk browser. Simpler on the other PCs, but everything depends on the central PC, so I don't recommend it.
+
+## Advice: CI/CD and auto-update
+
+- **Stack:** C# / .NET 10 (LTS, supported to November 2028), WPF. Same language as SchirmerFix and good serial-port and Windows support. .NET 8 support ends November 2026, so it is not an option.
+- **Packaging and updates:** [Velopack](https://velopack.io). It builds the installer and handles silent updates with delta packages.
+- **Pipeline:** GitHub Actions in the monorepo. A tag like `station-v1.2.0` builds, tests, packages and publishes a release. Path filters so each app only builds when its own folder changes.
+- **Update source:** a private GitHub repo needs a token on every PC. Better to publish update packages to a public storage location (Azure Blob or a public releases repo).
+- **When to update:** the app checks every hour but installs only when no scan has come in for 10 minutes, or at night. Never in the middle of a shift.
+- **Rollback:** keep the previous version. If the new one crashes on startup, roll back automatically.
+- **Code signing:** strongly recommended. SchirmerFix got a Defender false positive (Wacatac) without it. Azure Trusted Signing is cheap.
+- **Monitoring:** each PC sends a heartbeat and its app version. An alert fires if the central PC goes silent. Logs go to a file on the PC (Serilog) and errors are shipped out.
+- **Reports site:** deployed via Vercel's GitHub integration, preview per pull request.
+
+## Proposed repo layout
+
+```
+apps/
+  station/        native Windows app (scan + viewer modes, setup, 3E)
+  web/            Next.js reports site, ventisol.optipeople.dk
+  schirmerfix/    SchirmerFix (moved in)
+packages/
+  api-client/     typed OptiPeople API client generated from the swagger
+config/
+  scanners/       123Scan config files
+docs/
+  api/            OptiPeople swagger
+.github/workflows/
+```
+
+## Reference
+
+**Production flow:** 3E, Schirmer (saw), KMW line (welding, corner cleaning, buffer), manual assembly stations, packing.
+
+**Stations in the proposal mock:** Station 10, 20, 30, 40, Montagebord 1, Montagebord 2, Pakning.
+
+**Time rules:**
+- time per order (batch time later)
+- an order closes at the last packing scan
+- a re-scan for rework adds time to the order
+- one order can span several batches, and one batch several orders (batches hold at most 12 items)
+
+**Network (Omron PLCs, reached over Complea's FortiClient VPN):**
+
+| Device | IP | PLC |
+|---|---|---|
+| Federhenn | 192.168.10.125 | OM01332 |
+| KMW | 192.168.10.126 | OM01333, OM01456 |
+| Schirmer | 192.168.10.127 | OM01320 |
+| Scanner (Omron V430F) | 192.168.10.129 | |
+| Teltonika RUT241 router | 192.168.10.130 | |
+
+**People:**
+- Kim Jørgensen (kij@ventisol.dk): decision maker at Ventisol
+- Bente Sørensen (bks@ventisol.dk): 3E, planning, Schirmer files
+- Rasmus Hangaard Hansen (rhh@optipeople.dk): project lead, Kim's single point of contact
+- Morten Pradsgaard (mpg@optipeople.dk): technical delivery
+- Mads Wested (OptiPeople): IoT engineer, KMW connector
+- Complea (skh@complea.dk, CMN@complea.dk): Ventisol's IT and network
+- Michael Grehl (michael.grehl@kmw-engineering.de): KMW contact from Vindunor
+
+**Proposal document:** `context/Ventisol_MES_kunde_med_priser.html`

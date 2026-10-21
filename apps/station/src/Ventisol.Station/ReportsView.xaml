@@ -1,0 +1,178 @@
+<!-- The operators' report page, after the dashboards' table panels: a bold title, a quiet line
+     under it, and plain ruled rows. DataContext is the ReportViewModel. -->
+<UserControl x:Class="Ventisol.Station.ReportsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Ventisol.Station.ViewModels">
+    <UserControl.Resources>
+        <Style x:Key="Cell" TargetType="TextBlock" BasedOn="{StaticResource TextBase}">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="Num" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        </Style>
+        <Style x:Key="Head" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        </Style>
+        <Style x:Key="HeadNum" TargetType="TextBlock" BasedOn="{StaticResource Head}">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+        <Style x:Key="Row" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{StaticResource Rule}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="0,13" />
+        </Style>
+        <Style x:Key="Title" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="FontSize" Value="26" />
+            <Setter Property="FontWeight" Value="Bold" />
+        </Style>
+        <Style x:Key="Sub" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+            <Setter Property="Margin" Value="0,2,0,22" />
+        </Style>
+        <Style x:Key="TablePanel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Panel}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="32,28,32,24" />
+            <Setter Property="Margin" Value="10" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Orders -->
+        <Border x:Name="OrdersPanel" Style="{StaticResource TablePanel}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource Title}" Text="ORDRER I DAG" />
+                <TextBlock Style="{StaticResource Sub}" Text="Montage · tid fra scan ind til scan ud, alle stationer" />
+
+                <Border Style="{StaticResource Row}" Padding="0,0,0,10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="130" />
+                            <ColumnDefinition Width="130" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Head}" Text="Ordre" />
+                        <TextBlock Grid.Column="1" Style="{StaticResource Head}" Text="Nu" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource HeadNum}" Text="Færdige" />
+                        <TextBlock Grid.Column="3" Style="{StaticResource HeadNum}" Text="Tid i alt" />
+                    </Grid>
+                </Border>
+
+                <ItemsControl ItemsSource="{Binding Orders}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:OrderRow}">
+                            <Border Style="{StaticResource Row}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="130" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Cell}" FontWeight="Bold" Text="{Binding Order}" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <Ellipse x:Name="Live" Width="10" Height="10" Fill="{StaticResource Ok}" Margin="0,1,10,0"
+                                                 VerticalAlignment="Center" Visibility="Collapsed" />
+                                        <TextBlock x:Name="Where" Style="{StaticResource Cell}" Foreground="{StaticResource Ink3}" Text="{Binding Where}" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Style="{StaticResource Num}" Text="{Binding Elements}" />
+                                    <TextBlock Grid.Column="3" Style="{StaticResource Num}" FontWeight="Bold" Text="{Binding Total}" />
+                                </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Active}" Value="True">
+                                    <Setter TargetName="Live" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="Where" Property="Foreground" Value="{StaticResource Ink}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock x:Name="NoOrders" Foreground="{StaticResource Quiet}" Margin="0,16,0,0"
+                           Text="Ingen scanninger endnu i dag">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasOrders}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <!-- Stations -->
+        <Border x:Name="StationsPanel" Grid.Column="1" Style="{StaticResource TablePanel}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource Title}" Text="STATIONER I DAG" />
+                <TextBlock Style="{StaticResource Sub}" Text="Montage · belægning er tid i gang siden dagens første scanning" />
+
+                <Border Style="{StaticResource Row}" Padding="0,0,0,10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="90" />
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="1.2*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource Head}" Text="Station" />
+                        <TextBlock Grid.Column="1" Style="{StaticResource HeadNum}" Text="Færdige" />
+                        <TextBlock Grid.Column="2" Style="{StaticResource HeadNum}" Text="Gns. tid" />
+                        <TextBlock Grid.Column="4" Style="{StaticResource Head}" Text="Belægning" />
+                    </Grid>
+                </Border>
+
+                <ItemsControl ItemsSource="{Binding Stations}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:StationRow}">
+                            <Border Style="{StaticResource Row}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="32" />
+                                        <ColumnDefinition Width="1.2*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Style="{StaticResource Cell}" FontWeight="Bold" Text="{Binding Name}" />
+                                    <TextBlock Grid.Column="1" Style="{StaticResource Num}" Text="{Binding Done}" />
+                                    <TextBlock Grid.Column="2" Style="{StaticResource Num}" Text="{Binding Average}" />
+                                    <DockPanel Grid.Column="4">
+                                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Num}" Width="62" Text="{Binding Utilization}" />
+                                        <Grid Height="16" Margin="0,0,14,0">
+                                            <Border CornerRadius="2" Background="{StaticResource Rule}" />
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="{Binding Fill}" />
+                                                    <ColumnDefinition Width="{Binding Rest}" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border CornerRadius="2" Background="{StaticResource Ok}" />
+                                            </Grid>
+                                        </Grid>
+                                    </DockPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "Showcase": {
+      "commandName": "Project",
+      "commandLineArgs": "--showcase",
+      "hotReloadEnabled": true
+    },
+    "Empty": {
+      "commandName": "Project",
+      "hotReloadEnabled": true
+    },
+    "Kiosk": {
+      "commandName": "Project",
+      "commandLineArgs": "--kiosk --showcase"
+    }
+  }
+}
