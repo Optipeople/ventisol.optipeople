@@ -5,7 +5,7 @@ import { PageHeader, PageShell } from "@/components/page-shell";
 import { EmptyState, OrdersTable, SectionTitle, StationsTable } from "@/components/report-tables";
 import { ReadNotice } from "@/components/read-notice";
 import { requireUser } from "@/lib/auth";
-import { capitalize, dayKey, requestTime, formatDuration, formatInt, formatLongDay, isIsoDay } from "@/lib/time";
+import { capitalize, dayKey, requestTime, formatCount, formatDuration, formatInt, formatLongDay, isIsoDay } from "@/lib/time";
 import { loadDayReport } from "@/lib/views";
 
 export const metadata: Metadata = { title: "Dagsoverblik" };
@@ -46,7 +46,7 @@ export default async function OverviewPage({
           <KpiTile
             label="Ordrer pakket"
             value={formatInt(kpis.ordersPacked)}
-            hint={`af ${formatInt(kpis.orders)} ordrer`}
+            hint={`af ${formatCount(kpis.orders, "ordre", "ordrer")}`}
             explain="Ordrer hvis sidste scanning er en ud-scanning på pakning, og hvor intet er i gang"
           />
           <KpiTile
@@ -62,7 +62,7 @@ export default async function OverviewPage({
         </KpiRow>
       </div>
 
-      <SectionTitle title="Ordrer" aside={`${formatInt(report.orders.length)} ordrer`} />
+      <SectionTitle title="Ordrer" aside={formatCount(report.orders.length, "ordre", "ordrer")} />
       {report.orders.length > 0 ? (
         <OrdersTable orders={report.orders} referenceDay={day} />
       ) : (

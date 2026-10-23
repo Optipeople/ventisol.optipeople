@@ -1,7 +1,7 @@
 "use server";
 
-import { headers } from "next/headers";
 import { requestPasswordReset } from "@/lib/auth";
+import { siteUrl } from "@/lib/site";
 
 export type ForgotState =
   | { sent: true; email: string }
@@ -16,12 +16,9 @@ export async function sendResetLink(
   if (!email) return { error: "Indtast din e-mail." };
 
   // The backend emails a link back to this URL with ?token=...&email=....
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
-  const proto =
-    h.get("x-forwarded-proto") ??
-    (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https");
-  const ok = await requestPasswordReset(email, `${proto}://${host}/reset-password`);
+  // Built from SITE_URL, never from the Host headers: a forged header would
+  // otherwise send the reset token to someone else's site.
+  const ok = await requestPasswordReset(email, `${siteUrl()}/reset-password`);
 
   return ok ? { sent: true, email } : { error: "Noget gik galt. Prøv igen." };
 }

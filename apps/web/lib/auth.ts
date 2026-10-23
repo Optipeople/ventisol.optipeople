@@ -241,12 +241,24 @@ export async function requireUser(currentPath: string): Promise<AuthContext> {
     case "forbidden":
       redirect("/login?error=forbidden");
     default:
-      redirect("/login");
+      redirect(loginPath(currentPath));
   }
 }
 
-export function refreshPath(currentPath: string): string {
-  return `/auth/refresh?next=${encodeURIComponent(currentPath)}`;
+/**
+ * The refresh flow for a page. `retry` marks a second refusal right after a
+ * refresh: /auth/refresh then ends the session instead of trying again.
+ */
+export function refreshPath(currentPath: string, retry = false): string {
+  return `/auth/refresh?next=${encodeURIComponent(currentPath)}${retry ? "&retry=1" : ""}`;
+}
+
+/** The login page, coming back to `currentPath` after signing in. */
+export function loginPath(currentPath: string, error?: string): string {
+  const qs = new URLSearchParams();
+  if (error) qs.set("error", error);
+  if (currentPath && currentPath !== "/") qs.set("next", currentPath);
+  return qs.size ? `/login?${qs}` : "/login";
 }
 
 const BASE_COOKIE_OPTIONS = {
@@ -284,6 +296,7 @@ export async function setSessionCookies(
   } else {
     store.delete(SESSION_COOKIES.persist);
   }
+  store.delete(SESSION_COOKIES.refreshed);
 }
 
 export async function clearSessionCookies(): Promise<void> {

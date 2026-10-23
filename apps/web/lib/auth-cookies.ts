@@ -10,4 +10,10 @@ export const SESSION_COOKIES = {
   email: "ventisol_email",
   /** "1" when the user chose "Husk mig": cookies get a 30-day maxAge. */
   persist: "ventisol_persist",
+  /**
+   * Set for a minute by /auth/refresh after a refresh. A data read that is
+   * still refused while it is set does not refresh again (that would loop):
+   * it ends the session instead. See lib/opticloud.ts.
+   */
+  refreshed: "ventisol_refreshed",
 } as const;

@@ -12,7 +12,7 @@ import {
   authLinkClasses,
 } from "@/components/auth/auth-screen";
 
-export function LoginForm({ initialError }: { initialError?: string }) {
+export function LoginForm({ initialError, next }: { initialError?: string; next?: string }) {
   const [state, action, pending] = useActionState<LoginState, FormData>(
     login,
     undefined
@@ -22,6 +22,7 @@ export function LoginForm({ initialError }: { initialError?: string }) {
   return (
     <form action={action} className={authCardClasses}>
       <AuthCardHeader title="Log ind" />
+      {next && <input type="hidden" name="next" value={next} />}
 
       <div className="flex flex-col gap-2 pb-2">
         <input
@@ -29,6 +30,7 @@ export function LoginForm({ initialError }: { initialError?: string }) {
           name="email"
           type="email"
           autoComplete="username"
+          defaultValue={state?.email}
           required
           disabled={pending}
           placeholder="Brugernavn eller e-mail"

@@ -54,6 +54,7 @@ the flag is ignored. Regenerate the file with `node scripts/make-fixtures.mjs`.
 |---|---|---|
 | `OPTIPEOPLE_API_URL` | no | Optipeople API base, default `https://api.optipeople.dk`. Login and data. |
 | `VENTISOL_ACCOUNT_ID` | yes | Ventisol's OptiCloud account id. Gates access and is the account read. |
+| `SITE_URL` | no | Public address of the site, default `https://ventisol.optipeople.dk`. The password-reset email links here; set `http://localhost:3000` in dev and the preview URL on a preview if reset links should point there. Never taken from the Host header. |
 | `VENTISOL_FIXTURES` | no | `1` turns on fixture mode in `next dev` only. |
 
 There is no cookie secret: as in vola, the cookies hold the Optipeople tokens
@@ -77,7 +78,15 @@ Copied from vola:
    against `GetCurrentUser`.
 5. A rejected token with a refresh token present goes to `/auth/refresh`,
    which uses `grant_type=refresh_token` (with the username) and sends the
-   user back. A 401 on a data read takes the same route.
+   user back. A 401 on a data read takes the same route, once: the refresh
+   sets a one-minute `ventisol_refreshed` cookie, and a 401 while it is set
+   goes to `/auth/refresh?retry=1`, which ends the session and shows the
+   login with a message instead of looping.
+6. A 403 on a data read is not an expired token, so there is no refresh: the
+   user lands on `/ingen-adgang` ("Ingen adgang til Ventisols data").
+7. `next` (after a refresh, or after logging in) is only followed when it
+   resolves to this site's origin (`lib/site.ts`, `safeNextPath`); anything
+   else goes to `/`.
 
 Forgot / reset password use the same endpoints as vola.
 
@@ -102,15 +111,24 @@ the period includes today, 300 s for past days, 300 s for the table list.
 
 ### The computation (`lib/report.ts`, unit tested)
 
-- In and Out are paired per station and barcode. A rework re-scan is another
-  pair, so it adds time; it is marked as pass 2, 3 ... at that station.
+The rules are the ones in `docs/opticloud-scans.md` ("Rules"), the same as
+the station app:
+
+- In and Out are paired per station **number** (`StationNo`, not the name)
+  and barcode. A rework re-scan is another pair, so it adds time; it is
+  marked as pass 2, 3 ... at that station.
+- A second In of the same element at the same station while one is open:
+  the later In wins.
 - An Out without an In (the In fell before the period read) gets its start
-  back from `DurationSec`. A second In without an Out drops the first.
-- An element in progress counts up to now; an In left open more than 12 hours
-  is treated as a missed scan and does not count.
-- An order is **packed** when its last scan is an Out at a Packing station
-  and nothing on it is in progress; **I gang** when something is in progress;
-  otherwise **Afventer**.
+  back from `DurationSec`; without `DurationSec` it is skipped.
+- An element in progress counts up to now; an In older than 36 hours with no
+  Out is treated as a missed scan and does not count. A station has at most
+  one element in progress: its latest In with no Out.
+- `docs/scan-rules-vectors.json` holds shared cases that both this site
+  (`lib/scan-rules-vectors.test.ts`) and the station app run.
+- An order is **packed** when it has an Out at a Packing station and nothing
+  on it is in progress (a finished rework pass after packing does not undo
+  it); **I gang** when something is in progress; otherwise **Afventer**.
 - A pass belongs to the (Copenhagen) day it started.
 - Station utilisation: time worked / time from the day's first scan to now
   (today) or to the last scan (past days). Same rules as `DayReport` in the

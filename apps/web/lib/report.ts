@@ -1,13 +1,19 @@
 // Time per order, worked out from the raw In/Out scans. Pure functions, no
 // I/O, so every rule here is unit tested (lib/report.test.ts).
 //
-// The rules (docs/opticloud-scans.md and the plan's "Time rules"):
-//   - An element is worked on at a station from its In to its Out there.
+// The rules (docs/opticloud-scans.md, "Rules"):
+//   - An element is worked on at a station from its In to its Out there. A
+//     station is its StationNo, not its name (names can be edited).
 //   - Time per order is the sum over its elements and stations. A re-scan for
 //     rework is just another In/Out pair, so it adds time.
-//   - An order is packed when its last scan is an Out at a Packing station
-//     and nothing on it is in progress.
-//   - An element still in progress counts up to "now".
+//   - A second In of the same element at the same station while one is open:
+//     the later In wins.
+//   - An Out with no In: its start is put back from DurationSec, or it is
+//     skipped when there is none.
+//   - An order is packed when it has an Out at a Packing station and nothing
+//     on it is in progress.
+//   - An element still in progress counts up to "now"; an In older than
+//     36 hours with no Out is ignored.
 //
 // These mirror DayReport in the station app (apps/station), so the reports
 // site and the operators' screen agree on the numbers.
@@ -17,10 +23,11 @@ import { isPacking, positionLabel, type Scan } from "@/lib/scans";
 
 /**
  * An In with no Out for longer than this is treated as abandoned (a missed
- * Out scan, a pallet left overnight) and does not count, rather than letting
- * one forgotten scan add days to an order.
+ * Out scan) and does not count, rather than letting one forgotten scan add
+ * days to an order. 36 hours, as in the station app: long enough for an
+ * element left overnight to still be in progress the next working day.
  */
-export const STALE_OPEN_MS = 12 * 3_600_000;
+export const STALE_OPEN_MS = 36 * 3_600_000;
 
 /** One element at one station: from its In to its Out (or to now). */
 export interface WorkInterval {
@@ -46,7 +53,17 @@ export interface WorkInterval {
   visit: number;
 }
 
-const keyOf = (s: Pick<Scan, "barcode" | "station">) => `${s.barcode}\u0000${s.station}`;
+type StationRef = Pick<Scan, "station" | "stationNo">;
+
+/**
+ * Which station a scan or interval belongs to: its StationNo, as the station
+ * app pairs them. Only a row without a StationNo falls back to the name.
+ */
+export function stationKey(s: StationRef): string {
+  return s.stationNo != null ? `#${s.stationNo}` : `name:${s.station}`;
+}
+
+const keyOf = (s: Pick<Scan, "barcode"> & StationRef) => `${s.barcode}\u0000${stationKey(s)}`;
 
 /** Drops repeats of the same ScanId (sending a scan twice is harmless). */
 export function dedupeScans(scans: Scan[]): Scan[] {
@@ -88,17 +105,17 @@ function interval(open: Scan, start: number, end: number, extra: Partial<WorkInt
 }
 
 /**
- * Pairs In and Out per station and barcode.
+ * Pairs In and Out per station (StationNo) and barcode.
  *
  * - In then Out: one interval.
- * - A second In while one is open: the earlier In never got its Out, so it
- *   is dropped and the new one opens (the station rejects a second element
- *   while one is in progress, so this is a missed scan, not parallel work).
+ * - A second In while one is open: the later In wins. The earlier one never
+ *   got its Out (a missed scan, not parallel work), so it is dropped.
  * - An Out with no open In: its In fell before the period read, so the start
  *   is put back from DurationSec. Without DurationSec it cannot be timed and
  *   is skipped.
  * - An In still open at the end: in progress, counting up to `now`, unless it
- *   is older than STALE_OPEN_MS.
+ *   is older than STALE_OPEN_MS. One per station: when several elements are
+ *   open at one station, only the latest In is in progress.
  */
 export function pairScans(scans: Scan[], now: number): WorkInterval[] {
   const sorted = dedupeScans(scans).sort(byTime);
@@ -122,8 +139,17 @@ export function pairScans(scans: Scan[], now: number): WorkInterval[] {
     }
   }
 
+  // A station works on one element at a time: of its open Ins, only the
+  // latest is in progress (as on the station's screen); the others never got
+  // their Out and do not count.
+  const current = new Map<string, Scan>();
   for (const scan of open.values()) {
     if (now - scan.time > STALE_OPEN_MS) continue;
+    const key = stationKey(scan);
+    const latest = current.get(key);
+    if (!latest || byTime(latest, scan) < 0) current.set(key, scan);
+  }
+  for (const scan of current.values()) {
     result.push(interval(scan, scan.time, Math.max(scan.time, now), { inProgress: true }));
   }
 
@@ -158,9 +184,12 @@ export function compareStations(
 }
 
 function stationNames(intervals: WorkInterval[]): string[] {
-  const byName = new Map<string, WorkInterval>();
-  for (const iv of intervals) if (!byName.has(iv.station)) byName.set(iv.station, iv);
-  return [...byName.values()].sort(compareStations).map((iv) => iv.station);
+  const byStation = new Map<string, WorkInterval>();
+  for (const iv of intervals) {
+    const key = stationKey(iv);
+    if (!byStation.has(key)) byStation.set(key, iv);
+  }
+  return [...byStation.values()].sort(compareStations).map((iv) => iv.station);
 }
 
 const sum = (values: number[]) => values.reduce((t, v) => t + v, 0);
@@ -176,7 +205,7 @@ export interface OrderSummary {
   stations: string[];
   /** Stations where an element of the order is in progress now. */
   activeAt: string[];
-  /** packed: last scan an Out at packing, nothing in progress. active: something in progress. */
+  /** packed: an Out at packing, nothing in progress. active: something in progress. */
   status: OrderStatus;
   firstScan: number;
   lastScan: number;
@@ -186,17 +215,20 @@ export interface OrderSummary {
   days: string[];
 }
 
-/** The status rule on its own, for one order's scans and intervals. */
-export function orderStatus(orderScans: Scan[], orderIntervals: WorkInterval[]): OrderStatus {
+/**
+ * The status rule on its own, for one order's intervals: active while
+ * anything is in progress, else packed once it has a finished pass (an Out)
+ * at a Packing station (a later rework pass does not unpack it), else waiting.
+ */
+export function orderStatus(orderIntervals: WorkInterval[]): OrderStatus {
   if (orderIntervals.some((iv) => iv.inProgress)) return "active";
-  const last = [...orderScans].sort(byTime).at(-1);
-  if (last && last.direction === "Out" && isPacking(last)) return "packed";
+  if (orderIntervals.some((iv) => isPacking(iv))) return "packed";
   return "waiting";
 }
 
 /**
- * One line per order. `intervals` decide the time; `scans` (the same period)
- * decide first/last scan and the packed status. Most recent activity first.
+ * One line per order. `intervals` decide the time and the status; `scans`
+ * (the same period) add first/last scan and orders with no timed pass. Most recent activity first.
  */
 export function summarizeOrders(intervals: WorkInterval[], scans: Scan[]): OrderSummary[] {
   const ivByOrder = groupBy(intervals, (iv) => iv.orderNo);
@@ -215,7 +247,7 @@ export function summarizeOrders(intervals: WorkInterval[], scans: Scan[]): Order
       totalMs: sum(ivs.map((iv) => iv.durationMs)),
       stations: stationNames(ivs.length > 0 ? ivs : sc.map(scanAsStationRef)),
       activeAt: stationNames(active),
-      status: orderStatus(sc, ivs),
+      status: orderStatus(ivs),
       firstScan: Math.min(...times),
       // An interval in progress ends at now, so an active order sorts to the top.
       lastScan: Math.max(...times),
@@ -257,7 +289,7 @@ export function summarizeStations(intervals: WorkInterval[], until?: number): St
   const spanEnd = until ?? Math.max(...intervals.map((iv) => iv.end));
   const span = Math.max(0, spanEnd - spanStart);
 
-  return [...groupBy(intervals, (iv) => iv.station).values()]
+  return [...groupBy(intervals, stationKey).values()]
     .map((ivs) => {
       const done = ivs.filter((iv) => !iv.inProgress);
       const busy = sum(ivs.map((iv) => iv.durationMs));
@@ -377,7 +409,7 @@ export function buildTimeline(intervals: WorkInterval[]): TimelineDay[] {
       const last = Math.max(...ivs.map((iv) => iv.end));
       const axisStart = Math.floor(first / HOUR) * HOUR;
       const axisEnd = Math.max(axisStart + HOUR, Math.ceil(last / HOUR) * HOUR);
-      const lanes = [...groupBy(ivs, (iv) => iv.station).values()]
+      const lanes = [...groupBy(ivs, stationKey).values()]
         .map((bars) => ({
           station: bars[0].station,
           stationNo: bars[0].stationNo,

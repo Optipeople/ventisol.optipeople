@@ -10,6 +10,7 @@ import {
   addDays,
   dayKey,
   daysBetween,
+  formatCount,
   formatDisplayDay,
   formatDuration,
   formatInt,
@@ -88,7 +89,7 @@ export default async function PeriodPage({ searchParams }: { searchParams: Promi
         </KpiRow>
       </div>
 
-      <SectionTitle title="Ordrer" aside={`${formatInt(orders.length)} ordrer`} />
+      <SectionTitle title="Ordrer" aside={formatCount(orders.length, "ordre", "ordrer")} />
       {orders.length > 0 ? (
         <OrdersTable orders={orders} sort={{ key: sort, dir, href: sortHref }} period />
       ) : (

@@ -20,7 +20,11 @@ export function proxy(request: NextRequest) {
 
   const hasToken = Boolean(request.cookies.get(SESSION_COOKIES.token)?.value);
   if (!hasToken) {
-    return NextResponse.redirect(new URL("/login", request.nextUrl));
+    // Back to this page after signing in (the login page checks `next` again).
+    const login = new URL("/login", request.nextUrl);
+    const here = `${pathname}${request.nextUrl.search}`;
+    if (here !== "/") login.searchParams.set("next", here);
+    return NextResponse.redirect(login);
   }
   return NextResponse.next();
 }

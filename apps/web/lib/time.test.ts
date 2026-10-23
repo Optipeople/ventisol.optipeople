@@ -5,6 +5,7 @@ import {
   dayKey,
   dayStart,
   formatClock,
+  formatCount,
   formatDuration,
   isIsoDay,
   isoWeek,
@@ -51,5 +52,16 @@ describe("formatting", () => {
     expect(formatDuration(38 * 60_000)).toBe("38 min");
     expect(formatDuration(3 * 3_600_000 + 7 * 60_000)).toBe("3 t 07 min");
     expect(formatDuration(null)).toBe("–");
+  });
+  it("takes every part of a duration from the rounded seconds", () => {
+    expect(formatDuration(59_930)).toBe("1 min");
+    expect(formatDuration(3_599_600)).toBe("1 t 00 min");
+    expect(formatDuration(119_600)).toBe("2 min");
+    expect(formatDuration(59_400)).toBe("59 s");
+  });
+  it("puts a count with its noun in singular or plural", () => {
+    expect(formatCount(1, "element", "elementer")).toBe("1 element");
+    expect(formatCount(0, "element", "elementer")).toBe("0 elementer");
+    expect(formatCount(1200, "ordre", "ordrer")).toBe("1.200 ordrer");
   });
 });

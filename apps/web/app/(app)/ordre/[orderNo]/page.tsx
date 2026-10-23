@@ -8,7 +8,7 @@ import { ElementsTable, EmptyState, SectionTitle, StationsTable } from "@/compon
 import { StatusTag } from "@/components/status-tag";
 import { Timeline } from "@/components/timeline";
 import { requireUser } from "@/lib/auth";
-import { formatDateTime, formatDuration, formatInt, requestTime } from "@/lib/time";
+import { formatCount, formatDateTime, formatDuration, formatInt, requestTime } from "@/lib/time";
 import { loadOrderReport } from "@/lib/views";
 
 export async function generateMetadata({
@@ -92,7 +92,7 @@ export default async function OrderPage({
           <SectionTitle title="Tidslinje" aside="En bane pr. station, en bjælke fra ind til ud" />
           <Timeline days={report.timeline} />
 
-          <SectionTitle title="Elementer" aside={`${formatInt(report.elements.length)} elementer`} />
+          <SectionTitle title="Elementer" aside={formatCount(report.elements.length, "element", "elementer")} />
           <ElementsTable elements={report.elements} />
 
           <SectionTitle title="Stationer" aside="Tid på ordren pr. station" />

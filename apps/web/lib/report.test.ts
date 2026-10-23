@@ -60,7 +60,58 @@ describe("pairScans", () => {
     expect(ivs).toEqual([]);
   });
 
-  it("drops an In that was never closed when a new In comes at the same station", () => {
+  it("keeps an In open overnight in progress (the limit is 36 hours, as on the station)", () => {
+    expect(STALE_OPEN_MS).toBe(36 * 3_600_000);
+    const [iv] = pairScans([scan("In", at("15:00", "2026-10-20"))], at("09:00"));
+    expect(iv.inProgress).toBe(true);
+    expect(iv.durationMs).toBe(18 * 60 * MIN);
+  });
+
+  it("has at most one element in progress per station: the latest In", () => {
+    const ivs = pairScans(
+      [scan("In", at("07:00"), { barcode: "058556050101" }), scan("In", at("07:30"), { barcode: "058556050102" })],
+      at("08:00")
+    );
+    expect(ivs.map((iv) => [iv.barcode, iv.inProgress])).toEqual([["058556050102", true]]);
+  });
+
+  it("pairs by station number, not by name", () => {
+    // The station was renamed between In and Out: still the same station.
+    const ivs = pairScans(
+      [scan("In", at("07:00"), { station: "Station 10" }), scan("Out", at("07:05"), { station: "Svejs 1" })],
+      at("12:00")
+    );
+    expect(ivs).toHaveLength(1);
+    expect(ivs[0].durationMs).toBe(5 * MIN);
+    expect(ivs[0].inProgress).toBe(false);
+  });
+
+  it("keeps two stations with the same name but different numbers apart", () => {
+    const ivs = pairScans(
+      [
+        scan("In", at("07:00"), { stationNo: 1 }),
+        scan("In", at("07:01"), { stationNo: 2 }),
+        scan("Out", at("07:04"), { stationNo: 1 }),
+        scan("Out", at("07:09"), { stationNo: 2 }),
+      ],
+      at("12:00")
+    );
+    expect(ivs.map((iv) => [iv.stationNo, iv.durationMs / MIN, iv.visit])).toEqual([
+      [1, 4, 1],
+      [2, 8, 1],
+    ]);
+    expect(summarizeStations(ivs).map((l) => l.stationNo)).toEqual([1, 2]);
+  });
+
+  it("pairs by name when a row has no station number", () => {
+    const ivs = pairScans(
+      [scan("In", at("07:00"), { stationNo: null }), scan("Out", at("07:05"), { stationNo: null })],
+      at("12:00")
+    );
+    expect(ivs).toHaveLength(1);
+  });
+
+  it("lets the later In win when a second In comes at the same station", () => {
     const ivs = pairScans(
       [scan("In", at("07:00")), scan("In", at("07:30")), scan("Out", at("07:40"))],
       at("12:00")
@@ -102,9 +153,9 @@ describe("pairScans", () => {
 });
 
 describe("order status", () => {
-  it("is packed when the last scan is an Out at packing and nothing is in progress", () => {
+  it("is packed when it has an Out at packing and nothing is in progress", () => {
     const scans = [...pass(at("07:00"), at("07:05")), ...pass(at("07:10"), at("07:12"), PACKING)];
-    expect(orderStatus(scans, pairScans(scans, at("12:00")))).toBe("packed");
+    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("packed");
   });
 
   it("is not packed while another element is still in progress", () => {
@@ -112,17 +163,32 @@ describe("order status", () => {
       ...pass(at("07:10"), at("07:12"), PACKING),
       scan("In", at("07:00"), { barcode: "058556050101" }),
     ];
-    expect(orderStatus(scans, pairScans(scans, at("07:30")))).toBe("active");
+    expect(orderStatus(pairScans(scans, at("07:30")))).toBe("active");
   });
 
-  it("is not packed when a rework scan comes after packing", () => {
+  it("stays packed after a finished rework pass (the last scan need not be the packing Out)", () => {
     const scans = [...pass(at("07:10"), at("07:12"), PACKING), ...pass(at("08:00"), at("08:05"))];
-    expect(orderStatus(scans, pairScans(scans, at("12:00")))).toBe("waiting");
+    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("packed");
+  });
+
+  it("is active, not packed, while a rework pass after packing is in progress", () => {
+    const scans = [...pass(at("07:10"), at("07:12"), PACKING), scan("In", at("08:00"))];
+    expect(orderStatus(pairScans(scans, at("08:30")))).toBe("active");
+  });
+
+  it("is not packed by an In at packing alone, nor by an untimed Out there", () => {
+    const scans = [
+      ...pass(at("07:00"), at("07:05")),
+      scan("In", at("07:10"), PACKING),
+      // An Out with neither an In nor DurationSec is no pass, so it packs nothing.
+      scan("Out", at("07:20"), { ...PACKING, barcode: "058556050101" }),
+    ];
+    expect(orderStatus(pairScans(scans, at("07:10") + STALE_OPEN_MS + 1))).toBe("waiting");
   });
 
   it("is waiting between stations", () => {
     const scans = pass(at("07:00"), at("07:05"));
-    expect(orderStatus(scans, pairScans(scans, at("12:00")))).toBe("waiting");
+    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("waiting");
   });
 });
 

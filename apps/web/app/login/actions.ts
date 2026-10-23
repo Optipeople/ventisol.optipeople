@@ -8,8 +8,10 @@ import {
   optipeopleLogin,
   setSessionCookies,
 } from "@/lib/auth";
+import { safeNextPath } from "@/lib/site";
 
-export type LoginState = { error: string } | undefined;
+/** The e-mail comes back so the field keeps it: React resets the form after an action. */
+export type LoginState = { error: string; email: string } | undefined;
 
 export async function login(
   _prev: LoginState,
@@ -18,8 +20,10 @@ export async function login(
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const remember = formData.get("remember") === "on";
+  // Where to go after signing in; only a path on this site.
+  const next = safeNextPath(String(formData.get("next") ?? ""));
   if (!email || !password) {
-    return { error: "Indtast din e-mail og adgangskode." };
+    return { error: "Indtast din e-mail og adgangskode.", email };
   }
 
   const result = await optipeopleLogin({
@@ -33,6 +37,7 @@ export async function login(
         result.reason === "invalid"
           ? "Forkert e-mail eller adgangskode."
           : "Login-tjenesten er ikke tilgængelig lige nu. Prøv igen om lidt.",
+      email,
     };
   }
 
@@ -40,17 +45,18 @@ export async function login(
   // Ventisol-account users get a session at all.
   const me = await fetchCurrentUser(result.data.access_token);
   if (me.status !== "ok") {
-    return { error: "Din bruger kunne ikke bekræftes. Prøv igen." };
+    return { error: "Din bruger kunne ikke bekræftes. Prøv igen.", email };
   }
   if (!isAllowedUser(me.user)) {
     return {
       error:
         "Din Optipeople-bruger har ikke adgang til Ventisol. Log ind med en bruger på Ventisol-kontoen.",
+      email,
     };
   }
 
   await setSessionCookies(result.data, me.user.email, remember);
-  redirect("/");
+  redirect(next);
 }
 
 export async function logout(): Promise<void> {

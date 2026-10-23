@@ -1,8 +1,10 @@
-// GET /auth/refresh?next=<path>: exchanges the refresh token for a new
-// access token, then sends the user back where they came from. Reached when
-// requireUser() finds an expired access token, or a data read gets a 401.
+// GET /auth/refresh?next=<path>[&retry=1]: exchanges the refresh token for a
+// new access token, then sends the user back where they came from. Reached
+// when requireUser() finds an expired access token, or a data read gets a 401.
 // Any failure clears the session and lands on /login, which also breaks
-// potential redirect loops. Copied from optipeople.vola.
+// potential redirect loops. retry=1 means a data read was refused again right
+// after a refresh: another refresh would only loop, so the session ends.
+// Copied from optipeople.vola.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
@@ -11,20 +13,26 @@ import {
   cookieOptions,
   fetchCurrentUser,
   isAllowedUser,
+  loginPath,
   optipeopleLogin,
 } from "@/lib/auth";
+import { safeNextPath } from "@/lib/site";
+
+/** How long a refresh counts as "just now" for the loop breaker. */
+const REFRESHED_SECONDS = 60;
 
 export async function GET(request: NextRequest) {
-  const nextParam = request.nextUrl.searchParams.get("next");
-  // Only same-site relative paths: never redirect off-origin.
-  const next =
-    nextParam?.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/";
+  // Only paths on this origin: never redirect off-site.
+  const next = safeNextPath(request.nextUrl.searchParams.get("next"), request.url);
+  const retry = request.nextUrl.searchParams.get("retry") === "1";
 
-  const fail = () => {
-    const res = NextResponse.redirect(new URL("/login", request.url));
+  const fail = (error?: string) => {
+    const res = NextResponse.redirect(new URL(loginPath(next, error), request.url));
     for (const name of Object.values(SESSION_COOKIES)) res.cookies.delete(name);
     return res;
   };
+
+  if (retry) return fail("session");
 
   const store = await cookies();
   const refreshToken = store.get(SESSION_COOKIES.refresh)?.value;
@@ -57,5 +65,9 @@ export async function GET(request: NextRequest) {
     res.cookies.set(SESSION_COOKIES.refresh, result.data.refresh_token, options);
   }
   res.cookies.set(SESSION_COOKIES.email, me.user.email, options);
+  res.cookies.set(SESSION_COOKIES.refreshed, "1", {
+    ...cookieOptions(false),
+    maxAge: REFRESHED_SECONDS,
+  });
   return res;
 }

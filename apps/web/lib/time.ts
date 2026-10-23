@@ -5,8 +5,6 @@
 
 export const TIME_ZONE = "Europe/Copenhagen";
 
-const MS_PER_MINUTE = 60_000;
-const MS_PER_HOUR = 3_600_000;
 export const MS_PER_DAY = 86_400_000;
 
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -169,8 +167,9 @@ export function formatDuration(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "–";
   const totalSeconds = Math.max(0, Math.round(ms / 1000));
   if (totalSeconds < 60) return `${totalSeconds} s`;
-  const hours = Math.floor(ms / MS_PER_HOUR);
-  const minutes = Math.floor((ms % MS_PER_HOUR) / MS_PER_MINUTE);
+  // Every part from the rounded total, so 59.6 s reads "1 min", not "0 min".
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
   if (hours > 0) return `${hours} t ${String(minutes).padStart(2, "0")} min`;
   const seconds = totalSeconds % 60;
   return minutes >= 10 || seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
@@ -189,6 +188,11 @@ const integerFormat = new Intl.NumberFormat("da-DK");
 
 export function formatInt(n: number): string {
   return integerFormat.format(n);
+}
+
+/** "1 element", "3 elementer": a count with its noun in singular or plural. */
+export function formatCount(n: number, singular: string, plural: string): string {
+  return `${formatInt(n)} ${n === 1 ? singular : plural}`;
 }
 
 /** "tirsdag" -> "Tirsdag", for a date that opens a sentence. */

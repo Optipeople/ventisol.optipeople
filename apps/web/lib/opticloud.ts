@@ -7,18 +7,29 @@
 // Every response is wrapped in { data, errors, meta } and errors can arrive
 // with HTTP 200, so errors[] is checked on every call. A 401 means the token
 // expired between the page guard and the read: the caller sends the user
-// through /auth/refresh.
+// through /auth/refresh, once (a second 401 right after a refresh ends the
+// session instead of looping). A 403 means the user is signed in but may not
+// read Ventisol's tables: refreshing would not change that, so it goes to
+// /ingen-adgang.
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cachedJson } from "@/lib/api-cache";
+import { SESSION_COOKIES } from "@/lib/auth-cookies";
 import { API_URL, refreshPath, type AuthContext } from "@/lib/auth";
 import { fixturePageLoader } from "@/lib/fixtures";
 import { fixturesEnabled } from "@/lib/fixtures-flag";
 import { PAGE_SIZE, readScansSince, type ReadResult, type RowsPage } from "@/lib/paging";
 import { SCAN_TABLE_NAME, type MasterDataRow } from "@/lib/scans";
 
-/** The token was refused: send the user through the refresh flow. */
+/** 401, the token was refused: send the user through the refresh flow. */
 export class ApiAuthError extends Error {}
+
+/** 403, the token is fine but may not read this: no refresh, a clear page. */
+export class ApiAccessError extends Error {}
+
+/** Where a refused read sends the user. */
+export const NO_ACCESS_PATH = "/ingen-adgang";
 
 /**
  * How long reads stay in process memory (lib/api-cache.ts). Today keeps
@@ -59,7 +70,8 @@ async function apiGet<T>(token: string, path: string): Promise<{ value: T; bytes
     console.error(`Optipeople API ${path} unreachable:`, err);
     throw new Error("Optipeople API kunne ikke nås.");
   }
-  if (res.status === 401 || res.status === 403) throw new ApiAuthError(`${path}: ${res.status}`);
+  if (res.status === 401) throw new ApiAuthError(`${path}: 401`);
+  if (res.status === 403) throw new ApiAccessError(`${path}: 403`);
   if (!res.ok) throw new Error(`Optipeople API ${path} failed: ${res.status} ${res.statusText}`);
 
   const text = await res.text();
@@ -158,7 +170,14 @@ export async function loadScansSince(
       return { value: result, bytes: result.scans.length * 400 };
     });
   } catch (err) {
-    if (err instanceof ApiAuthError) redirect(refreshPath(ctx.currentPath));
+    if (err instanceof ApiAccessError) redirect(NO_ACCESS_PATH);
+    if (err instanceof ApiAuthError) {
+      // Refused again within a minute of a refresh: the new token does not
+      // help either, so /auth/refresh ends the session rather than loop.
+      const store = await cookies();
+      const justRefreshed = Boolean(store.get(SESSION_COOKIES.refreshed)?.value);
+      redirect(refreshPath(ctx.currentPath, justRefreshed));
+    }
     throw err;
   }
 }
