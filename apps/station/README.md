@@ -25,3 +25,12 @@ on a 12 x 6 grid, and widgets (clock, a KPI number, the last ten orders) can be 
 saved in %LOCALAPPDATA%\Ventisol\Station\layout.json.
 
 Next, working down: COM port scanner reader (`IScanSource`), setup screen, then the OptiPeople API.
+
+## Scanner at your desk
+
+A Zebra cradle ships in USB keyboard mode, and that works out of the box: plug it in and scan.
+The app tells a scanner from a person by speed (a fast burst ended by Enter). It is one scanner,
+known as `keyboard`, so it scans for whichever station is set to scanner `keyboard`.
+
+For the real setup, switch each cradle to a COM port: scan the "USB CDC Host" programming barcode
+in the LI3678 Product Reference Guide. The app then finds it by its USB serial number.
