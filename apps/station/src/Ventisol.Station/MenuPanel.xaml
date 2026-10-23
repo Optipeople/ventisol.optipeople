@@ -1,5 +1,5 @@
 <!-- Opens from the logo. Anyone may look: version, connection, updates, scanners.
-     Changing anything sits behind a PIN. DataContext is the MainViewModel. -->
+     Layout and setup are open for now; a PIN may come later. DataContext is the MainViewModel. -->
 <UserControl x:Class="Ventisol.Station.MenuPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -48,21 +48,31 @@
             <Image Source="{StaticResource OptipeopleLogoWhite}" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" />
         </DockPanel>
 
-        <!-- Changing things: behind a PIN, so a tap on the floor can't -->
-        <Border DockPanel.Dock="Bottom" CornerRadius="8" BorderBrush="{StaticResource Rule}" BorderThickness="1" Padding="20,16"
-                ToolTip="Opsætningen kommer i næste version">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="20" Text="&#xE72E;"
-                           Foreground="{StaticResource Ink3}" VerticalAlignment="Center" Margin="0,0,16,0" />
-                <StackPanel>
-                    <TextBlock Style="{StaticResource Left}" FontWeight="Bold" Text="Opsætning" />
-                    <TextBlock Style="{StaticResource Left}" FontSize="15" Foreground="{StaticResource Ink3}"
-                               Text="Kræver PIN · kommer snart" />
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- Setup: open for now, no PIN (the plan has no login on the floor yet) -->
+        <Button DockPanel.Dock="Bottom" Cursor="Hand" Focusable="False" Click="OnSetup" ToolTip="Opsætning">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" CornerRadius="8" Background="{StaticResource Rule}" Padding="20,16">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="20" Text="&#xE713;"
+                                       Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Left}" FontWeight="Bold" Text="Opsætning" />
+                                <TextBlock Style="{StaticResource Left}" FontSize="15" Foreground="{StaticResource Ink3}"
+                                           Text="OptiCloud, stationer og scannere" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.8" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Button.Template>
+        </Button>
 
-        <!-- Layout: open for now, goes behind the PIN with the setup screen -->
+        <!-- Layout: open for now, like the setup -->
         <Button DockPanel.Dock="Bottom" Margin="0,0,0,12" Cursor="Hand" Focusable="False" Click="OnArrange" ToolTip="Tilpas layout">
             <Button.Template>
                 <ControlTemplate TargetType="Button">
