@@ -321,7 +321,7 @@ public sealed class CloudSync : IDisposable
             CloudState.Online when failed > 0 => $"Forbundet · {refused}",
             CloudState.Online => _account.Length > 0 ? $"Forbundet · {_account}" : "Forbundet",
             CloudState.Offline => n > 0 ? $"Offline · {waiting}" : "Offline",
-            _ => $"Fejl: {_error}",
+            _ => n > 0 ? $"Fejl: {_error} · {waiting}" : $"Fejl: {_error}",
         };
         return new CloudStatus(_state, text, n, _lastSync, failed);
     }

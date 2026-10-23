@@ -5,8 +5,8 @@
 // One user (demo@ventisol.dk / demo), one account (Ventisol), seven machines named like the stations.
 // Tables, rows and tokens are kept in a JSON file next to the exe, so a restart keeps them.
 //
-//   FakeOptiCloud [url | port] [--reset]       default http://localhost:5099
-//   env FAKE_OPTICLOUD_URL, FAKE_OPTICLOUD_DATA (the data file)
+//   FakeOptiCloud [url | port] [--reset] [--forbid-writes]       default http://localhost:5099
+//   env FAKE_OPTICLOUD_URL, FAKE_OPTICLOUD_DATA (the data file), FAKE_FORBID_WRITES=1
 // GET /fake/state shows everything held, without a login.
 
 using System.Diagnostics;
@@ -21,6 +21,8 @@ var url = args.FirstOrDefault(a => a.StartsWith("http", StringComparison.Ordinal
     ?? "http://localhost:5099";
 var dataFile = Environment.GetEnvironmentVariable("FAKE_OPTICLOUD_DATA") is { Length: > 0 } f ? f : Path.Combine(AppContext.BaseDirectory, "fakeopticloud-data.json");
 if (args.Contains("--reset") && File.Exists(dataFile)) File.Delete(dataFile);
+// --forbid-writes (or FAKE_FORBID_WRITES=1): CreateRow answers 403, as for a user who may read but not write.
+var forbidWrites = args.Contains("--forbid-writes") || Environment.GetEnvironmentVariable("FAKE_FORBID_WRITES") == "1";
 
 var builder = WebApplication.CreateSlimBuilder();
 builder.Logging.ClearProviders();
@@ -133,6 +135,8 @@ app.MapPost("/api/MasterData/AddColumn/{tableId:guid}", async (Guid tableId, Htt
 
 app.MapPost("/api/MasterData/CreateRow/{tableId:guid}", async (Guid tableId, HttpRequest request) =>
 {
+    // As a user without write access: every new row refused with a bare 403.
+    if (forbidWrites) return Results.StatusCode(403);
     var b = await JsonBody(request);
     if (b?["values"] is not JsonObject values) return Error("values is required", 400);
     return store.Write(d =>
@@ -203,7 +207,7 @@ app.MapGet("/fake/state", () => Results.Json(store.Read(d => new
 app.MapFallback((HttpContext ctx) => Results.NotFound());
 
 Console.WriteLine($"Fake OptiCloud on {url}  user {Store.User} / {Store.Password}  account {Store.AccountName} {Store.Account}");
-Console.WriteLine($"Data in {dataFile}");
+Console.WriteLine($"Data in {dataFile}{(forbidWrites ? "  (CreateRow answers 403)" : "")}");
 app.Run();
 
 static IResult Data(object? data) => Results.Json(new { data, errors = Array.Empty<object>(), meta = (object?)null });

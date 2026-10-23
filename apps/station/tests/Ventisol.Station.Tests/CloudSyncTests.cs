@@ -248,7 +248,7 @@ public sealed class CloudSyncTests : IDisposable
         sync.Record(In(A, 1, Now));
         await Until(() => api.Count("CreateRow") > 4 && sync.Status.State == CloudState.Error);
 
-        Assert.Equal("Fejl: " + OptiCloudException.Forbidden, sync.Status.Text);
+        Assert.Equal("Fejl: " + OptiCloudException.Forbidden + " · 1 scanning venter", sync.Status.Text);
         Assert.Equal((1, 0), (sync.Pending, sync.Status.Failed));
         api.Override = null;
         await Until(() => api.RowCount == 1 && sync.Status.State == CloudState.Online);

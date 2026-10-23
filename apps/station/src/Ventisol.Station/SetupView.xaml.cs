@@ -63,7 +63,7 @@ public partial class SetupView : UserControl
         }
         ViewModel = null;
         PasswordInput.Clear();
-        Keyboard.ClearFocus();
+        FocusWindow();
 
         void Gone()
         {
@@ -89,7 +89,16 @@ public partial class SetupView : UserControl
         PasswordHint.Visibility = PasswordInput.Password.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // A scanner in keyboard mode types its scan: make sure it doesn't land in a field.
-    void OnIdentify(object sender, RoutedEventArgs e) => Keyboard.ClearFocus();
+    void OnIdentify(object sender, RoutedEventArgs e) => FocusWindow();
+
+    // Out of any field, onto the window. Not Keyboard.ClearFocus: with nothing focused WPF raises no
+    // key events at all, so a keyboard-mode scanner went unheard (in Identificér, and at the stations
+    // after the setup closed) until someone clicked the window.
+    void FocusWindow()
+    {
+        if (Window.GetWindow(this) is { } w) Keyboard.Focus(w);
+        else Keyboard.ClearFocus();
+    }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {

@@ -123,7 +123,8 @@
                                     </Style>
                                 </Ellipse.Style>
                             </Ellipse>
-                            <TextBlock Style="{StaticResource Value}" Text="{Binding CloudText}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
+                            <!-- Wraps rather than trims: an error is only of use when it can be read to the end -->
+                            <TextBlock Style="{StaticResource Value}" Text="{Binding CloudText}" TextWrapping="Wrap" TextAlignment="Right" MaxWidth="300" />
                         </StackPanel>
                         <TextBlock Style="{StaticResource Left}" Text="OptiCloud" />
                     </DockPanel>
