@@ -11,8 +11,7 @@ static class WindowPlacement
 {
     sealed record Saved(double Left, double Top, double Width, double Height, bool Maximized);
 
-    static readonly string File = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station", "window.json");
+    static readonly string File = Path.Combine(AppPaths.Data, "window.json");
 
     public static void Track(Window w)
     {

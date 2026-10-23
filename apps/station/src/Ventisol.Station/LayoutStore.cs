@@ -11,8 +11,7 @@ static class LayoutStore
 {
     sealed record Saved(List<TilePlace> Tiles, List<WidgetSpec> Widgets);
 
-    static readonly string File = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station", "layout.json");
+    static readonly string File = Path.Combine(AppPaths.Data, "layout.json");
 
     public static (StationLayout Layout, IReadOnlyList<WidgetSpec> Widgets) Load(IReadOnlyList<string> stationIds)
     {

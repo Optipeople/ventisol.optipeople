@@ -28,8 +28,7 @@ public partial class MainWindow : Window
     // on the shop floor never sends a made-up scan.
     readonly bool _demoInput;
 
-    static readonly string DataFolder = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station");
+    static readonly string DataFolder = AppPaths.Data;
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly bool _kiosk;
     readonly Dictionary<string, Tile> _tiles = [];

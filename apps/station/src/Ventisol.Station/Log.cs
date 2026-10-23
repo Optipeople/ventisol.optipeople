@@ -6,8 +6,7 @@ namespace Ventisol.Station;
 // For finding out afterwards what happened on the shop floor PC. Never throws.
 static class Log
 {
-    static readonly string Folder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station", "logs");
+    static readonly string Folder = Path.Combine(AppPaths.Data, "logs");
     static readonly Lock Gate = new();
     static bool _pruned;
 

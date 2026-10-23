@@ -11,8 +11,7 @@ namespace Ventisol.Station;
 // this PC can read it back. It is never written as plain text, and never logged.
 static class SettingsStore
 {
-    static readonly string Folder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station");
+    static readonly string Folder = AppPaths.Data;
 
     static readonly string SettingsFile = Path.Combine(Folder, "settings.json");
     static readonly string PasswordFile = Path.Combine(Folder, "password.bin");
