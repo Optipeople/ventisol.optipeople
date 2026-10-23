@@ -2,12 +2,14 @@ using System.Collections.ObjectModel;
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Ventisol.Station.Core;
+using Ventisol.Station.Core.Cloud;
 
 namespace Ventisol.Station.ViewModels;
 
 public sealed partial class MainViewModel : ObservableObject
 {
     DateTimeOffset _reportRefreshed, _widgetsRefreshed;
+    DateTime _day = DateTime.Today;
 
     public MainViewModel(IEnumerable<StationConfig> stations)
     {
@@ -67,8 +69,28 @@ public sealed partial class MainViewModel : ObservableObject
         Scanned?.Invoke(this, EventArgs.Empty);
     }
 
+    // Today as OptiCloud has it: on start, so a restart loses nothing, and on a viewer every few seconds.
+    public void Apply(ReplayResult today, DateTimeOffset now)
+    {
+        History.Clear();
+        History.AddRange(today.Done);
+        foreach (var s in Stations)
+        {
+            if (today.InProgress.TryGetValue(s.Number, out var p)) s.Restore(p.Barcode, p.Since, now);
+            else s.Restore(null, default, now);
+        }
+        _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
+    }
+
     public void Tick(DateTimeOffset now)
     {
+        // The report is about today: at midnight what finished yesterday drops off.
+        if (now.Date != _day)
+        {
+            _day = now.Date;
+            History.RemoveAll(r => r.End.Date < _day);
+        }
+
         ClockText = now.ToString("HH':'mm");
         DateText = now.ToString("dddd d. MMMM");
         foreach (var s in Stations) s.Tick(now);

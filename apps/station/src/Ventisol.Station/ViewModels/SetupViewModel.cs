@@ -241,10 +241,11 @@ public sealed partial class SetupViewModel : ObservableObject
         IReadOnlyList<(Guid Id, string Name)> machines;
         try { machines = await _loadMachines(settings, password, _closing.Token); }
         catch (OperationCanceledException) { return; }
-        catch
+        catch (Exception ex)
         {
             if (_closed) return;
-            (MachinesStatus, MachinesText) = quiet ? (SetupStatus.None, "") : (SetupStatus.Error, "Kunne ikke hente maskinerne");
+            var why = ex is Core.Cloud.OptiCloudException ? $": {ex.Message}" : "";
+            (MachinesStatus, MachinesText) = quiet ? (SetupStatus.None, "") : (SetupStatus.Error, $"Kunne ikke hente maskinerne{why}");
             return;
         }
         if (_closed) return;

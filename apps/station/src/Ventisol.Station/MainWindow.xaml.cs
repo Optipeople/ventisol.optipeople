@@ -7,6 +7,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Ventisol.Station.Core;
+using Ventisol.Station.Core.Cloud;
 using Ventisol.Station.Scanning;
 using Ventisol.Station.ViewModels;
 
@@ -22,6 +23,13 @@ public partial class MainWindow : Window
     readonly DemoScanner _demo;
     readonly KeyboardScanSource _keyboard = new();
     readonly ScanSources _scans;
+    readonly CloudSync _cloud;
+    // Taps and number keys make up scans only while OptiCloud is not set up, so a station
+    // on the shop floor never sends a made-up scan.
+    readonly bool _demoInput;
+
+    static readonly string DataFolder = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station");
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly bool _kiosk;
     readonly Dictionary<string, Tile> _tiles = [];
@@ -52,7 +60,9 @@ public partial class MainWindow : Window
         BuildGuides();
         BuildDots();
         BuildPicker();
-        if (showcase) _demo.Showcase(DateTimeOffset.Now);
+        _demoInput = !_settings.IsConnected;
+        // Sample scans would be sent to OptiCloud like real ones, so only without it.
+        if (showcase && _demoInput) _demo.Showcase(DateTimeOffset.Now);
 
         if (kiosk)
         {
@@ -83,10 +93,30 @@ public partial class MainWindow : Window
         _scans.OnError = (_, ex) => Log.Write($"Scanner source failed: {ex.Message}");
         _scans.Scanned += (_, scan) => Dispatcher.BeginInvoke(() => OnRawScan(scan));
         _scans.ConnectionChanged += (_, _) => Dispatcher.BeginInvoke(OnScannersChanged);
-        _keyboard.Typed += (_, c) => { if (c is >= '1' and <= '7') _demo.Scan(c - '0'); };
+        _keyboard.Typed += (_, c) => { if (_demoInput && c is >= '1' and <= '7') _demo.Scan(c - '0'); };
         _scans.Start();
         OnScannersChanged();
-        Closed += (_, _) => _scans.Dispose();
+
+        _cloud = new CloudSync(_settings, SettingsStore.LoadPassword(), DataFolder, Log.Write);
+        _cloud.StatusChanged += (_, _) => Dispatcher.BeginInvoke(ShowCloudStatus);
+        _cloud.Loaded += (_, today) => Dispatcher.BeginInvoke(() => _vm.Apply(today, DateTimeOffset.Now));
+        _vm.Recorded += (_, r) =>
+        {
+            var machine = _settings.Stations.FirstOrDefault(s => s.Number == r.Station.Number)?.MachineId;
+            if (ScanEvent.From(r, machine) is { } e && !_cloud.Record(e)) Log.Write($"Scan not saved for sending: {e.Barcode.Raw} {e.Direction}");
+        };
+        ShowCloudStatus();
+        _cloud.Start();
+        Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
+
+        Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); };
+    }
+
+    void ShowCloudStatus()
+    {
+        var status = _cloud.Status;
+        _vm.CloudText = status.Text;
+        _vm.CloudHealth = status.State switch { CloudState.Online => "Ok", CloudState.Error => "Alarm", _ => "Warn" };
     }
 
     // ===== Scanners =====
@@ -112,7 +142,7 @@ public partial class MainWindow : Window
     void OnScannersChanged()
     {
         if (Setup.IsOpen) Setup.ViewModel!.RefreshScanners();
-        if (!_settings.Stations.Any(s => s.ScannerSerial is not null)) return;
+        if (_settings.Mode == StationMode.Viewer || !_settings.Stations.Any(s => s.ScannerSerial is not null)) return;
         var connected = _scans.Connected;
         foreach (var station in _vm.Stations)
         {
@@ -128,8 +158,8 @@ public partial class MainWindow : Window
     {
         if (_editing || Setup.IsOpen) return;
         var vm = new SetupViewModel(SettingsStore.Load(), SettingsStore.LoadPassword(),
-            testConnection: TestConnection,
-            loadMachines: LoadMachines,
+            testConnection: (s, pw, ct) => CloudSync.TestConnectionAsync(s, pw, ct),
+            loadMachines: (s, pw, ct) => CloudSync.LoadMachinesAsync(s, pw, ct),
             connectedScanners: () => _scans.Connected);
         vm.Saved += (settings, newPassword) =>
         {
@@ -141,12 +171,11 @@ public partial class MainWindow : Window
         Setup.Open(vm);
     }
 
-    // Replaced by the OptiCloud client.
-    static Task<string?> TestConnection(StationSettings s, string password, CancellationToken ct) => Task.FromResult<string?>("Forbindelsen til OptiCloud er ikke bygget endnu");
-    static Task<IReadOnlyList<(Guid Id, string Name)>> LoadMachines(StationSettings s, string password, CancellationToken ct) => Task.FromResult<IReadOnlyList<(Guid, string)>>([]);
-
     void Restart()
     {
+        // The new one uses the same outbox folder, so this one lets go of it first.
+        _cloud.Dispose();
+        _scans.Dispose();
         var args = Environment.GetCommandLineArgs().Skip(1).Where(a => !a.Equals("--showcase", StringComparison.OrdinalIgnoreCase));
         System.Diagnostics.Process.Start(Environment.ProcessPath!, args);
         Application.Current.Shutdown();
@@ -387,7 +416,7 @@ public partial class MainWindow : Window
         var tile = _tiles[id];
         if (!_editing)
         {
-            if (tile.Station is { } n) _demo.Scan(n); // Demo: a tap on a station scans.
+            if (_demoInput && tile.Station is { } n) _demo.Scan(n); // Demo: a tap on a station scans.
             return;
         }
         if (_dragFrom is not { } from) return;
@@ -581,6 +610,7 @@ public partial class MainWindow : Window
         if (n == 0) return;
 
         // Plain 1 to 7 come back through _keyboard.Typed, once it is clear they were not a scan.
+        if (!_demoInput) return;
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) _demo.ToggleScanner(n);
         else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) _demo.Scan(n, otherElement: true);
         else return;

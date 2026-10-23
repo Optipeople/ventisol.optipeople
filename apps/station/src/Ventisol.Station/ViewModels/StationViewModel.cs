@@ -65,6 +65,24 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
         return result;
     }
 
+    // What OptiCloud says this station is working on, after a restart or on a viewer. No flash:
+    // nobody just scanned.
+    public void Restore(Barcode? barcode, DateTimeOffset since, DateTimeOffset now)
+    {
+        if (barcode is null)
+        {
+            if (_state.IsBusy) { _state.Reset(); Clear(); }
+            return;
+        }
+        if (_state.Current?.Raw == barcode.Raw && _state.StartedAt == since) return;
+        _state.Restore(barcode, since);
+        IsBusy = true;
+        Code = barcode.Raw;
+        OrderNumber = barcode.Order.ToString();
+        DetailText = $"{barcode.PositionLabel} · stk. {barcode.Piece}";
+        ElapsedText = Format.Duration(_state.Elapsed(now));
+    }
+
     public void Unreadable(string raw, DateTimeOffset now) =>
         ShowFlash(FlashKind.Rejected, "Ukendt stregkode", $"{raw} er ikke en elementlabel", now);
 
