@@ -105,10 +105,12 @@ function asTableList(data: unknown): TableInfo[] {
 }
 
 /** Id of the VentisolScans table, matched by name case-insensitively. */
+// Cached per user, not per account: what a token may read is decided by OptiCloud, so one user's
+// read must never be served to another whose token would be refused.
 async function getScanTableId(ctx: AuthContext): Promise<string> {
   const find = async (includeHidden: boolean) => {
     const path = `/api/MasterData/GetTables/${ctx.accountId}${includeHidden ? "?includeHidden=true" : ""}`;
-    const tables = await cachedJson(`${ctx.accountId}|${path}`, CACHE_SECONDS.tables, () =>
+    const tables = await cachedJson(`${ctx.user.id}|${path}`, CACHE_SECONDS.tables, () =>
       apiGet<unknown>(ctx.token, path)
     );
     return asTableList(tables).find(
@@ -160,7 +162,7 @@ export async function loadScansSince(
     return readScansSince(fixturePageLoader(now), since);
   }
   try {
-    return await cachedJson(`${ctx.accountId}|scans|${since}`, ttlSeconds, async () => {
+    return await cachedJson(`${ctx.user.id}|${ctx.accountId}|scans|${since}`, ttlSeconds, async () => {
       const tableId = await getScanTableId(ctx);
       const result = await readScansSince(apiPageLoader(ctx, tableId), since);
       if (result.unordered) {
