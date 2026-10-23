@@ -33,6 +33,8 @@ public partial class SetupView : UserControl
         DataContext = vm;
         PasswordInput.Clear();
         UpdatePasswordHint();
+        // A fresh screen starts at the top, not where the last one was left.
+        Scroller.ScrollToTop();
 
         Visibility = Visibility.Visible;
         if (Motion.On)
@@ -92,6 +94,6 @@ public partial class SetupView : UserControl
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         base.OnPreviewKeyDown(e);
-        if (e.Key == Key.Escape && IsOpen) { Cancel(); e.Handled = true; }
+        if (e.Key == Key.Escape && IsOpen && !Ui.IsDropDownOpen()) { Cancel(); e.Handled = true; }
     }
 }

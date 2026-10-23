@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- A local stand-in for the OptiPeople API, to run the station app and the reports site
+       without real OptiCloud credentials. See "Try it without OptiCloud" in apps/station/README.md. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>FakeOptiCloud</AssemblyName>
+    <RootNamespace>FakeOptiCloud</RootNamespace>
+  </PropertyGroup>
+
+</Project>

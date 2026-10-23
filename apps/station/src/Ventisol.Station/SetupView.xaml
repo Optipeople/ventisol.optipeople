@@ -393,7 +393,7 @@
                     </DockPanel>
                 </Border>
 
-                <ScrollViewer VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
                     <StackPanel Margin="0,0,8,0">
 
                         <!-- ===== Skærmens rolle ===== -->

@@ -315,8 +315,24 @@
         <DockPanel x:Name="Caption" Margin="52,26,52,6" Height="34" IsHitTestVisible="False">
             <TextBlock DockPanel.Dock="Right" Style="{StaticResource Timer}" FontSize="17" VerticalAlignment="Center" Text="{Binding ClockText}" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,24,0" VerticalAlignment="Center">
-                <Ellipse Width="8" Height="8" Fill="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,1,8,0" />
-                <TextBlock Style="{StaticResource TextBase}" FontSize="15" Foreground="{StaticResource Ink3}" Text="Demo, sender ikke" />
+                <!-- The OptiCloud state, as in the menu -->
+                <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,1,8,0">
+                    <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="{StaticResource Warn}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CloudHealth}" Value="Ok">
+                                    <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding CloudHealth}" Value="Alarm">
+                                    <Setter Property="Fill" Value="{StaticResource Alarm}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Ellipse.Style>
+                </Ellipse>
+                <TextBlock Style="{StaticResource TextBase}" FontSize="15" Foreground="{StaticResource Ink3}" Text="{Binding CloudText}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="420" />
             </StackPanel>
             <TextBlock Style="{StaticResource TextBase}" FontSize="15" Foreground="{StaticResource Ink3}" HorizontalAlignment="Left"
                        VerticalAlignment="Center" Text="Montage · Ventisol, Vrå" />

@@ -42,8 +42,10 @@ public sealed class KeyboardScanSource : IScanSource
     {
         // Typing into a text box is left alone; there a scan simply types itself.
         if (e.OriginalSource is TextBoxBase or PasswordBox) return false;
-        // The input time, not now: keys may wait in the queue while the UI is busy.
-        var at = DateTimeOffset.Now.AddMilliseconds(unchecked(e.Timestamp - Environment.TickCount));
+        // Now, not e.Timestamp: the first key after a quiet spell carries a stale timestamp (hundreds
+        // of ms old, seen in the e2e run), so the gap to the second key looked like a person and the
+        // first digit of every scan was dropped. Now is also the clock the expiry timer uses.
+        var at = DateTimeOffset.Now;
         if (e.Key == Key.Enter) return OnEnter(at);
         return CharOf(e.Key, Keyboard.Modifiers) is { } c && OnKey(c, at);
     }

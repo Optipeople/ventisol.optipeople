@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 
 namespace Ventisol.Station;
@@ -18,7 +19,9 @@ static class Log
             lock (Gate)
             {
                 Directory.CreateDirectory(Folder);
-                File.AppendAllText(Path.Combine(Folder, $"{now:yyyy-MM-dd}.log"), $"{now:HH:mm:ss.fff}  {message}{Environment.NewLine}");
+                // Invariant: under da-DK, ':' in a format is the culture's time separator, a '.'.
+                File.AppendAllText(Path.Combine(Folder, $"{now:yyyy-MM-dd}.log"),
+                    $"{now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)}  {message}{Environment.NewLine}");
                 if (!_pruned) Prune(now);
             }
         }

@@ -598,6 +598,8 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            // Esc on an open dropdown closes just the dropdown, not the setup with everything typed in it.
+            if (Ui.IsDropDownOpen()) return;
             if (Setup.IsOpen) { Setup.Cancel(); return; }
             if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
             else if (_editing) StopEditing();
