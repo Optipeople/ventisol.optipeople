@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTimeline,
   computeKpis,
-  intervalsStartingIn,
+  intervalsEndingIn,
   orderStatus,
   pairScans,
   sortOrders,
@@ -262,12 +262,12 @@ describe("summarizeStations", () => {
   });
 });
 
-describe("intervalsStartingIn", () => {
-  it("gives an interval to the day it started", () => {
+describe("intervalsEndingIn", () => {
+  it("gives an interval to the day it ended", () => {
     const scans = [scan("In", at("23:50", "2026-10-20")), scan("Out", at("00:10"))];
     const ivs = pairScans(scans, at("12:00"));
-    expect(intervalsStartingIn(ivs, dayStart("2026-10-20"), dayEnd("2026-10-20"))).toHaveLength(1);
-    expect(intervalsStartingIn(ivs, dayStart("2026-10-21"), dayEnd("2026-10-21"))).toHaveLength(0);
+    expect(intervalsEndingIn(ivs, dayStart("2026-10-20"), dayEnd("2026-10-20"))).toHaveLength(0);
+    expect(intervalsEndingIn(ivs, dayStart("2026-10-21"), dayEnd("2026-10-21"))).toHaveLength(1);
   });
 });
 

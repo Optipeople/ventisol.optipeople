@@ -129,7 +129,7 @@ the station app:
 - An order is **packed** when it has an Out at a Packing station and nothing
   on it is in progress (a finished rework pass after packing does not undo
   it); **I gang** when something is in progress; otherwise **Afventer**.
-- A pass belongs to the (Copenhagen) day it started.
+- A pass belongs to the (Copenhagen) day it ended, as in the station app; one in progress shows on today. Day and period reads start 36 hours early so a pass begun the day before has its In.
 - Station utilisation: time worked / time from the day's first scan to now
   (today) or to the last scan (past days). Same rules as `DayReport` in the
   station app.

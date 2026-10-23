@@ -164,9 +164,13 @@ export function pairScans(scans: Scan[], now: number): WorkInterval[] {
   return result;
 }
 
-/** Intervals that started in [from, to). An interval belongs to the day it started. */
-export function intervalsStartingIn(intervals: WorkInterval[], from: number, to: number): WorkInterval[] {
-  return intervals.filter((iv) => iv.start >= from && iv.start < to);
+/**
+ * Intervals that ended in [from, to). As in the station app, work belongs to the day it ended, so
+ * an element left overnight counts on the morning it was finished. One in progress ends "now", so
+ * it shows on today only.
+ */
+export function intervalsEndingIn(intervals: WorkInterval[], from: number, to: number): WorkInterval[] {
+  return intervals.filter((iv) => iv.end >= from && iv.end < to);
 }
 
 export function scansIn(scans: Scan[], from: number, to: number): Scan[] {

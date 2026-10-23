@@ -6,9 +6,10 @@ import { CACHE_SECONDS, loadScansSince } from "@/lib/opticloud";
 import {
   buildTimeline,
   computeKpis,
-  intervalsStartingIn,
+  intervalsEndingIn,
   pairScans,
   scansIn,
+  STALE_OPEN_MS,
   summarizeElements,
   summarizeOrders,
   summarizeStations,
@@ -25,15 +26,15 @@ export async function loadDayReport(ctx: AuthContext, day: string, now: number) 
   const today = dayKey(now);
   const from = dayStart(day);
   const to = dayEnd(day);
-  // Read from the day's start up to now: an Out the next morning still
-  // closes an element started on the day.
+  // Read from 36 hours before the day up to now, so an element started the day
+  // before and finished on this day has its In.
   const read = await loadScansSince(
     ctx,
-    from,
+    from - STALE_OPEN_MS,
     day === today ? CACHE_SECONDS.today : CACHE_SECONDS.past,
     now
   );
-  const intervals = intervalsStartingIn(pairScans(read.scans, now), from, to);
+  const intervals = intervalsEndingIn(pairScans(read.scans, now), from, to);
   const orders = summarizeOrders(intervals, scansIn(read.scans, from, to));
   return {
     day,
@@ -70,11 +71,11 @@ export async function loadPeriodReport(ctx: AuthContext, fromDay: string, toDay:
   const to = dayEnd(toDay);
   const read = await loadScansSince(
     ctx,
-    from,
+    from - STALE_OPEN_MS,
     toDay >= today ? CACHE_SECONDS.today : CACHE_SECONDS.past,
     now
   );
-  const intervals = intervalsStartingIn(pairScans(read.scans, now), from, to);
+  const intervals = intervalsEndingIn(pairScans(read.scans, now), from, to);
   const orders = summarizeOrders(intervals, scansIn(read.scans, from, to));
   return { orders, kpis: computeKpis(intervals, orders), read };
 }
