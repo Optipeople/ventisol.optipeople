@@ -1,0 +1,31 @@
+# Builds and tests the station app on every push to main and every pull request that touches it.
+name: station-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/station/**', '.github/workflows/station-ci.yml']
+  pull_request:
+    paths: ['apps/station/**', '.github/workflows/station-ci.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: station-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/station
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore Ventisol.Station.slnx
+      - run: dotnet build Ventisol.Station.slnx -c Release --no-restore
+      - run: dotnet test Ventisol.Station.slnx -c Release --no-build

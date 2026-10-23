@@ -1,0 +1,109 @@
+# A tag like station-v1.2.0 builds, tests, packages and publishes station app version 1.2.0.
+# This repo is private, so the update packages go to a public repo (UPDATE_REPO) as a GitHub Release.
+# The station PCs read that repo without a token (UpdateService.DefaultUrl must point at it).
+#
+# Repo settings:
+#   variable UPDATE_REPO      owner/name of the public releases repo (default below)
+#   secret   RELEASE_TOKEN    token with Contents read and write on UPDATE_REPO
+#   optional, for code signing with Azure Trusted Signing (skipped when AZURE_CLIENT_ID is not set):
+#   secrets  AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET   service principal with the
+#            "Trusted Signing Certificate Profile Signer" role
+#   variables AZURE_SIGNING_ENDPOINT (e.g. https://weu.codesigning.azure.net),
+#            AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE
+name: station-release
+
+on:
+  push:
+    tags: ['station-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: station-release
+  cancel-in-progress: false
+
+env:
+  UPDATE_REPO: ${{ vars.UPDATE_REPO || 'Optipeople/ventisol-station-updates' }}
+  # Same as the Velopack package in Ventisol.Station.csproj.
+  VPK_VERSION: 1.2.161
+  # Never change: installed PCs find their updates by this id.
+  PACK_ID: VentisolStation
+  DOTNET_NOLOGO: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: apps/station
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Version from tag
+        id: version
+        run: |
+          $v = '${{ github.ref_name }}'.Substring('station-v'.Length)
+          if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Tag must look like station-v1.2.0, got ${{ github.ref_name }}" }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - run: dotnet restore Ventisol.Station.slnx
+      - run: dotnet build Ventisol.Station.slnx -c Release --no-restore -p:Version=${{ steps.version.outputs.value }}
+      - run: dotnet test Ventisol.Station.slnx -c Release --no-build
+
+      # Self-contained, so the PC needs no .NET installed. Version ends up in AssemblyInformationalVersion,
+      # which the menu shows.
+      - name: Publish
+        run: >
+          dotnet publish src/Ventisol.Station/Ventisol.Station.csproj -c Release -r win-x64 --self-contained
+          -p:Version=${{ steps.version.outputs.value }} -o ${{ runner.temp }}/publish
+
+      - run: dotnet tool install -g vpk --version $env:VPK_VERSION
+
+      # The previous release, so vpk can build a small delta package against it. None on the first release.
+      - name: Download previous release
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          vpk download github --repoUrl "https://github.com/$env:UPDATE_REPO" --token $env:RELEASE_TOKEN -o "${{ runner.temp }}/releases"
+          if ($LASTEXITCODE -ne 0) { Write-Host "No previous release, so no delta this time"; $global:LASTEXITCODE = 0 }
+
+      - name: Pack
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $pack = @(
+            'pack', '--packId', $env:PACK_ID, '--packVersion', '${{ steps.version.outputs.value }}',
+            '--packDir', '${{ runner.temp }}/publish', '--mainExe', 'VentisolStation.exe',
+            '--packTitle', 'Ventisol MES-skærm', '--packAuthors', 'Optipeople',
+            '--icon', 'src/Ventisol.Station/Assets/app.ico', '--outputDir', '${{ runner.temp }}/releases')
+          # Unsigned, Defender may flag the installer (SchirmerFix got Wacatac), so sign when we can.
+          if ($env:AZURE_CLIENT_ID) {
+            $signing = '${{ runner.temp }}/trusted-signing.json'
+            @{ Endpoint = '${{ vars.AZURE_SIGNING_ENDPOINT }}'; CodeSigningAccountName = '${{ vars.AZURE_SIGNING_ACCOUNT }}'; CertificateProfileName = '${{ vars.AZURE_SIGNING_PROFILE }}' } |
+              ConvertTo-Json | Set-Content $signing -Encoding utf8
+            $pack += '--azureTrustedSignFile', $signing
+          } else {
+            Write-Host "::warning::Not signed: AZURE_CLIENT_ID is not set"
+          }
+          vpk @pack
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload to ${{ env.UPDATE_REPO }}
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          $v = '${{ steps.version.outputs.value }}'
+          $upload = @(
+            'upload', 'github', '--repoUrl', "https://github.com/$env:UPDATE_REPO", '--token', $env:RELEASE_TOKEN,
+            '-o', '${{ runner.temp }}/releases', '--publish', '--tag', "station-v$v", '--releaseName', "Ventisol MES-skærm $v")
+          # A version like 1.3.0-beta1 is a pre-release: the station PCs skip it.
+          if ($v.Contains('-')) { $upload += '--pre' }
+          vpk @upload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -7,6 +7,8 @@
     <AssemblyName>VentisolStation</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Program.Main, so Velopack runs before WPF starts. -->
+    <StartupObject>Ventisol.Station.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +20,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="System.IO.Ports" Version="10.0.13" />
     <PackageReference Include="System.Management" Version="10.0.13" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <ItemGroup>

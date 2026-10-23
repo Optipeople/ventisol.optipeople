@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using Ventisol.Station.Core;
 using Ventisol.Station.Core.Cloud;
 using Ventisol.Station.Scanning;
+using Ventisol.Station.Updates;
 using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     readonly KeyboardScanSource _keyboard = new();
     readonly ScanSources _scans;
     readonly CloudSync _cloud;
+    readonly UpdateService _updates;
     // Taps and number keys make up scans only while OptiCloud is not set up, so a station
     // on the shop floor never sends a made-up scan.
     readonly bool _demoInput;
@@ -108,7 +110,13 @@ public partial class MainWindow : Window
         _cloud.Start();
         Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
 
-        Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); };
+        // An update restarts the app, so it waits until no scan has come in for 10 minutes (or night).
+        _updates = new UpdateService(UpdateService.DefaultUrl, () => DateTimeOffset.Now - _vm.LastScanAt > TimeSpan.FromMinutes(10), Log.Write);
+        _updates.StatusChanged += (_, text) => _vm.UpdateText = text;
+        _updates.Start();
+        _vm.UpdateText = _updates.Status;
+
+        Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); _updates.Dispose(); };
     }
 
     void ShowCloudStatus()
