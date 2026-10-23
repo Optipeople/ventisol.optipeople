@@ -33,4 +33,17 @@ public sealed class StationState(StationConfig station)
         StartedAt = null;
         return new ScanResult(ScanKind.Out, Station, barcode, now, duration);
     }
+
+    // Back to what OptiCloud holds, after a restart or on a viewer: this element in progress since then.
+    public void Restore(Barcode barcode, DateTimeOffset startedAt)
+    {
+        Current = barcode;
+        StartedAt = startedAt;
+    }
+
+    public void Reset()
+    {
+        Current = null;
+        StartedAt = null;
+    }
 }
