@@ -7,6 +7,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Ventisol.Station.Core;
+using Ventisol.Station.Scanning;
 using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
@@ -16,8 +17,11 @@ public partial class MainWindow : Window
     // The report page goes back to the stations after this long without a touch.
     static readonly TimeSpan ReportIdle = TimeSpan.FromSeconds(60);
 
-    readonly MainViewModel _vm = new(StationConfig.Defaults);
+    readonly StationSettings _settings = SettingsStore.Load();
+    readonly MainViewModel _vm;
     readonly DemoScanner _demo;
+    readonly KeyboardScanSource _keyboard = new();
+    readonly ScanSources _scans;
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly bool _kiosk;
     readonly Dictionary<string, Tile> _tiles = [];
@@ -36,6 +40,7 @@ public partial class MainWindow : Window
     public MainWindow(bool kiosk, bool showcase)
     {
         InitializeComponent();
+        _vm = new MainViewModel(_settings.Stations.Select(s => s.Config));
         DataContext = _vm;
         _demo = new DemoScanner(_vm);
         _kiosk = kiosk;
@@ -63,12 +68,88 @@ public partial class MainWindow : Window
 
         Menu.CloseRequested += (_, _) => CloseMenu();
         Menu.ArrangeRequested += (_, _) => { CloseMenu(); StartEditing(); };
+        Menu.SetupRequested += (_, _) => { CloseMenu(); OpenSetup(); };
 
         // A scan always brings the stations back, so its answer is seen.
         _vm.Scanned += (_, _) => { CloseMenu(); ShowReport(false); };
 
         _clock.Tick += (_, _) => OnTick();
         _clock.Start();
+
+        // A viewer has no scanners; the keyboard source stays for the demo keys.
+        _scans = _settings.Mode == StationMode.Scan
+            ? new ScanSources(new ComPortScanSource(Log.Write), _keyboard)
+            : new ScanSources(_keyboard);
+        _scans.OnError = (_, ex) => Log.Write($"Scanner source failed: {ex.Message}");
+        _scans.Scanned += (_, scan) => Dispatcher.BeginInvoke(() => OnRawScan(scan));
+        _scans.ConnectionChanged += (_, _) => Dispatcher.BeginInvoke(OnScannersChanged);
+        _keyboard.Typed += (_, c) => { if (c is >= '1' and <= '7') _demo.Scan(c - '0'); };
+        _scans.Start();
+        OnScannersChanged();
+        Closed += (_, _) => _scans.Dispose();
+    }
+
+    // ===== Scanners =====
+
+    // Which station a scanner belongs to, as set up. Before any scanner is set up, a scanner in
+    // keyboard mode scans at the first station, so one can be tried at a desk without setup.
+    int? StationFor(string scannerId)
+    {
+        if (_settings.Stations.FirstOrDefault(s => s.ScannerSerial == scannerId) is { } set) return set.Number;
+        var anySetUp = _settings.Stations.Any(s => s.ScannerSerial is not null);
+        return !anySetUp && scannerId == KeyboardScanSource.Id ? _settings.Stations.FirstOrDefault()?.Number : null;
+    }
+
+    void OnRawScan(RawScan scan)
+    {
+        if (Setup.IsOpen) { Setup.ViewModel!.OnRawScan(scan); return; }
+        if (StationFor(scan.ScannerId) is { } n) _vm.Scan(n, scan.Raw, scan.At);
+        else Log.Write($"Scan from scanner {scan.ScannerId}, which no station has: {scan.Raw}");
+    }
+
+    // A station shows its scanner as missing when the scanner set up for it is not plugged in.
+    // Until scanners are set up, the tiles are left as they are, so the demo works as before.
+    void OnScannersChanged()
+    {
+        if (Setup.IsOpen) Setup.ViewModel!.RefreshScanners();
+        if (!_settings.Stations.Any(s => s.ScannerSerial is not null)) return;
+        var connected = _scans.Connected;
+        foreach (var station in _vm.Stations)
+        {
+            var serial = _settings.Stations.First(s => s.Number == station.Number).ScannerSerial;
+            // A keyboard-mode scanner can't be seen until it scans, so it counts as there.
+            station.ScannerConnected = serial == KeyboardScanSource.Id || serial is not null && connected.Contains(serial);
+        }
+    }
+
+    // ===== Setup =====
+
+    void OpenSetup()
+    {
+        if (_editing || Setup.IsOpen) return;
+        var vm = new SetupViewModel(SettingsStore.Load(), SettingsStore.LoadPassword(),
+            testConnection: TestConnection,
+            loadMachines: LoadMachines,
+            connectedScanners: () => _scans.Connected);
+        vm.Saved += (settings, newPassword) =>
+        {
+            SettingsStore.Save(settings);
+            if (newPassword is not null) SettingsStore.SavePassword(newPassword);
+            // Stations, mode and the OptiCloud login are read at start, so start again with the new ones.
+            Restart();
+        };
+        Setup.Open(vm);
+    }
+
+    // Replaced by the OptiCloud client.
+    static Task<string?> TestConnection(StationSettings s, string password, CancellationToken ct) => Task.FromResult<string?>("Forbindelsen til OptiCloud er ikke bygget endnu");
+    static Task<IReadOnlyList<(Guid Id, string Name)>> LoadMachines(StationSettings s, string password, CancellationToken ct) => Task.FromResult<IReadOnlyList<(Guid, string)>>([]);
+
+    void Restart()
+    {
+        var args = Environment.GetCommandLineArgs().Skip(1).Where(a => !a.Equals("--showcase", StringComparison.OrdinalIgnoreCase));
+        System.Diagnostics.Process.Start(Environment.ProcessPath!, args);
+        Application.Current.Shutdown();
     }
 
     void OnTick()
@@ -476,13 +557,18 @@ public partial class MainWindow : Window
         base.OnPreviewKeyDown(e);
         _lastTouch = DateTimeOffset.Now;
 
+        // A scanner in keyboard mode types its barcode; those keys are a scan, not shortcuts.
+        if (_keyboard.OnKeyDown(e)) { e.Handled = true; return; }
+
         if (e.Key == Key.Escape)
         {
+            if (Setup.IsOpen) { Setup.Cancel(); return; }
             if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
             else if (_editing) StopEditing();
             else if (!_kiosk) Close();
             return;
         }
+        if (Setup.IsOpen) return;
         if (!_kiosk && e.Key == Key.F11) { ToggleMaximized(); return; }
         if (e.Key is Key.Left or Key.Right) { ShowReport(e.Key == Key.Right); return; }
 
@@ -494,8 +580,10 @@ public partial class MainWindow : Window
         };
         if (n == 0) return;
 
+        // Plain 1 to 7 come back through _keyboard.Typed, once it is clear they were not a scan.
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) _demo.ToggleScanner(n);
-        else _demo.Scan(n, otherElement: Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+        else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) _demo.Scan(n, otherElement: true);
+        else return;
         e.Handled = true;
     }
 }
