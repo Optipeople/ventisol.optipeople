@@ -1,0 +1,116 @@
+"use client";
+
+import Link from "next/link";
+import { useActionState } from "react";
+import { resetPassword, type ResetState } from "@/app/reset-password/actions";
+import { Button } from "@/components/ui/button";
+import {
+  AuthCardHeader,
+  authBodyTextClasses,
+  authCardClasses,
+  authErrorClasses,
+  authInputClasses,
+  authLinkClasses,
+} from "@/components/auth/auth-screen";
+
+export function ResetPasswordForm({
+  token,
+  email,
+}: {
+  token: string;
+  email: string;
+}) {
+  const [state, action, pending] = useActionState<ResetState, FormData>(
+    resetPassword,
+    undefined
+  );
+
+  const linkInvalid = !token || !email;
+
+  return (
+    <form action={action} className={authCardClasses}>
+      <AuthCardHeader title="Vælg en ny adgangskode" />
+
+      {state && "done" in state ? (
+        <>
+          <p className={authBodyTextClasses}>
+            Din adgangskode er opdateret. Du kan nu logge ind med den nye
+            adgangskode.
+          </p>
+          <div className="pt-3">
+            <Link href="/login" className={`text-[14px] ${authLinkClasses}`}>
+              Gå til login
+            </Link>
+          </div>
+        </>
+      ) : linkInvalid ? (
+        <>
+          <p className="pb-3 text-[14px] leading-[21px] text-[#b00020]">
+            Dette nulstillingslink er ikke gyldigt.
+          </p>
+          <p className="pb-3 text-[14px] leading-[21px] text-black/70">
+            Linket kan være udløbet eller allerede brugt.
+          </p>
+          <div className="pt-3">
+            <Link href="/forgot-password" className={`text-[14px] ${authLinkClasses}`}>
+              Bed om et nyt nulstillingslink
+            </Link>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className={authBodyTextClasses}>
+            Vælg en ny adgangskode til <strong>{email}</strong>.
+          </p>
+
+          <input type="hidden" name="token" value={token} />
+          <input type="hidden" name="email" value={email} />
+
+          <div className="flex flex-col gap-2 pb-2">
+            <input
+              id="new-password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              disabled={pending}
+              placeholder="Ny adgangskode"
+              aria-label="Ny adgangskode"
+              className={authInputClasses}
+            />
+            <input
+              id="confirm-password"
+              name="confirm"
+              type="password"
+              autoComplete="new-password"
+              required
+              disabled={pending}
+              placeholder="Gentag ny adgangskode"
+              aria-label="Gentag ny adgangskode"
+              className={authInputClasses}
+            />
+          </div>
+
+          {state && "error" in state && (
+            <p role="alert" className={authErrorClasses}>
+              {state.error}
+            </p>
+          )}
+
+          <div className="pt-3">
+            <Button type="submit" variant="secondary" disabled={pending}>
+              {pending ? "Gemmer…" : "Gem ny adgangskode"}
+            </Button>
+          </div>
+
+          <p className="pt-6 pb-3 text-[14px] leading-[21px] text-black/90">
+            <Link href="/login" className={authLinkClasses}>
+              Tilbage til login
+            </Link>
+          </p>
+        </>
+      )}
+    </form>
+  );
+}
