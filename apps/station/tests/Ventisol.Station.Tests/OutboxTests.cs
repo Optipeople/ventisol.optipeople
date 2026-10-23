@@ -49,7 +49,7 @@ public sealed class OutboxTests : IDisposable
         Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Sends_oldest_first_and_empties()
     {
         var box = new Outbox(_folder);
@@ -61,12 +61,12 @@ public sealed class OutboxTests : IDisposable
         var run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token);
         await Until(() => box.Pending == 0);
         stop.Cancel();
-        await run;
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(scans, sent);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_failure_backs_off_and_keeps_the_order()
     {
         var box = new Outbox(_folder);
@@ -87,13 +87,13 @@ public sealed class OutboxTests : IDisposable
         }, stop.Token, Record(waits));
         await Until(() => box.Pending == 0);
         stop.Cancel();
-        await run;
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal([a, b], sent);
         Assert.Equal([2, 5, 15, 30, 60, 60], waits.Select(w => w.TotalSeconds));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_scan_the_server_refuses_is_moved_aside_and_the_rest_go_on()
     {
         var box = new Outbox(_folder);
@@ -114,14 +114,14 @@ public sealed class OutboxTests : IDisposable
         }, stop.Token, Record([]));
         await Until(() => box.Pending == 0);
         stop.Cancel();
-        await run;
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal([good], sent);
         Assert.Single(Directory.GetFiles(Path.Combine(_folder, "failed"), "*.json"));
         Assert.Contains(log, l => l.Contains("failed") && l.Contains("nej"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Pending_is_told_as_it_changes()
     {
         var box = new Outbox(_folder);
@@ -134,7 +134,7 @@ public sealed class OutboxTests : IDisposable
         var run = box.RunAsync((_, _) => Task.CompletedTask, stop.Token);
         await Until(() => box.Pending == 0);
         stop.Cancel();
-        await run;
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal([1, 2, 1, 0], counts);
     }

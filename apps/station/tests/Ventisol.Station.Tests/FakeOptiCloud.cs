@@ -9,7 +9,7 @@ namespace Ventisol.Station.Tests;
 
 // OptiCloud in memory, just the calls the station makes, shaped like the real API: login not
 // enveloped, everything else {data, errors, meta}, value keys camelCased on the way back.
-sealed class FakeOptiCloud : HttpMessageHandler
+public sealed class FakeOptiCloud : HttpMessageHandler
 {
     public static readonly Guid Account = Guid.Parse("4d1f0c4e-2b8a-4c39-9a51-6c0f6f2b7e11");
     public const string User = "ventisol", Password = "hemmelig";
@@ -35,6 +35,10 @@ sealed class FakeOptiCloud : HttpMessageHandler
     public bool Down { get; set; }
     public int MaxPageSize { get; set; } = 500;
     public TimeSpan LoginDelay { get; set; }
+
+    // How GetRowsPaged treats keyword: searches every value, finds nothing, or is not heard at all.
+    public enum Search { Works, FindsNothing, Ignored }
+    public Search Keyword { get; set; } = Search.Works;
 
     // Return a response here to take over a call; null lets the fake answer.
     public Func<string, string, string?, HttpResponseMessage?>? Override { get; set; }
@@ -81,7 +85,8 @@ sealed class FakeOptiCloud : HttpMessageHandler
         lock (_gate)
         {
             if (auth != $"Bearer {_token}" || _token is null) return new HttpResponseMessage(HttpStatusCode.Unauthorized);
-            return Route(request.Method.Method, path, body is null ? null : JsonNode.Parse(body));
+            try { return Route(request.Method.Method, path, body is null ? null : JsonNode.Parse(body)); }
+            catch (InvalidOperationException) { return new HttpResponseMessage(HttpStatusCode.NotFound); } // no such table
         }
     }
 
@@ -145,6 +150,8 @@ sealed class FakeOptiCloud : HttpMessageHandler
                 var page = int.Parse(query["page"]);
                 var size = Math.Min(int.Parse(query["pageSize"]), MaxPageSize);
                 var rows = IgnoreOrder ? t.Rows.ToList() : [.. t.Rows.OrderByDescending(r => DateTimeOffset.Parse((string)r["ScanTime"]!))];
+                if (query.TryGetValue("keyword", out var keyword) && Keyword != Search.Ignored)
+                    rows = Keyword == Search.FindsNothing ? [] : [.. rows.Where(r => r.Any(p => p.Value?.ToString().Contains(Uri.UnescapeDataString(keyword)) == true))];
                 var slice = rows.Skip((page - 1) * size).Take(size).Select(r => new
                 {
                     id = Guid.NewGuid(),

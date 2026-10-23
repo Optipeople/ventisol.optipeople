@@ -71,6 +71,8 @@ public sealed class Outbox
     public async Task RunAsync(Func<ScanEvent, CancellationToken, Task> send, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         delay ??= Task.Delay;
+        // Never runs on the caller's thread, even when send and delay finish at once.
+        await Task.Yield();
         var failures = 0;
         while (!ct.IsCancellationRequested)
         {

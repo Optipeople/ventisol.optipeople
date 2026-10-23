@@ -23,7 +23,7 @@ public sealed class CloudSyncTests : IDisposable
     CloudSync Sync(FakeOptiCloud api, StationMode mode = StationMode.Scan, string? password = FakeOptiCloud.Password, StationSettings? settings = null) =>
         new(settings ?? FakeOptiCloud.Settings(mode), password, _folder, m => { lock (_log) _log.Add(m); }, () => Now, api, Fast);
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_recorded_scan_becomes_a_row()
     {
         var api = new FakeOptiCloud();
@@ -42,7 +42,7 @@ public sealed class CloudSyncTests : IDisposable
         Assert.Equal(Now, sync.Status.LastSync);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task At_start_the_day_so_far_is_loaded_with_what_still_waits_to_be_sent()
     {
         var api = new FakeOptiCloud();
@@ -67,7 +67,7 @@ public sealed class CloudSyncTests : IDisposable
         await Until(() => api.RowCount == 4);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_viewer_polls_and_tells_when_something_changed()
     {
         var api = new FakeOptiCloud();
@@ -91,7 +91,7 @@ public sealed class CloudSyncTests : IDisposable
         Assert.Equal(0, api.Count("CreateRow"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_viewer_also_sees_scans_sent_late()
     {
         var api = new FakeOptiCloud();
@@ -110,7 +110,7 @@ public sealed class CloudSyncTests : IDisposable
         Assert.Single(loaded[1].Done);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Not_set_up_keeps_scans_on_disk_and_calls_nobody()
     {
         var api = new FakeOptiCloud();
@@ -129,7 +129,7 @@ public sealed class CloudSyncTests : IDisposable
         await Until(() => api.RowCount == 1);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_wrong_password_is_an_error_and_keeps_trying()
     {
         var api = new FakeOptiCloud();
@@ -155,7 +155,7 @@ public sealed class CloudSyncTests : IDisposable
         sync.Dispose();
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Testing_the_connection_says_null_when_it_works_and_why_when_not()
     {
         var api = new FakeOptiCloud();
@@ -167,7 +167,7 @@ public sealed class CloudSyncTests : IDisposable
         Assert.NotNull(await CloudSync.TestConnectionAsync(settings with { Username = null }, FakeOptiCloud.Password, handler: api));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Machines_come_sorted_by_name()
     {
         var api = new FakeOptiCloud();

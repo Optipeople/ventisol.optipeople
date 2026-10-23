@@ -5,7 +5,7 @@ namespace Ventisol.Station.Tests;
 
 public class OptiCloudClientTests
 {
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Logs_in_and_sends_the_token_as_bearer()
     {
         var api = new FakeOptiCloud();
@@ -18,7 +18,7 @@ public class OptiCloudClientTests
         Assert.Equal("Bearer token-1", api.Requests.Last().Auth);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Bad_credentials_with_a_200_and_errors_is_a_failed_login()
     {
         var api = new FakeOptiCloud();
@@ -30,7 +30,7 @@ public class OptiCloudClientTests
         Assert.True(e.IsAuth);
     }
 
-    [Theory]
+    [Theory(Timeout = 10000)]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.BadRequest)]
     public async Task Bad_credentials_as_an_http_error_is_a_failed_login(HttpStatusCode status)
@@ -43,7 +43,7 @@ public class OptiCloudClientTests
         Assert.Equal(OptiCloudException.BadLogin, e.Message);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_200_without_a_token_is_not_a_login()
     {
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("login") ? FakeOptiCloud.Json(new { user_name = "x" }) : null };
@@ -53,7 +53,7 @@ public class OptiCloudClientTests
         Assert.False(client.IsLoggedIn);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_401_refreshes_the_token_and_tries_once_more()
     {
         var api = new FakeOptiCloud();
@@ -70,7 +70,7 @@ public class OptiCloudClientTests
         Assert.Equal(2, api.Count("GetByAccountId"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task When_the_refresh_fails_it_logs_in_with_the_password()
     {
         var api = new FakeOptiCloud { RefreshWorks = false };
@@ -83,7 +83,7 @@ public class OptiCloudClientTests
         Assert.Equal(2, api.LoginCount("\"password\""));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_second_401_after_renewing_is_not_retried_again()
     {
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("GetCurrentUser") ? new HttpResponseMessage(HttpStatusCode.Unauthorized) : null };
@@ -95,7 +95,7 @@ public class OptiCloudClientTests
         Assert.Equal(2, api.Count("GetCurrentUser"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Callers_hitting_a_401_together_share_one_refresh()
     {
         var api = new FakeOptiCloud();
@@ -109,7 +109,7 @@ public class OptiCloudClientTests
         Assert.Equal(1, api.LoginCount("refresh_token"));
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Errors_in_the_envelope_are_failures_also_with_a_200()
     {
         var api = new FakeOptiCloud
@@ -126,7 +126,7 @@ public class OptiCloudClientTests
         Assert.True(e.IsRejected);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task No_network_is_unreachable_and_worth_retrying()
     {
         var api = new FakeOptiCloud { Down = true };
@@ -138,7 +138,7 @@ public class OptiCloudClientTests
         Assert.False(e.IsRejected || e.IsAuth);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task An_unexpected_shape_is_a_clear_error_not_a_crash()
     {
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("GetByAccountId") ? FakeOptiCloud.Json(new { data = "hello" }) : null };
@@ -149,7 +149,7 @@ public class OptiCloudClientTests
         Assert.Equal(OptiCloudException.Unexpected, e.Message);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task A_server_error_is_not_a_rejection()
     {
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("GetTables") ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : null };
@@ -161,7 +161,7 @@ public class OptiCloudClientTests
         Assert.Equal(503, e.Status);
     }
 
-    [Fact]
+    [Fact(Timeout = 10000)]
     public async Task Column_types_are_read_as_numbers_or_names()
     {
         var api = new FakeOptiCloud();

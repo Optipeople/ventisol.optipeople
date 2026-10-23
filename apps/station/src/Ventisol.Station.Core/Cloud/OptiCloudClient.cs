@@ -105,10 +105,12 @@ public sealed class OptiCloudClient : IDisposable
     public Task CreateRowAsync(Guid tableId, IReadOnlyDictionary<string, object?> values, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"api/MasterData/CreateRow/{tableId}", new { values }, ct);
 
-    public async Task<RowsPage> GetRowsPagedAsync(Guid tableId, int page, int pageSize, string orderBy, bool ascending, CancellationToken ct = default)
+    // keyword is OptiCloud's free-text search; what it matches on is not documented.
+    public async Task<RowsPage> GetRowsPagedAsync(Guid tableId, int page, int pageSize, string orderBy, bool ascending, string? keyword = null, CancellationToken ct = default)
     {
+        var search = string.IsNullOrEmpty(keyword) ? "" : $"&keyword={Uri.EscapeDataString(keyword)}";
         var d = await GetAsync(
-            $"api/MasterData/GetRowsPaged/{tableId}?page={page}&pageSize={pageSize}&Orderby={Uri.EscapeDataString(orderBy)}&IsAscending={(ascending ? "true" : "false")}", ct);
+            $"api/MasterData/GetRowsPaged/{tableId}?page={page}&pageSize={pageSize}&Orderby={Uri.EscapeDataString(orderBy)}&IsAscending={(ascending ? "true" : "false")}{search}", ct);
         var rows = (d.Prop("rows") is { ValueKind: JsonValueKind.Array } a ? a.EnumerateArray() : JsonRead.List(d)).Select(Row).ToList();
         return new RowsPage(rows, d.Int("count"), d.Int("totalPage") ?? d.Int("totalPages"), d.Int("page") ?? page);
     }

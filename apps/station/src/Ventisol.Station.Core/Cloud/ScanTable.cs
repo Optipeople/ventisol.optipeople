@@ -38,7 +38,54 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
         return table.Id;
     }
 
-    public Task AddAsync(ScanEvent e, CancellationToken ct = default) => client.CreateRowAsync(Table, e.ToValues(), ct);
+    // A refused row may be a re-send of one that got in (the app stopped between sending and
+    // crossing it off): if a row with this ScanId is there, it counts as sent.
+    public async Task AddAsync(ScanEvent e, CancellationToken ct = default)
+    {
+        try { await CreateAsync(e, ct); }
+        catch (OptiCloudException x) when (x.IsRejected && _tableId is not null)
+        {
+            if (!await ExistsAsync(e, ct)) throw;
+            log?.Invoke($"OptiCloud: scanningen {e.ScanId} var der allerede");
+        }
+    }
+
+    // A 404 means the table is gone (deleted in OptiCloud): make it again and try once more.
+    // If that fails too it is a passing failure, never a reason to give up on the scan.
+    async Task CreateAsync(ScanEvent e, CancellationToken ct)
+    {
+        try
+        {
+            await client.CreateRowAsync(Table, e.ToValues(), ct);
+            return;
+        }
+        catch (OptiCloudException x) when (x.Status == 404)
+        {
+            log?.Invoke($"OptiCloud: tabellen {Name} findes ikke mere, laves igen");
+        }
+
+        try
+        {
+            _tableId = null;
+            await EnsureAsync(_accountId, ct);
+            await client.CreateRowAsync(Table, e.ToValues(), ct);
+        }
+        catch (OptiCloudException x) when (x.Status == 404 || _tableId is null)
+        {
+            throw new OptiCloudException(x.Message, x.Status);
+        }
+    }
+
+    // Keyword search first. It may be fuzzy or skip this column, so a match must have the exact
+    // ScanId, and without one the rows around the scan's time are read as well.
+    public async Task<bool> ExistsAsync(ScanEvent e, CancellationToken ct = default)
+    {
+        var found = await client.GetRowsPagedAsync(Table, 1, 20, "ScanTime", ascending: false, keyword: e.ScanId.ToString(), ct: ct);
+        if (found.Rows.Any(r => IsScan(r, e.ScanId))) return true;
+        return (await ReadSinceAsync(e.At - TimeSpan.FromMinutes(1), ct)).Any(s => s.ScanId == e.ScanId);
+    }
+
+    static bool IsScan(CloudRow r, Guid id) => r.Values.TryGetValue("ScanId", out var v) && Guid.TryParse(v, out var g) && g == id;
 
     // The scans at or after since, oldest first, each once. There is no date filter, so pages are
     // read newest first until the first row older than since. If the server ignores the order,
@@ -53,7 +100,7 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
 
         for (var page = 1; page <= MaxPages; page++)
         {
-            var result = await client.GetRowsPagedAsync(table, page, PageSize, "ScanTime", ascending: false, ct);
+            var result = await client.GetRowsPagedAsync(table, page, PageSize, "ScanTime", ascending: false, ct: ct);
             var reachedOlder = false;
             foreach (var row in result.Rows)
             {
