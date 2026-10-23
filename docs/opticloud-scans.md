@@ -61,10 +61,30 @@ camelCase them).
   is refused by the unique `ScanId`. Before giving up on a refused scan, the app looks for a row
   with that `ScanId`: `GetRowsPaged` with `keyword=<ScanId>`, matched exactly on the value, and
   if that finds nothing, the rows from a minute before the scan's time on. Found means sent.
-- A scan refused for another reason (any 4xx except 401, 404, 408, 429, or errors with a 200)
-  is moved aside to `outbox\failed` on the PC and logged, not retried.
+- A scan refused for another reason (any 4xx except 401, 403, 404, 408, 429, or errors with a
+  200) is tried again with backoff, and only moved aside to `outbox\failed` on the PC (and logged)
+  when it has been refused 3 times in a row with the same message: one refusal may be a passing
+  fault on the server. The menu then says `Forbundet · 2 scanninger afvist, se log`.
+- 401 (after renewing the token) and 403 are the user's access, not the scan: the scan stays in
+  line and is tried again with backoff, and the menu says `Fejl: OptiCloud afviser brugeren (adgang)`.
+- On every start the app moves everything in `outbox\failed` back in line once, so a setup that
+  was fixed (a user given access, a column added) sends them. One that did get in is recognised
+  by its `ScanId`, as above.
+- A sent scan whose file can't be deleted (held by a virus scanner...) is remembered as sent and
+  not sent again; the file is deleted later, with backoff.
+- A PC switched from Scan to Viewer mode still sends what waits in its outbox. A viewer never
+  records scans of its own.
 - A 404 on `CreateRow` means the table is gone: the app makes it again (with its columns) and
   sends once more. If it is still 404, it is treated like no network: wait and try again.
+
+## The journal on the PC
+
+In Scan mode the app also appends every scan it records to `journal\yyyy-MM-dd.jsonl` (one JSON
+line per scan, by the scan's local date, kept 3 days) in its data folder. The outbox forgets a
+scan once it is sent; the journal keeps it. On start the screen is rebuilt at once from the
+journal and the outbox, before any network, and again when OptiCloud has been read, with all of
+it together (each `ScanId` once). So a restart never waits for the network, and works without
+it. A viewer has no journal: it records nothing.
 
 ## Reading
 
@@ -72,16 +92,37 @@ camelCase them).
   returns `data: { rows: [{ id, createdDate, values: {...} }], count, totalPage, ... }`.
 - There is no date filter. Read pages newest first and stop at the first row older than the period wanted.
   If the ordering is ignored, read all pages (the app stops at 50).
-- What that costs: a few thousand rows a day is about 6 pages of 500 for the whole day. A viewer
-  polls every 5 seconds; most polls read only from 10 minutes before the newest scan (one page),
-  and every 12th poll (about once a minute) reads the whole day, to catch scans a station sent late
-  with their own, older scan time. A late scan shows on viewers within about a minute.
+- The app reads the last 36 hours, not just today: an element scanned in before midnight and out
+  in the morning must still be in progress after a restart in the night (an update, a reboot).
+  What is done is then limited to today (see Rules).
+- What that costs: a few thousand rows a day is about 6 pages of 500 a day, so about 9 for the
+  36 hours. A viewer polls every 5 seconds; most polls read only from 10 minutes before the newest
+  scan (one page), and every 12th poll (about once a minute) reads the whole 36 hours, to catch
+  scans a station sent late with their own, older scan time. A late scan shows on viewers within
+  about a minute.
 
-## Rules (time per order)
+## Rules
 
-- An element is worked on at a station from its `In` to its `Out` at that station.
-- Time per order = the sum over its elements and stations. A re-scan for rework adds time.
-- An order is packed at the last `Out` at a `Packing` station, when nothing on it is in progress.
+The station app (`ScanReplay`, `DayReport`) and the reports site follow the same rules, and both
+run the test vectors in [`scan-rules-vectors.json`](scan-rules-vectors.json) (how to run one is in
+its `_doc`). Change a rule there and here first.
+
+- Scans are read from a window: the last 36 hours. Each `ScanId` counts once.
+- Scans pair by `StationNo` and `Barcode`, oldest first, an `In` before an `Out` at the same time.
+  Not by station name: a station can be renamed.
+- An element is worked on at a station from its `In` to its `Out` there: one work record. A
+  re-scan for rework is another pair and adds time.
+- A second `In` of the same element at the same station while one is open: the later `In` wins,
+  the earlier is dropped (it never got its `Out`; the station refuses a second element while one
+  is in progress, so it is a missed scan, not parallel work).
+- An `Out` with no `In` in the window: its start is put back from `DurationSec`. Without
+  `DurationSec` it can't be timed and is skipped.
+- In progress: per station, its latest `In` with no `Out`, over the whole window. An `In` older
+  than the window with no `Out` is forgotten.
+- Done today: the work records that end today (local midnight on). One that spans midnight counts
+  for the day it ends.
+- Time per order = the sum over its elements and stations; time in progress counts up to now.
+- An order is packed when it has an `Out` at a `Packing` station and nothing on it is in progress.
 
 ## Auth
 
@@ -89,6 +130,8 @@ Bearer token from `POST /api/Authentication/login` (`grant_type=password`), refr
 `grant_type=refresh_token` (username required) on a 401. The login response is not wrapped in
 `{data, errors, meta}`; every other response is, and errors may come with HTTP 200.
 The account id comes from `GET /api/User/GetCurrentUser` (`data.accountId`).
+A wrong password is tried again only every 15 minutes, so the station can't get the user locked
+out; other failures back off 2, 5, 15, 30, then every 60 seconds.
 
 ## Open with the backend owner
 

@@ -7,7 +7,7 @@ namespace Ventisol.Station.Tests;
 public class ScanReplayTests
 {
     static readonly DateTimeOffset T0 = new(2026, 10, 21, 6, 0, 0, TimeSpan.Zero);
-    const string A = "058556050103", B = "058556050102";
+    const string A = "058556050103", B = "058556050102", C = "058556050101";
 
     static ReplayResult Replay(params ScanEvent[] events) => ScanReplay.Replay(events, StationConfig.Defaults);
 
@@ -55,6 +55,59 @@ public class ScanReplayTests
 
         Assert.Empty(r.Done);
         Assert.Equal(Code(B), r.InProgress[1].Barcode);
+    }
+
+    [Fact]
+    public void An_out_without_an_in_gets_its_start_back_from_its_duration()
+    {
+        var r = Replay(Scan(A, 1, ScanDirection.Out, T0.AddMinutes(10), duration: 600));
+
+        Assert.Equal(new WorkRecord(StationConfig.Defaults[0], Code(A), T0, T0.AddMinutes(10)), Assert.Single(r.Done));
+    }
+
+    [Fact]
+    public void A_second_in_while_one_is_open_wins()
+    {
+        var r = Replay(In(A, 1, T0), In(A, 1, T0.AddMinutes(30)), Out(A, 1, T0.AddMinutes(40)));
+
+        Assert.Equal(T0.AddMinutes(30), Assert.Single(r.Done).Start);
+        Assert.Empty(r.InProgress);
+    }
+
+    [Fact]
+    public void Pairs_by_station_number_not_by_name()
+    {
+        var renamed = Out(A, 1, T0.AddMinutes(5)) with { Station = "Station 11" };
+
+        var r = Replay(In(A, 1, T0), renamed);
+
+        Assert.Equal(TimeSpan.FromMinutes(5), Assert.Single(r.Done).Duration);
+    }
+
+    [Fact]
+    public void With_today_done_is_what_ends_today_and_in_progress_spans_midnight()
+    {
+        var midnight = T0.AddHours(-6);
+        var r = ScanReplay.Replay(
+        [
+            In(A, 1, midnight.AddHours(-2)),
+            In(B, 2, midnight.AddHours(-3)), Out(B, 2, T0),
+            In(C, 3, midnight.AddHours(-5)), Out(C, 3, midnight.AddHours(-4)),
+        ], StationConfig.Defaults, midnight);
+
+        Assert.Equal(midnight.AddHours(-2), r.InProgress[1].Since);
+        var done = Assert.Single(r.Done);
+        Assert.Equal((Code(B), midnight.AddHours(-3), T0), (done.Barcode, done.Start, done.End));
+    }
+
+    [Fact]
+    public void The_same_scan_twice_counts_once()
+    {
+        var a = In(A, 1, T0);
+
+        var r = Replay(a, a, Out(A, 1, T0.AddMinutes(1)));
+
+        Assert.Single(r.Done);
     }
 
     [Fact]

@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The scan rules' test vectors, shared with the reports site. -->
+    <None Include="..\..\..\..\docs\scan-rules-vectors.json" Link="scan-rules-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Ventisol.Station.Core\Ventisol.Station.Core.csproj" />
   </ItemGroup>
 

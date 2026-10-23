@@ -26,6 +26,8 @@ public partial class MainWindow : Window
     readonly ScanSources _scans;
     readonly CloudSync _cloud;
     readonly UpdateService _updates;
+    // The scans this screen sent in the last 36 hours, so a load from OptiCloud never drops one.
+    readonly List<ScanEvent> _recorded = [];
     // Taps and number keys make up scans only while OptiCloud is not set up, so a station
     // on the shop floor never sends a made-up scan.
     readonly bool _demoInput;
@@ -100,11 +102,14 @@ public partial class MainWindow : Window
 
         _cloud = new CloudSync(_settings, SettingsStore.LoadPassword(), DataFolder, Log.Write);
         _cloud.StatusChanged += (_, _) => Dispatcher.BeginInvoke(ShowCloudStatus);
-        _cloud.Loaded += (_, today) => Dispatcher.BeginInvoke(() => _vm.Apply(today, DateTimeOffset.Now));
+        _cloud.Loaded += (_, loaded) => Dispatcher.BeginInvoke(() => ApplyLoaded(loaded));
         _vm.Recorded += (_, r) =>
         {
             var machine = _settings.Stations.FirstOrDefault(s => s.Number == r.Station.Number)?.MachineId;
-            if (ScanEvent.From(r, machine) is { } e && !_cloud.Record(e)) Log.Write($"Scan not saved for sending: {e.Barcode.Raw} {e.Direction}");
+            if (ScanEvent.From(r, machine) is not { } e) return;
+            _recorded.Add(e);
+            _recorded.RemoveAll(x => x.At < CloudSync.WindowStart(e.At));
+            if (!_cloud.Record(e)) Log.Write($"Scan not saved for sending: {e.Barcode.Raw} {e.Direction}");
         };
         ShowCloudStatus();
         _cloud.Start();
@@ -117,6 +122,16 @@ public partial class MainWindow : Window
         _vm.UpdateText = _updates.Status;
 
         Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); _updates.Dispose(); };
+    }
+
+    // What OptiCloud (or, before the network is there, this PC's journal) holds, plus every scan this
+    // screen took since. Worked out here on the UI thread, so a scan that came in while the load was
+    // on its way is in it, never undone by it.
+    void ApplyLoaded(LoadedScans loaded)
+    {
+        var now = DateTimeOffset.Now;
+        var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
+        _vm.Apply(ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now)), now);
     }
 
     void ShowCloudStatus()

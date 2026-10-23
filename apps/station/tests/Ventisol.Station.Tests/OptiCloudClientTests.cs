@@ -92,7 +92,28 @@ public class OptiCloudClientTests
         var e = await Assert.ThrowsAsync<OptiCloudException>(() => client.GetCurrentUserAsync());
 
         Assert.Equal(401, e.Status);
+        Assert.True(e.IsAuth);
         Assert.Equal(2, api.Count("GetCurrentUser"));
+    }
+
+    [Theory(Timeout = 10000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_403_is_about_the_user_not_the_request(bool withErrors)
+    {
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => !path.Contains("CreateRow") ? null
+                : withErrors ? FakeOptiCloud.Json(new { errors = new[] { new { title = "Forbidden", message = "Nej" } } }, HttpStatusCode.Forbidden)
+                : new HttpResponseMessage(HttpStatusCode.Forbidden),
+        };
+        using var client = api.Client();
+
+        var e = await Assert.ThrowsAsync<OptiCloudException>(() => client.CreateRowAsync(Guid.NewGuid(), new Dictionary<string, object?>()));
+
+        Assert.Equal(OptiCloudException.Forbidden, e.Message);
+        Assert.True(e.IsAuth);
+        Assert.False(e.IsRejected || e.IsBadLogin);
     }
 
     [Fact(Timeout = 10000)]

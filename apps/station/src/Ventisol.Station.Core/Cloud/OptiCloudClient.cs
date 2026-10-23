@@ -150,7 +150,7 @@ public sealed class OptiCloudClient : IDisposable
         {
             await RenewAsync(used, ct);
             (status, text) = await RawAsync(method, path, body, _token, ct);
-            if (status == 401) throw new OptiCloudException("OptiCloud afviste login", 401, auth: true);
+            if (status == 401) throw StatusError(401);
         }
         return Envelope(status, text);
     }
@@ -163,6 +163,7 @@ public sealed class OptiCloudClient : IDisposable
         try { root = JsonDocument.Parse(string.IsNullOrWhiteSpace(text) ? "null" : text).RootElement.Clone(); }
         catch (JsonException) { throw ok ? new OptiCloudException(OptiCloudException.Unexpected, status) : StatusError(status); }
 
+        if (status is 401 or 403) throw StatusError(status);
         if (FirstError(root) is { } error)
             throw new OptiCloudException($"OptiCloud svarede: {error}", status, rejected: ok || OptiCloudException.IsRejectedStatus(status));
         if (!ok) throw StatusError(status);
@@ -182,7 +183,8 @@ public sealed class OptiCloudClient : IDisposable
 
     static OptiCloudException StatusError(int status) => status switch
     {
-        403 => new("Brugeren har ikke adgang til det i OptiCloud", status, rejected: true),
+        // A user without access is the setup's fault, not the request's: retried, never given up on.
+        401 or 403 => new(OptiCloudException.Forbidden, status, auth: true),
         404 => new("OptiCloud kender ikke adressen (404)", status, rejected: true),
         >= 500 => new($"OptiCloud har en fejl ({status})", status),
         _ => new($"OptiCloud svarede {status}", status, rejected: OptiCloudException.IsRejectedStatus(status)),

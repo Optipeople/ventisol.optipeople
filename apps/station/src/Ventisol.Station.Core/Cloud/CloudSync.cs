@@ -2,22 +2,31 @@ namespace Ventisol.Station.Core.Cloud;
 
 public enum CloudState { NotSetUp, Connecting, Online, Offline, Error }
 
-// What the menu shows. Text is Danish, shown as it is.
-public sealed record CloudStatus(CloudState State, string Text, int Pending, DateTimeOffset? LastSync);
+// What the menu shows. Text is Danish, shown as it is. Failed: scans OptiCloud refused, in outbox\failed.
+public sealed record CloudStatus(CloudState State, string Text, int Pending, DateTimeOffset? LastSync, int Failed = 0);
 
 // The station's link to OptiCloud, the one object the app talks to.
-// Scan mode: every scan goes to the outbox on disk at once and is sent in the background.
-// Both modes: today's scans are read once at start and handed over as a ReplayResult (Loaded).
-// Viewer mode: OptiCloud is read every 5 seconds and Loaded is raised whenever the scans changed.
+// Scan mode: every scan goes to the outbox on disk at once and is sent in the background, and to
+// a local journal. At start Loaded comes at once from the journal and the outbox, then again
+// when OptiCloud has been read, with everything together.
+// Viewer mode: OptiCloud is read every 5 seconds and Loaded is raised whenever the scans changed
+// (and at midnight). A viewer records nothing, but still sends what an earlier Scan mode left.
+// Loaded holds the raw scans of the last Window (36 hours), so an element scanned in yesterday
+// evening is still in progress; the app replays them (ScanReplay.Replay, today = Midnight(now)).
 // Everything retries with backoff and nothing throws to the caller. Events come on any thread
-// (StatusChanged also on the one calling Record); Status is safe to read from any thread.
-// One per settings: when the setup changes, dispose this one and make a new one.
+// (StatusChanged also on the one calling Record or Start, Loaded also on the one calling Start);
+// Status is safe to read from any thread. One per settings: when the setup changes, dispose this
+// one and make a new one.
 public sealed class CloudSync : IDisposable
 {
     public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
-    // A viewer reads only the last stretch of the day on most polls, and the whole day on every
-    // 12th: a station that was offline sends its scans late, with their own (older) scan time.
+    // How far back scans are read. Longer than a night, so an element in progress at midnight
+    // survives a restart; an In older than this with no Out is forgotten.
+    public static readonly TimeSpan Window = TimeSpan.FromHours(36);
+
+    // A viewer reads only the last stretch on most polls, and the whole window on every 12th:
+    // a station that was offline sends its scans late, with their own (older) scan time.
     const int FullReadEvery = 12;
     static readonly TimeSpan RecentWindow = TimeSpan.FromMinutes(10);
 
@@ -28,11 +37,12 @@ public sealed class CloudSync : IDisposable
     readonly HttpMessageHandler? _handler;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
     readonly Outbox _outbox;
+    readonly ScanJournal? _journal;
     readonly CancellationTokenSource _stop = new();
     readonly Lock _gate = new();
     readonly List<ScanEvent> _recorded = [];
     Task? _run;
-    bool _disposed;
+    bool _started, _disposed;
     CloudState _state;
     string _account = "", _error = "";
     string? _logged;
@@ -49,15 +59,19 @@ public sealed class CloudSync : IDisposable
         _handler = handler;
         _delay = delay ?? Task.Delay;
         _outbox = new Outbox(Path.Combine(dataFolder, "outbox"), log);
+        // A viewer records nothing, so it has nothing of its own to remember.
+        if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
         _status = Make();
         _outbox.PendingChanged += (_, _) => Publish();
         _outbox.Sent += (_, _) => Synced();
         _outbox.SendFailed += (_, x) => Failed(x);
+        // The server answered, it just won't take that scan: connected, with the count shown.
+        _outbox.Refused += (_, _) => Synced();
     }
 
     public event EventHandler<CloudStatus>? StatusChanged;
-    public event EventHandler<ReplayResult>? Loaded;
+    public event EventHandler<LoadedScans>? Loaded;
 
     public CloudStatus Status { get { lock (_gate) return _status; } }
 
@@ -69,7 +83,27 @@ public sealed class CloudSync : IDisposable
     {
         lock (_gate)
         {
-            if (_run is not null || _disposed) return;
+            if (_started || _disposed) return;
+            _started = true;
+        }
+
+        // Once per start, so a fixed setup sends again what was refused; a scan that did get in
+        // is recognised by its ScanId.
+        _outbox.RetryFailed();
+        Publish();
+
+        if (_journal is not null)
+        {
+            // Before any network: the screen is back at once, also when OptiCloud can't be reached.
+            var now = _clock();
+            var since = WindowStart(now);
+            _journal.Prune(now);
+            Raise(Local(since), since);
+        }
+
+        lock (_gate)
+        {
+            if (_disposed) return;
             if (!IsSetUp)
             {
                 _log($"OptiCloud: ikke sat op, scanninger gemmes på PC'en ({_outbox.Pending} venter)");
@@ -93,10 +127,13 @@ public sealed class CloudSync : IDisposable
             _log($"OptiCloud: scanningen {e.Barcode.Raw} kunne ikke gemmes: {x.Message}");
             return false;
         }
+        // The outbox has it, so it will be sent: a journal that can't be written only costs the quick start.
+        try { _journal?.Append(e); }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException) { _log($"OptiCloud: journalen kunne ikke skrives: {x.Message}"); }
         lock (_gate)
         {
-            var midnight = Midnight(_clock());
-            _recorded.RemoveAll(r => r.At < midnight);
+            var since = WindowStart(_clock());
+            _recorded.RemoveAll(r => r.At < since);
             _recorded.Add(e);
         }
         return true;
@@ -110,7 +147,8 @@ public sealed class CloudSync : IDisposable
             var table = new ScanTable(client, _log);
             await RetryAsync(() => ConnectAsync(client, table, ct), ct);
 
-            var sender = _settings.Mode == StationMode.Scan ? _outbox.RunAsync(table.AddAsync, ct, _delay) : Task.CompletedTask;
+            // A PC switched from Scan to Viewer may still have scans to send.
+            var sender = _settings.Mode == StationMode.Scan || _outbox.Pending > 0 ? _outbox.RunAsync(table.AddAsync, ct, _delay) : Task.CompletedTask;
             if (_settings.Mode == StationMode.Scan) await RetryAsync(() => LoadOnceAsync(table, ct), ct);
             else await PollAsync(table, ct);
             await sender;
@@ -139,14 +177,22 @@ public sealed class CloudSync : IDisposable
 
     async Task LoadOnceAsync(ScanTable table, CancellationToken ct)
     {
-        var midnight = Midnight(_clock());
-        // Scans not sent yet are part of today too. Looked at before reading, so a scan the
-        // sender sends meanwhile is in one or the other; one recorded meanwhile is in _recorded.
-        var waiting = _outbox.Peek();
-        var events = (await table.ReadSinceAsync(midnight, ct)).Concat(waiting).Where(e => e.At >= midnight).ToList();
-        lock (_gate) events.AddRange(_recorded.Where(e => e.At >= midnight));
+        var since = WindowStart(_clock());
+        // Scans not sent yet count too. Looked at before reading, so a scan the sender sends
+        // meanwhile is in one or the other; the journal and _recorded hold every one recorded.
+        var local = Local(since);
+        var events = (await table.ReadSinceAsync(since, ct)).Concat(local).ToList();
         Synced();
-        Raise(events);
+        Raise(events, since);
+    }
+
+    // What this PC knows without the network.
+    List<ScanEvent> Local(DateTimeOffset since)
+    {
+        var events = _outbox.Peek().ToList();
+        if (_journal is not null) events.AddRange(_journal.ReadSince(since));
+        lock (_gate) events.AddRange(_recorded);
+        return events;
     }
 
     async Task PollAsync(ScanTable table, CancellationToken ct)
@@ -161,23 +207,26 @@ public sealed class CloudSync : IDisposable
         {
             try
             {
-                var midnight = Midnight(_clock());
-                var full = polls % FullReadEvery == 0 || day != midnight || cache.Count == 0;
-                var since = full ? midnight : Max(midnight, cache.Values.Max(e => e.At) - RecentWindow);
+                var now = _clock();
+                var start = WindowStart(now);
+                var full = polls % FullReadEvery == 0 || cache.Count == 0;
+                var since = full ? start : Max(start, cache.Values.Max(e => e.At) - RecentWindow);
                 var events = await table.ReadSinceAsync(since, ct);
 
                 // What was read is the whole truth from since on.
-                foreach (var id in cache.Values.Where(e => e.At >= since || e.At < midnight).Select(e => e.ScanId).ToList()) cache.Remove(id);
+                foreach (var id in cache.Values.Where(e => e.At >= since || e.At < start).Select(e => e.ScanId).ToList()) cache.Remove(id);
                 foreach (var e in events) cache[e.ScanId] = e;
-                day = midnight;
                 polls++;
                 failures = 0;
                 Synced();
 
-                if (shown is null || !shown.SetEquals(cache.Keys))
+                // A new day changes what is done today even when no scan changed.
+                var today = Midnight(now);
+                if (shown is null || !shown.SetEquals(cache.Keys) || day != today)
                 {
                     shown = [.. cache.Keys];
-                    Raise(cache.Values);
+                    day = today;
+                    Raise(cache.Values, start);
                 }
                 await _delay(PollInterval, ct);
             }
@@ -185,30 +234,37 @@ public sealed class CloudSync : IDisposable
             catch (Exception x)
             {
                 Failed(x);
-                await _delay(Outbox.Backoff[Math.Min(failures++, Outbox.Backoff.Count - 1)], ct);
+                await _delay(Outbox.Wait(x, failures++), ct);
             }
         }
     }
 
+    // A wrong password waits 15 minutes between tries, anything else the usual backoff.
     async Task RetryAsync(Func<Task> work, CancellationToken ct)
     {
         for (var failures = 0; ; failures++)
         {
+            Exception error;
             try
             {
                 await work();
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception x) { Failed(x); }
-            await _delay(Outbox.Backoff[Math.Min(failures, Outbox.Backoff.Count - 1)], ct);
+            catch (Exception x)
+            {
+                Failed(x);
+                error = x;
+            }
+            await _delay(Outbox.Wait(error, failures), ct);
         }
     }
 
-    void Raise(IEnumerable<ScanEvent> events)
+    // Each ScanId once, oldest first, nothing from before since.
+    void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since)
     {
-        var result = ScanReplay.Replay(events, _settings.Stations.Select(s => s.Config));
-        if (!_disposed) Loaded?.Invoke(this, result);
+        List<ScanEvent> list = [.. events.Where(e => e.At >= since).DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction)];
+        if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since));
     }
 
     void Synced()
@@ -255,17 +311,23 @@ public sealed class CloudSync : IDisposable
     CloudStatus Make()
     {
         var n = _outbox.Pending;
+        var failed = _outbox.Failed;
         var waiting = n == 1 ? "1 scanning venter" : $"{n} scanninger venter";
+        var refused = failed == 1 ? "1 scanning afvist, se log" : $"{failed} scanninger afvist, se log";
         var text = _state switch
         {
             CloudState.NotSetUp => n > 0 ? $"Ikke sat op · {waiting}" : "Ikke sat op",
             CloudState.Connecting => "Forbinder…",
+            CloudState.Online when failed > 0 => $"Forbundet · {refused}",
             CloudState.Online => _account.Length > 0 ? $"Forbundet · {_account}" : "Forbundet",
             CloudState.Offline => n > 0 ? $"Offline · {waiting}" : "Offline",
             _ => $"Fejl: {_error}",
         };
-        return new CloudStatus(_state, text, n, _lastSync);
+        return new CloudStatus(_state, text, n, _lastSync, failed);
     }
+
+    // The start of the scans read: Window back from now.
+    public static DateTimeOffset WindowStart(DateTimeOffset now) => now - Window;
 
     static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
 
@@ -281,7 +343,8 @@ public sealed class CloudSync : IDisposable
     {
         CloudUser? user = null;
         try { user = await client.GetCurrentUserAsync(ct); }
-        catch (OptiCloudException x) when (s.AccountId is not null && x.IsRejected) { }
+        // A user that may not read itself can still write to the account set up for it.
+        catch (OptiCloudException x) when (s.AccountId is not null && (x.IsRejected || x.Status == 403)) { }
         var id = s.AccountId ?? user!.AccountId;
         return (id, user is not null && user.AccountId == id ? user.AccountName : "");
     }
