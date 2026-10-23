@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows.Threading;
 using Velopack;
 using Ventisol.Station.Updates;
@@ -18,6 +20,12 @@ static class Program
             .OnBeforeUninstallFastCallback(_ => Autostart.Disable())
             .Run();
 
+        // One app per data folder: two would read the same cradles and send the same outbox. A restart
+        // starts the new one before the old has closed, so it waits a while for the old to let go.
+        using var single = new Mutex(false, $@"Local\VentisolStation-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(AppPaths.Data.ToUpperInvariant())))[..16]}");
+        try { if (!single.WaitOne(TimeSpan.FromSeconds(20))) return; }
+        catch (AbandonedMutexException) { } // The old one was killed; the lock is ours now.
+
         if (StartupGuard.Begin(args)) return; // Rolling back a version that keeps crashing.
 
         var app = new App();
@@ -27,5 +35,6 @@ static class Program
             (s, _) => { ((DispatcherTimer)s!).Stop(); StartupGuard.Succeeded(); }, app.Dispatcher);
         app.Run();
         StartupGuard.Succeeded(); // Closed normally: not a crash.
+        single.ReleaseMutex();
     }
 }
