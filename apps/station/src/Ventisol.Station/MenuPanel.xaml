@@ -108,15 +108,29 @@
                 <Border Style="{StaticResource Row}">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Ellipse Width="10" Height="10" Fill="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,1,10,0" />
-                            <TextBlock Style="{StaticResource Value}" Text="Demo, sender ikke" />
+                            <Ellipse Width="10" Height="10" VerticalAlignment="Center" Margin="0,1,10,0">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="{StaticResource Warn}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CloudHealth}" Value="Ok">
+                                                <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding CloudHealth}" Value="Alarm">
+                                                <Setter Property="Fill" Value="{StaticResource Alarm}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Style="{StaticResource Value}" Text="{Binding CloudText}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
                         </StackPanel>
                         <TextBlock Style="{StaticResource Left}" Text="OptiCloud" />
                     </DockPanel>
                 </Border>
                 <Border Style="{StaticResource Row}">
                     <DockPanel>
-                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="Søger ikke endnu" />
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{Binding UpdateText}" TextTrimming="CharacterEllipsis" MaxWidth="300" />
                         <TextBlock Style="{StaticResource Left}" Text="Opdateringer" />
                     </DockPanel>
                 </Border>

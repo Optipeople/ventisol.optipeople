@@ -32,6 +32,17 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial string DateText { get; private set; } = "";
     [ObservableProperty] public partial bool ShowingReport { get; set; }
 
+    // The menu's OptiCloud and update rows. Health colours the dot: Ok, Warn or Alarm.
+    [ObservableProperty] public partial string CloudText { get; set; } = "Ikke sat op";
+    [ObservableProperty] public partial string CloudHealth { get; set; } = "Warn";
+    [ObservableProperty] public partial string UpdateText { get; set; } = "Ikke installeret";
+
+    // When the last scan came in anywhere, so updates wait for a quiet moment.
+    public DateTimeOffset LastScanAt { get; private set; } = DateTimeOffset.MinValue;
+
+    // Raised for each scan in and scan out a station accepted: what goes to OptiCloud.
+    public event EventHandler<ScanResult>? Recorded;
+
     // Raised for every scan that reaches a station, read or not.
     public event EventHandler? Scanned;
 
@@ -40,12 +51,14 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var station = Stations.FirstOrDefault(s => s.Number == scannerNumber);
         if (station is null) return;
+        LastScanAt = now;
 
         if (Barcode.TryParse(raw, out var barcode))
         {
             var result = station.Scan(barcode, now);
             if (result is { Kind: ScanKind.Out, Duration: { } d })
                 History.Add(new WorkRecord(result.Station, barcode, now - d, now));
+            if (result.Kind != ScanKind.Rejected) Recorded?.Invoke(this, result);
         }
         else
         {
