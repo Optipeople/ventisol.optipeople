@@ -4,23 +4,23 @@ All software for the Ventisol MES project lives in this monorepo. The hardware i
 
 **The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. We build no backend or database of our own.
 
-Updated 2026-10-21.
+Updated 2026-10-23.
 
 ## What we build
 
 | # | Part | Where it lives | Status |
 |---|---|---|---|
-| 1 | Station app | Native Windows app (this repo) | To build |
-| 2 | Scanner handling | Inside the station app | To build |
+| 1 | Station app | Native Windows app (this repo) | Built, tested against a fake OptiCloud |
+| 2 | Scanner handling | Inside the station app | Built (COM port + keyboard mode); untested on real cradles |
 | 3 | Backend | OptiPeople API and DB | Exists |
-| 4 | Admin setup | Inside the station app | To build |
-| 5 | Reports site | Next.js app, ventisol.optipeople.dk (this repo) | To build |
+| 4 | Admin setup | Inside the station app | Built |
+| 5 | Reports site | Next.js app, ventisol.optipeople.dk (this repo) | Built, not deployed |
 | 6 | Schirmer start/stop | OptiPeople Dashboards | Exists |
 | 7 | KMW connector | With Mads Wested (IoT) | Blocked on KMW |
 | 8 | 3E connector | Inside the station app | Build last |
 | 9 | Chat interface | Opti Assist, or the reports site | To decide |
 | 10 | SchirmerFix | Done, signed off by Bente | Done |
-| 11 | CI/CD and auto-update | GitHub Actions | To build |
+| 11 | CI/CD and auto-update | GitHub Actions | Built; needs the update repo and secrets |
 | 12 | Technical docs | OptiCore | Ongoing |
 
 ### 1. Station app (native Windows)
@@ -31,7 +31,7 @@ One full-screen app on the central PC, where all 7 scanners connect.
 - shows a big "scan registered" confirmation
 - starts by itself on boot, runs as a kiosk, updates itself (see 11)
 
-Offline buffering (storing scans when the network is down) is left out for now. It comes later.
+Offline buffering is in: every scan goes to an outbox on the PC first and is sent when OptiCloud can be reached, with the scan's own time. A journal on the PC restores the screen at once after a restart.
 
 The same app runs on the other PCs in **viewer mode** (see "Other screens" below).
 
@@ -45,13 +45,8 @@ The same app runs on the other PCs in **viewer mode** (see "Other screens" below
 
 - Swagger saved in [`docs/api/optipeople.swagger.json`](api/optipeople.swagger.json) (fetched 2026-10-21 from `https://api.optipeople.dk/swagger/web/swagger.json?access=optipeople-1`, 749 paths).
 - Auth: JWT bearer, from `POST /api/Authentication/login`.
-- Likely endpoints for scans:
-  - `POST /api/ItemScan/Create/{accountId}` with `{ itemId, machineId, sourceId }`
-  - `GET /api/ItemScan/GetLatestForCurrentOrder/{accountId}/{machineId}`
-  - `GET /api/ItemScan/GetAll/{accountId}`
-- Orders: `PartOrderNumber` (21 endpoints) and `incomacapp/api/Order/*`.
-- `CreateItemScanRequest` has no scan time, so the server stamps the time on arrival. Fine while we send scans live. When offline buffering comes, we need a `scanTime` field (like `CreateOperatorScanRequest` has).
-- To work out: how each station maps to a `machineId`, and what `sourceId` should hold (scanner ID or station ID).
+- **Scans are rows in a master-data table, `VentisolScans`, in the Ventisol account.** `ItemScan` was looked at and doesn't fit (no scan time, no in/out, items are products). See [`opticloud-scans.md`](opticloud-scans.md) for the table, the rules and the open questions for the backend owner.
+- Each station is mapped to an OptiCloud machine in the setup screen; the machine id is stored on every scan.
 
 ### 4. Admin setup (in the station app)
 
