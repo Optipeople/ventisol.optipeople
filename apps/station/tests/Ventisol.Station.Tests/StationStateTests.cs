@@ -23,14 +23,31 @@ public class StationStateTests
     }
 
     [Fact]
-    public void Another_element_while_busy_is_rejected_and_keeps_the_current_one()
+    public void Another_element_while_busy_switches_to_new_and_reports_duration_of_old()
     {
         var s = new StationState(StationConfig.Defaults[0]);
         s.Scan(Code("058556050103"), T0);
 
-        var r = s.Scan(Code("058556050102"), T0.AddMinutes(1));
+        var r = s.Scan(Code("058556050102"), T0.AddMinutes(5));
 
-        Assert.Equal(ScanKind.Rejected, r.Kind);
-        Assert.Equal("058556050103", s.Current?.Raw);
+        Assert.Equal(ScanKind.Switched, r.Kind);
+        Assert.Equal("058556050102", s.Current?.Raw);
+        Assert.Equal("058556050103", r.Previous?.Raw);
+        Assert.Equal(TimeSpan.FromMinutes(5), r.Duration);
+        Assert.True(s.IsBusy);
+    }
+
+    [Fact]
+    public void Switch_then_scan_same_ends_new_order()
+    {
+        var s = new StationState(StationConfig.Defaults[0]);
+        s.Scan(Code("058556050103"), T0);
+        s.Scan(Code("058556050102"), T0.AddMinutes(5)); // switch
+
+        var end = s.Scan(Code("058556050102"), T0.AddMinutes(8));
+
+        Assert.Equal(ScanKind.Out, end.Kind);
+        Assert.Equal(TimeSpan.FromMinutes(3), end.Duration);
+        Assert.False(s.IsBusy);
     }
 }

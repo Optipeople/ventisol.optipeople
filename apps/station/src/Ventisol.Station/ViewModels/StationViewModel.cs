@@ -3,7 +3,7 @@ using Ventisol.Station.Core;
 
 namespace Ventisol.Station.ViewModels;
 
-public enum FlashKind { None, In, Out, Rejected }
+public enum FlashKind { None, In, Out, Switched, Rejected }
 
 // One tile on the screen: a station, what it works on, for how long, and whether its scanner is there.
 // A scan answers on the tile itself, where the operator is already looking.
@@ -32,7 +32,7 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [ObservableProperty] public partial string FlashTitle { get; private set; } = "";
     [ObservableProperty] public partial string FlashDetail { get; private set; } = "";
 
-    public bool IsFlashOk => Flash is FlashKind.In or FlashKind.Out;
+    public bool IsFlashOk => Flash is FlashKind.In or FlashKind.Out or FlashKind.Switched;
     public bool IsFlashWarn => Flash is FlashKind.Rejected;
 
     public Barcode? Current => _state.Current;
@@ -55,6 +55,17 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
             case ScanKind.Out:
                 Clear();
                 ShowFlash(FlashKind.Out, "Scannet ud", $"{element} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
+                break;
+            case ScanKind.Switched:
+                // Stopped old order, started new one
+                IsBusy = true;
+                Code = barcode.Raw;
+                OrderNumber = barcode.Order.ToString();
+                DetailText = $"{barcode.PositionLabel} · stk. {barcode.Piece}";
+                ElapsedText = Format.Duration(TimeSpan.Zero);
+                var prev = result.Previous!;
+                ShowFlash(FlashKind.Switched, $"Skiftet fra {prev.Order}",
+                    $"{prev.PositionLabel} stk. {prev.Piece} stoppet · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
                 break;
             default:
                 var current = _state.Current!;

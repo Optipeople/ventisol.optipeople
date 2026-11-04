@@ -60,7 +60,15 @@ public sealed partial class MainViewModel : ObservableObject
             var result = station.Scan(barcode, now);
             if (result is { Kind: ScanKind.Out, Duration: { } d })
                 History.Add(new WorkRecord(result.Station, barcode, now - d, now));
-            if (result.Kind != ScanKind.Rejected) Recorded?.Invoke(this, result);
+            else if (result is { Kind: ScanKind.Switched, Duration: { } switchDuration, Previous: { } previous })
+            {
+                // Record the stopped order in history
+                History.Add(new WorkRecord(result.Station, previous, now - switchDuration, now));
+                // Record both Out for previous and In for new order
+                Recorded?.Invoke(this, new ScanResult(ScanKind.Out, result.Station, previous, now, switchDuration));
+                Recorded?.Invoke(this, new ScanResult(ScanKind.In, result.Station, barcode, now));
+            }
+            if (result.Kind is ScanKind.In or ScanKind.Out) Recorded?.Invoke(this, result);
         }
         else
         {
