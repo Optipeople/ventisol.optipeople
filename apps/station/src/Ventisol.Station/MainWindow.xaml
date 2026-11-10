@@ -44,6 +44,33 @@
             <Setter Property="Background" Value="{StaticResource Ok}" />
         </Style>
 
+        <!-- The confirm's buttons: big, as on the document's "Luk", for a thumb at arm's length -->
+        <Style x:Key="ConfirmButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+            <Setter Property="Background" Value="{StaticResource Rule}" />
+            <Setter Property="FontFamily" Value="{StaticResource Hanken}" />
+            <Setter Property="FontSize" Value="26" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Height" Value="76" />
+            <Setter Property="MinWidth" Value="200" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="8" Background="{TemplateBinding Background}" Padding="30,0">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Opacity" Value="0.8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Corner grip for resizing a block in layout mode -->
         <Style x:Key="ResizeGrip" TargetType="Thumb">
             <Setter Property="Width" Value="48" />
@@ -181,6 +208,26 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Ink}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <!-- Stops the element in progress by hand, after a confirm; only on a scan station -->
+                <Button HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,6,0,0" Width="56" Height="56"
+                        Cursor="Hand" Focusable="False" ToolTip="Stop ordren" Click="OnTileStop"
+                        Visibility="{Binding ShowsStop, Converter={x:Static vm:Present.Instance}}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Grid Background="Transparent">
+                                <Ellipse x:Name="Ring" Width="34" Height="34" Stroke="{StaticResource Quiet}" StrokeThickness="2" />
+                                <Rectangle x:Name="Square" Width="12" Height="12" RadiusX="2" RadiusY="2" Fill="{StaticResource Quiet}" />
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Ring" Property="Stroke" Value="{StaticResource AlarmText}" />
+                                    <Setter TargetName="Square" Property="Fill" Value="{StaticResource AlarmText}" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -416,6 +463,30 @@
 
         <!-- A station's element document, over the pages -->
         <local:DocumentOverlay x:Name="Document" Grid.RowSpan="3" />
+
+        <!-- Asks before a station's element is stopped by hand; a tap beside it or Esc cancels -->
+        <Grid x:Name="StopLayer" Grid.RowSpan="3" Visibility="Collapsed">
+            <!-- On release, so the release does not land on the tile below once the layer is gone -->
+            <Border Background="#99000000" MouseLeftButtonUp="OnStopScrim" />
+            <Border x:Name="StopCard" HorizontalAlignment="Center" VerticalAlignment="Center" Width="760"
+                    Background="{StaticResource Panel}" CornerRadius="8" Padding="44,40">
+                <Border.Effect>
+                    <DropShadowEffect Color="Black" BlurRadius="40" ShadowDepth="0" Opacity="0.5" />
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock x:Name="StopStation" Style="{StaticResource Kicker}" FontSize="15" HorizontalAlignment="Left" />
+                    <TextBlock x:Name="StopTitle" Style="{StaticResource TextBase}" HorizontalAlignment="Left" TextAlignment="Left"
+                               FontSize="40" FontWeight="Bold" Margin="0,8,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="StopDetail" Style="{StaticResource TextBase}" HorizontalAlignment="Left" TextAlignment="Left"
+                               FontSize="22" Foreground="{StaticResource Ink3}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,40,0,0">
+                        <Button Style="{StaticResource ConfirmButton}" Content="Annuller" Click="OnStopCancel" />
+                        <Button Style="{StaticResource ConfirmButton}" Content="Stop" Margin="16,0,0,0"
+                                Background="{StaticResource Alarm}" Click="OnStopConfirm" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- The menu slides in from the right; a tap beside it closes it -->
         <Grid x:Name="MenuLayer" Grid.RowSpan="3" Visibility="Collapsed">

@@ -67,7 +67,11 @@ public partial class MainWindow : Window
         foreach (var spec in widgets) _vm.AddWidget(spec);
         _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder));
         _document = new OrderDocumentViewModel(_documents);
-        foreach (var s in _vm.Stations) s.DocumentsOn = _documents.IsOn;
+        foreach (var s in _vm.Stations)
+        {
+            s.DocumentsOn = _documents.IsOn;
+            s.StopOn = _settings.Mode == StationMode.Scan;
+        }
         Document.Attach(_document, _vm.Stations);
         Document.CloseRequested += (_, _) => CloseDocument();
         BuildTiles();
@@ -176,7 +180,7 @@ public partial class MainWindow : Window
         var ended = false;
         foreach (var s in _settings.Stations.Where(s => s.MachineId == change.MachineId))
         {
-            if (!_vm.StopFromOptiPeople(s.Number, change.Stopped, now)) continue;
+            if (!_vm.Stop(s.Number, change.Stopped, StopReason.OptiPeople, now)) continue;
             ended = true;
             Log.Write($"OptiCloud: ordre {change.Stopped} stoppet i OptiPeople, afsluttet på station {s.Number}");
         }
@@ -187,6 +191,54 @@ public partial class MainWindow : Window
         }
         SendMachineOrders();
         FollowDocument();
+    }
+
+    // ===== Stop by hand =====
+
+    // The station and element the open confirm is about. Null: no confirm open.
+    (StationViewModel Station, Barcode Barcode)? _stopping;
+
+    // The stop button on a busy station tile: asks first, as a slip of a thumb or mouse is easy.
+    void OnTileStop(object sender, RoutedEventArgs e)
+    {
+        if (_editing || Setup.IsOpen || _settings.Mode != StationMode.Scan) return;
+        if (sender is not FrameworkElement { DataContext: StationViewModel s } || s.Current is not { } barcode) return;
+        CloseMenu();
+        _stopping = (s, barcode);
+        StopStation.Text = s.Name.ToUpperInvariant();
+        StopTitle.Text = $"Stop ordre {barcode.Order} på {s.Name}?";
+        StopDetail.Text = $"{barcode.PositionLabel} · stk. {barcode.Piece} · i gang {s.ElapsedText}\nStationen bliver ledig, og ordren stoppes i OptiPeople.";
+        StopLayer.Visibility = Visibility.Visible;
+        Motion.FadeIn(StopLayer, Motion.Normal);
+        Motion.Enter(StopCard, fromY: 16);
+    }
+
+    // Ends the element as a scan Out would (journal, outbox, VentisolScans), so the station is free
+    // and the machine's order is cleared in OptiPeople after the settle. Only the element the confirm
+    // named: if the station moved on meanwhile, nothing is stopped.
+    void OnStopConfirm(object sender, RoutedEventArgs e)
+    {
+        if (_stopping is not { } stop) return;
+        CloseStop();
+        var (station, barcode) = stop;
+        if (!_vm.Stop(station.Number, barcode.Raw, StopReason.Manual, DateTimeOffset.Now))
+        {
+            Log.Write($"{station.Name}: ordre {barcode.Order} ({barcode.Raw}) ikke stoppet, den var ikke længere i gang");
+            return;
+        }
+        Log.Write($"{station.Name}: ordre {barcode.Order} ({barcode.Raw}) stoppet manuelt");
+        SendMachineOrders();
+        FollowDocument();
+    }
+
+    void OnStopCancel(object sender, RoutedEventArgs e) => CloseStop();
+
+    void OnStopScrim(object sender, MouseButtonEventArgs e) => CloseStop();
+
+    void CloseStop()
+    {
+        _stopping = null;
+        StopLayer.Visibility = Visibility.Collapsed;
     }
 
     void ShowCloudStatus()
@@ -267,6 +319,7 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.Now;
         _vm.Tick(now);
+        if (_stopping is { } stop && stop.Station.Current?.Raw != stop.Barcode.Raw) CloseStop();
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
         if (Document.IsOpen)
         {
@@ -498,6 +551,7 @@ public partial class MainWindow : Window
     void StartEditing()
     {
         CloseDocument();
+        CloseStop();
         _editing = true;
         ShowReport(false);
         ResetHint();
@@ -759,6 +813,7 @@ public partial class MainWindow : Window
             // Esc on an open dropdown closes just the dropdown, not the setup with everything typed in it.
             if (Ui.IsDropDownOpen()) return;
             if (Setup.IsOpen) { Setup.Cancel(); return; }
+            if (_stopping is not null) { CloseStop(); return; }
             if (Document.IsOpen) { CloseDocument(); return; }
             if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
             else if (_editing) StopEditing();

@@ -192,6 +192,11 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   A scan at the station while the read was under way wins, also an Out and In of the same
   element: that element is kept and sent.
   The first read on start and the read after a failure still set what the station has.
+- An element can also be stopped by hand on a scan station: the stop button top-left on a busy
+  tile asks "Stop ordre X på Station N?" first. Stop ends it exactly like a scan Out (journal,
+  outbox, `VentisolScans`), the tile flashes "Stoppet manuelt" and the log says
+  `Station N: ordre X (barcode) stoppet manuelt`. The machine's order is then cleared in
+  OptiPeople after the settle, as after any Out. A viewer has no stop button.
 - Nothing is ever set while the machine's order is unknown. After a failed call (it may have got
   in) the machine is read again first. A read that fails for any reason (no network, refused, an
   answer we can't use) is retried with backoff, never skipped.

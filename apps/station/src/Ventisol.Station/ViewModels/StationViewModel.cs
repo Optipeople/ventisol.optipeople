@@ -5,6 +5,9 @@ namespace Ventisol.Station.ViewModels;
 
 public enum FlashKind { None, In, Out, Switched, Rejected }
 
+// Why an element ended without a scan: stopped in OptiPeople, or with the stop button on its tile.
+public enum StopReason { OptiPeople, Manual }
+
 // One tile on the screen: a station, what it works on, for how long, and whether its scanner is there.
 // A scan answers on the tile itself, where the operator is already looking.
 public sealed partial class StationViewModel(StationConfig config) : ObservableObject
@@ -19,7 +22,9 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     public int Number => config.Number;
     public string Name => config.Name;
 
-    [ObservableProperty] public partial bool IsBusy { get; private set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowsStop))]
+    public partial bool IsBusy { get; private set; }
     [ObservableProperty] public partial string? Code { get; private set; }
     [ObservableProperty] public partial string? OrderNumber { get; private set; }
     [ObservableProperty] public partial string? DetailText { get; private set; }
@@ -27,6 +32,13 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [ObservableProperty] public partial bool ScannerConnected { get; set; } = true;
     // Order documents are set up: the tile shows a button for its element's document.
     [ObservableProperty] public partial bool DocumentsOn { get; set; }
+    // A scan station: the tile can stop its element by hand. A viewer records nothing, so never there.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowsStop))]
+    public partial bool StopOn { get; set; }
+
+    // The stop button shows while an element is in progress here.
+    public bool ShowsStop => StopOn && IsBusy;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFlashOk), nameof(IsFlashWarn))]
@@ -78,14 +90,14 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
         return result;
     }
 
-    // The element in progress ends without a scan, as it was stopped in OptiPeople: the same Out as a
-    // scan of it would give, with a flash that says why. Null when nothing is in progress.
-    public ScanResult? StopFromOptiPeople(DateTimeOffset now)
+    // The element in progress ends without a scan (stopped in OptiPeople, or by hand on the tile):
+    // the same Out as a scan of it would give, with a flash that says why. Null when nothing is in progress.
+    public ScanResult? Stop(StopReason reason, DateTimeOffset now)
     {
         if (_state.Current is not { } barcode) return null;
         var result = _state.Scan(barcode, now);
         Clear();
-        ShowFlash(FlashKind.Out, "Stoppet i OptiPeople",
+        ShowFlash(FlashKind.Out, reason == StopReason.Manual ? "Stoppet manuelt" : "Stoppet i OptiPeople",
             $"Ordre {barcode.Order} · {barcode.PositionLabel} · stk. {barcode.Piece} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
         return result;
     }

@@ -85,13 +85,13 @@ public sealed partial class MainViewModel : ObservableObject
         Scanned?.Invoke(this, EventArgs.Empty);
     }
 
-    // The element barcode at station was stopped in OptiPeople: it ends there as an Out, recorded like
-    // a scan's. Not a scan: no Scanned, and updates don't wait for it. False when the station no
-    // longer has that element in progress (it was scanned out or switched meanwhile).
-    public bool StopFromOptiPeople(int station, string barcode, DateTimeOffset now)
+    // The element barcode at station was stopped in OptiPeople or by hand on its tile: it ends there as
+    // an Out, recorded like a scan's. Not a scan: no Scanned, and updates don't wait for it. False when
+    // the station no longer has that element in progress (it was scanned out or switched meanwhile).
+    public bool Stop(int station, string barcode, StopReason reason, DateTimeOffset now)
     {
         var s = Stations.FirstOrDefault(x => x.Number == station);
-        if (s?.Current?.Raw != barcode || s.StopFromOptiPeople(now) is not { } result) return false;
+        if (s?.Current?.Raw != barcode || s.Stop(reason, now) is not { } result) return false;
         if (result.Duration is { } d) History.Add(new WorkRecord(result.Station, result.Barcode, now - d, now));
         Recorded?.Invoke(this, result);
         return true;
