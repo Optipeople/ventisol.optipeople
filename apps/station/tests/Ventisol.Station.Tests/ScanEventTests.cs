@@ -80,16 +80,17 @@ public class ScanEventTests
         Assert.False(ScanEvent.TryFromValues(v, out _));
     }
 
+    // A switch is stored as an Out and an In by MainViewModel, so the Switched result itself is not.
     [Fact]
-    public void From_a_station_result_rejected_is_not_stored()
+    public void From_a_station_result_switched_is_not_stored()
     {
         var s = new StationState(StationConfig.Defaults[0]);
         var start = ScanEvent.From(s.Scan(Code("058556050103"), T0), null, "PC1");
-        var rejected = ScanEvent.From(s.Scan(Code("058556050102"), T0.AddMinutes(1)), null, "PC1");
-        var end = ScanEvent.From(s.Scan(Code("058556050103"), T0.AddMinutes(2)), null, "PC1");
+        var switched = ScanEvent.From(s.Scan(Code("058556050102"), T0.AddMinutes(1)), null, "PC1");
+        var end = ScanEvent.From(s.Scan(Code("058556050102"), T0.AddMinutes(3)), null, "PC1");
 
         Assert.Equal(ScanDirection.In, start!.Direction);
-        Assert.Null(rejected);
+        Assert.Null(switched);
         Assert.Equal(ScanDirection.Out, end!.Direction);
         Assert.Equal(120, end.DurationSec);
         Assert.Equal("Station 10", end.Station);
