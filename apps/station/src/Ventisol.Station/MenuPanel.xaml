@@ -96,8 +96,9 @@
             </Button.Template>
         </Button>
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+            <!-- Right margin keeps values clear of the scrollbar when the list overflows -->
+            <StackPanel Margin="0,0,16,0">
                 <TextBlock Style="{StaticResource Section}" Text="SKÆRM" />
                 <Border Style="{StaticResource Row}">
                     <DockPanel>
