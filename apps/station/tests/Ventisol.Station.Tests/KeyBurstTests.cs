@@ -13,7 +13,7 @@ public class KeyBurstTests
         var released = "";
         foreach (var c in text)
         {
-            released += b.Key(c, at);
+            released += b.Key(c, at, out _);
             at = at.AddMilliseconds(gapMs);
         }
         var scan = b.Enter(at, out var rest);
@@ -48,46 +48,73 @@ public class KeyBurstTests
     }
 
     [Fact]
-    public void A_burst_with_no_Enter_is_released_by_the_timer()
+    public void A_short_burst_with_no_Enter_is_released_by_the_timer()
     {
         var b = new KeyBurst();
-        b.Key('0', T0);
-        b.Key('5', T0.AddMilliseconds(8));
-        Assert.Equal("", b.Expire(T0.AddMilliseconds(40)));
+        b.Key('0', T0, out _);
+        b.Key('5', T0.AddMilliseconds(8), out _);
+        Assert.Equal("", b.Expire(T0.AddMilliseconds(40), out var scan));
+        Assert.Null(scan);
         Assert.True(b.IsCapturing);
-        Assert.Equal("05", b.Expire(T0.AddMilliseconds(100)));
+        Assert.Equal("05", b.Expire(T0.AddMilliseconds(100), out scan));
+        Assert.Null(scan);
         Assert.False(b.IsCapturing);
+    }
+
+    // A Zebra cradle in HID mode sent the barcode with no Enter after it.
+    [Fact]
+    public void A_long_burst_with_no_Enter_is_a_scan_once_the_keys_stop()
+    {
+        var b = new KeyBurst();
+        var at = T0;
+        foreach (var c in "058556050101") b.Key(c, at = at.AddMilliseconds(2), out _);
+        Assert.Equal("", b.Expire(at.AddMilliseconds(30), out var scan));
+        Assert.Null(scan);
+        Assert.Equal("", b.Expire(at.AddMilliseconds(70), out scan));
+        Assert.Equal("058556050101", scan);
+        Assert.False(b.IsCapturing);
+    }
+
+    [Fact]
+    public void A_key_after_a_burst_with_no_Enter_gives_the_scan_and_starts_over()
+    {
+        var b = new KeyBurst();
+        var at = T0;
+        foreach (var c in "058556050101") b.Key(c, at = at.AddMilliseconds(2), out _);
+        Assert.Equal("", b.Key('7', at.AddMilliseconds(500), out var scan));
+        Assert.Equal("058556050101", scan);
+        Assert.True(b.IsCapturing);
     }
 
     [Fact]
     public void A_lone_key_is_held_and_then_released()
     {
         var b = new KeyBurst();
-        Assert.Equal("", b.Key('3', T0));
+        Assert.Equal("", b.Key('3', T0, out _));
         Assert.True(b.IsCapturing);
-        Assert.Equal("3", b.Expire(T0.AddMilliseconds(60)));
+        Assert.Equal("3", b.Expire(T0.AddMilliseconds(60), out _));
     }
 
     [Fact]
     public void A_key_after_a_pause_releases_the_ones_before_and_starts_over()
     {
         var b = new KeyBurst();
-        b.Key('3', T0);
-        Assert.Equal("3", b.Key('0', T0.AddMilliseconds(500)));
+        b.Key('3', T0, out _);
+        Assert.Equal("3", b.Key('0', T0.AddMilliseconds(500), out _));
         var at = T0.AddMilliseconds(500);
-        foreach (var c in "58556050103") b.Key(c, at = at.AddMilliseconds(5));
+        foreach (var c in "58556050103") b.Key(c, at = at.AddMilliseconds(5), out _);
         Assert.Equal("058556050103", b.Enter(at.AddMilliseconds(5), out var released));
         Assert.Equal("", released);
     }
 
     [Fact]
-    public void A_late_Enter_is_no_scan()
+    public void A_late_Enter_still_ends_the_scan()
     {
         var b = new KeyBurst();
         var at = T0;
-        foreach (var c in "058556050103") b.Key(c, at = at.AddMilliseconds(5));
-        Assert.Null(b.Enter(at.AddMilliseconds(300), out var released));
-        Assert.Equal("058556050103", released);
+        foreach (var c in "058556050103") b.Key(c, at = at.AddMilliseconds(5), out _);
+        Assert.Equal("058556050103", b.Enter(at.AddMilliseconds(300), out var released));
+        Assert.Equal("", released);
     }
 
     [Fact]

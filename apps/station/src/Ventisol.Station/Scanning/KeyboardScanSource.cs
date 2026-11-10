@@ -8,7 +8,7 @@ namespace Ventisol.Station.Scanning;
 
 // A scanner in keyboard mode, as a cradle ships: one scanner, known as "keyboard".
 // The window hands it every key from PreviewKeyDown. Letters and digits are held for a moment;
-// a fast burst ended by Enter is a scan, anything else comes back through Typed.
+// a fast burst of 6 or more is a scan, with or without Enter; anything else comes back through Typed.
 // Create it on the UI thread; its events come on the UI thread.
 public sealed class KeyboardScanSource : IScanSource
 {
@@ -21,7 +21,12 @@ public sealed class KeyboardScanSource : IScanSource
     public KeyboardScanSource()
     {
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(25) };
-        _timer.Tick += (_, _) => Release(_burst.Expire(DateTimeOffset.Now));
+        _timer.Tick += (_, _) =>
+        {
+            var released = _burst.Expire(DateTimeOffset.Now, out var scan);
+            Release(released);
+            if (scan is not null) Found(scan);
+        };
     }
 
     public event EventHandler<RawScan>? Scanned;
@@ -52,7 +57,9 @@ public sealed class KeyboardScanSource : IScanSource
 
     public bool OnKey(char c, DateTimeOffset at)
     {
-        Release(_burst.Key(c, at));
+        var released = _burst.Key(c, at, out var scan);
+        Release(released);
+        if (scan is not null) Found(scan);
         _timer.Start();
         return true;
     }
@@ -63,14 +70,18 @@ public sealed class KeyboardScanSource : IScanSource
         _timer.Stop();
         Release(released);
         if (scan is null) return false;
+        Found(scan);
+        return true;
+    }
 
+    void Found(string scan)
+    {
         if (!_seen)
         {
             _seen = true;
             Raise(() => ConnectionChanged?.Invoke(this, (Id, true)));
         }
         Raise(() => Scanned?.Invoke(this, new RawScan(Id, scan, DateTimeOffset.Now)));
-        return true;
     }
 
     void Release(string keys)
