@@ -138,6 +138,15 @@ in step with the station, so OptiCloud's order time and reports follow the scans
 - Each order also carries the barcode's parts as its own custom fields (`customFieldItems`, text),
   as plain digits: `058556050103` gives `Ordre` 58556, `Position` 5, `Underposition` 1, `Emne` 3
   (`MachineOrder.From`). Nothing is set up for them, per machine or anywhere else.
+- A fifth field, `Scannet ind`, is when the element in progress was scanned In at the station, as
+  the PC's local (Danish) time without offset: `2026-11-10 08:05:09`. It is the station's own
+  start of the element, also after a restart (rebuilt from the journal or OptiCloud), so the true
+  start is kept however late the order reaches OptiPeople, whose run starts when the set arrives.
+- The fields may change while the number does not: a rework (Out, then a new In of the same
+  element) gives a new In time. The same number never sets again; the fields are sent again
+  when the machine runs that order, which updates `Scannet ind`. An Out and In within the 3
+  seconds sends nothing at all, so the run and its fields keep the first In. After a longer
+  gap the clear went out, so the new In is a new run on the same order with the new time.
 - `POST /api/RealtimeDashboard/SetOrderToMachine` `{ "machineId": "<uuid>", "number": "058556050103", "expectedSpeed": 0 }`
   makes it the machine's current order and ends the run of the one before; `number: ""` clears it
   (OptiPeople then runs a hidden default order). An unknown number is created in the factory.
@@ -150,7 +159,7 @@ in step with the station, so OptiCloud's order time and reports follow the scans
 - `SetOrderToMachine` ignores custom fields, so they go by a call of their own once the machine is
   known to run the element (after a set, or when a read finds it already there, as after a
   restart): `POST /api/PartOrderNumber/ExternalSetPartOrder`
-  `{ "factoryId": "<uuid>", "partOrderNumber": "058556050103", "customFields": [{ "label": "Ordre", "text": "58556" }, { "label": "Position", "text": "5" }, { "label": "Underposition", "text": "1" }, { "label": "Emne", "text": "3" }] }`.
+  `{ "factoryId": "<uuid>", "partOrderNumber": "058556050103", "customFields": [{ "label": "Ordre", "text": "58556" }, { "label": "Position", "text": "5" }, { "label": "Underposition", "text": "1" }, { "label": "Emne", "text": "3" }, { "label": "Scannet ind", "text": "2026-11-10 08:05:09" }] }`.
   It upserts by label and leaves the run alone, so it is safe to repeat. It comes after the set,
   which is known to create the order. Never for a clear.
 - `factoryId` is the machine's, from `GET /api/Machine/Get/{machineId}` (`data.factoryId`), asked
@@ -158,7 +167,8 @@ in step with the station, so OptiCloud's order time and reports follow the scans
 - A failed fields call never causes a set again (that would split the run). The fields wait in a
   queue per machine with their own backoff, behind any read or set that is due. Fields of an
   element the machine has since left are still sent, oldest first: they belong to that order.
-  At most 20 wait per machine; beyond that the oldest is dropped.
+  Newer fields for an order already waiting replace the older ones. At most 20 orders wait per
+  machine; beyond that the oldest is dropped.
 - Desired state, not history: since the server stamps the time, scans are never replayed. Per
   machine only the latest wish counts, and it is sent once it has held for 3 seconds. An Out and
   In of the same element within that sends nothing; a quick Out and In of another element (of

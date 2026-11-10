@@ -6,24 +6,31 @@ namespace Ventisol.Station.Core.Cloud;
 public sealed record OrderField(string Name, string Value);
 
 // What a machine should run in OptiPeople: Number is the order number ("" for none), Fields the
-// custom fields that go with it. Fields follow from Number (both come from the one barcode), so
-// two orders with the same Number are the same order: only Number is compared and read back.
+// custom fields that go with it. Only Number decides the order (it is what is set and read back);
+// the fields may change for the same Number (a new In of the same element) and are then sent again.
 public sealed record MachineOrder(string Number, IReadOnlyList<OrderField> Fields)
 {
     public static readonly MachineOrder None = new("", []);
+
+    public const string ScannedInFormat = "yyyy-MM-dd HH:mm:ss";
 
     public MachineOrder(string number) : this(number?.Trim() ?? "", []) { }
 
     // The element as OptiPeople gets it: the full 12-digit barcode as the number, so every element
     // is an order of its own and its time is its own; order, position, sub-position and piece as
     // fields, as plain digits: 058556050103 gives Ordre 58556, Position 5, Underposition 1, Emne 3.
-    public static MachineOrder From(Barcode barcode) => new(barcode.Raw,
+    // "Scannet ind" is when it was scanned In at the station, in local (Danish) time without offset,
+    // so the true start is kept however late the order gets to OptiPeople.
+    public static MachineOrder From(Barcode barcode, DateTimeOffset scannedIn, TimeZoneInfo? zone = null) => new(barcode.Raw,
     [
         new("Ordre", barcode.Order.ToString(CultureInfo.InvariantCulture)),
         new("Position", barcode.Position.ToString(CultureInfo.InvariantCulture)),
         new("Underposition", barcode.SubPosition.ToString(CultureInfo.InvariantCulture)),
         new("Emne", barcode.Piece.ToString(CultureInfo.InvariantCulture)),
+        new("Scannet ind", TimeZoneInfo.ConvertTime(scannedIn, zone ?? TimeZoneInfo.Local).ToString(ScannedInFormat, CultureInfo.InvariantCulture)),
     ]);
+
+    public bool SameFields(MachineOrder other) => Fields.SequenceEqual(other.Fields);
 }
 
 public enum MachineOrderAction { Read, Set, Fields }
@@ -90,14 +97,16 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         {
             var busy = group.Select(s => byNumber.GetValueOrDefault(s.Number)).Where(s => s?.Current is not null)
                 .OrderByDescending(s => s!.StartedAt).FirstOrDefault();
-            desired[group.Key] = busy is null ? MachineOrder.None : MachineOrder.From(busy.Current!);
+            desired[group.Key] = busy is null ? MachineOrder.None : MachineOrder.From(busy.Current!, busy.StartedAt!.Value);
         }
         return desired;
     }
 
-    // The wish for each machine given. A change starts the settle time again; the same wish again
-    // changes nothing. Machines not given are left as they are.
-    // Compared by Number only.
+    // The wish for each machine given. A change of Number starts the settle time again; the same
+    // wish again changes nothing. Machines not given are left as they are. The same Number with
+    // other fields (a new In time) never sets again, but its fields are sent again when the machine
+    // runs it. An Out and In within settle passes through none, so it sends nothing: the run in
+    // OptiPeople keeps its start, and so do its fields.
     public void Want(IReadOnlyDictionary<Guid, MachineOrder> desired, DateTimeOffset now)
     {
         lock (_gate)
@@ -110,6 +119,11 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
                 {
                     e.Desired = o;
                     e.ChangedAt = now;
+                }
+                else if (!e.Desired.SameFields(o))
+                {
+                    e.Desired = o;
+                    if (e.Known == o.Number) QueueFields(e, o);
                 }
             }
         }
@@ -181,17 +195,19 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
             if (!_machines.TryGetValue(machine, out var e)) return;
             e.Known = order.Number;
             Reset(e);
-            QueueFields(e, order);
+            // Newer fields for the same element may have come in while the set was under way.
+            QueueFields(e, e.Desired.Number == order.Number ? e.Desired : order);
         }
     }
 
-    // The fields of order got in: off the queue, and the next waits no longer.
-    public void FieldsSent(Guid machine, string number)
+    // The fields of order got in: off the queue, and the next waits no longer. Kept when newer
+    // fields for the same Number came in meanwhile: those still go.
+    public void FieldsSent(Guid machine, MachineOrder order)
     {
         lock (_gate)
         {
             if (!_machines.TryGetValue(machine, out var e)) return;
-            e.Fields.RemoveAll(o => o.Number == number);
+            e.Fields.RemoveAll(o => o.Number == order.Number && o.SameFields(order));
             e.FieldFailures = 0;
             e.FieldsAt = DateTimeOffset.MinValue;
         }
@@ -237,7 +253,14 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
 
     static void QueueFields(Entry e, MachineOrder order)
     {
-        if (order.Number.Length == 0 || order.Fields.Count == 0 || e.Fields.Any(o => o.Number == order.Number)) return;
+        if (order.Number.Length == 0 || order.Fields.Count == 0) return;
+        // Fields still waiting for the same order are replaced by the newest.
+        var i = e.Fields.FindIndex(o => o.Number == order.Number);
+        if (i >= 0)
+        {
+            e.Fields[i] = order;
+            return;
+        }
         e.Fields.Add(order);
         if (e.Fields.Count > MaxPendingFields) e.Fields.RemoveAt(0);
     }
@@ -296,7 +319,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             try
             {
                 await api.SetOrderFieldsAsync(step.MachineId, step.Order, ct);
-                orders.FieldsSent(step.MachineId, step.Number);
+                orders.FieldsSent(step.MachineId, step.Order);
                 _logged = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

@@ -13,7 +13,12 @@ public sealed class MachineOrdersTests : IDisposable
     // Elements by barcode: A and A2 are two pieces of one order, B and C other orders.
     const string A = "058556050103", A2 = "058556050104", B = "060001010101", C = "077777010101";
 
-    static MachineOrder E(string barcode) => MachineOrder.From(Code(barcode));
+    static MachineOrder E(string barcode, DateTimeOffset? scannedIn = null) => MachineOrder.From(Code(barcode), scannedIn ?? T0);
+
+    // "Scannet ind" as the station PC writes it: its own local time.
+    static string Local(DateTimeOffset at) => TimeZoneInfo.ConvertTime(at, TimeZoneInfo.Local).ToString(MachineOrder.ScannedInFormat, System.Globalization.CultureInfo.InvariantCulture);
+
+    static string ScannedIn(MachineOrder order) => order.Fields.Single(f => f.Name == "Scannet ind").Value;
 
     readonly string _folder = TempFolder();
     readonly List<string> _log = [];
@@ -533,17 +538,131 @@ public sealed class MachineOrdersTests : IDisposable
 
         Assert.Equal(2, desired.Count);
         Assert.Equal(A, desired[M1].Number);
+        Assert.Equal(Local(T0), ScannedIn(desired[M1]));
         Assert.Equal("", desired[M2].Number);
         Assert.Empty(desired[M2].Fields);
     }
 
     [Fact]
+    public void Scannet_ind_is_the_In_of_the_element_in_progress_also_after_a_restart()
+    {
+        var setups = new[] { new StationSetup(1, "Station 10", StationKind.Assembly, M1) };
+        var state = new StationState(StationConfig.Defaults[0]);
+
+        // Rebuilt from the journal or OptiCloud: the In time comes with it, not the time of the rebuild.
+        state.Restore(Code(A), T0.AddHours(-2));
+        Assert.Equal(Local(T0.AddHours(-2)), ScannedIn(MachineOrders.DesiredFrom(setups, [state])[M1]));
+
+        // A rework: Out, then In again later. Same order, new In.
+        state.Scan(Code(A), T0);
+        state.Scan(Code(A), T0.AddMinutes(5));
+        var again = MachineOrders.DesiredFrom(setups, [state])[M1];
+        Assert.Equal(A, again.Number);
+        Assert.Equal(Local(T0.AddMinutes(5)), ScannedIn(again));
+    }
+
+    [Fact]
     public void The_order_is_the_full_barcode_with_its_parts_as_fields()
     {
-        var order = MachineOrder.From(Code("058556050103"));
+        var danish = TimeZoneInfo.FindSystemTimeZoneById("Europe/Copenhagen");
+        var order = MachineOrder.From(Code("058556050103"), new DateTimeOffset(2026, 11, 10, 7, 5, 9, TimeSpan.Zero), danish);
 
         Assert.Equal("058556050103", order.Number);
-        Assert.Equal([new("Ordre", "58556"), new("Position", "5"), new("Underposition", "1"), new("Emne", "3")], order.Fields);
+        Assert.Equal([new("Ordre", "58556"), new("Position", "5"), new("Underposition", "1"), new("Emne", "3"), new("Scannet ind", "2026-11-10 08:05:09")], order.Fields);
+
+        // Summer time: two hours on UTC, still no offset in the text.
+        var summer = MachineOrder.From(Code("058556050103"), new DateTimeOffset(2026, 7, 1, 21, 30, 0, TimeSpan.Zero), danish);
+        Assert.Equal("2026-07-01 23:30:00", ScannedIn(summer));
+    }
+
+    [Fact]
+    public async Task A_new_In_of_the_running_element_sends_its_fields_again_but_never_sets()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+        orders.Want(M1, E(A, T0), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        // The same element wished with another In (a rework re-scan that reached the screen as one change).
+        var later = T0.AddMinutes(10);
+        orders.Want(M1, E(A, later), _now);
+        await Drain(worker);
+
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal([A, A], api.FieldNumbers);
+        Assert.Equal(Local(later), ScannedIn(new MachineOrder(A, api.FieldSets[1].Fields)));
+
+        // And the same wish again sends nothing more.
+        orders.Want(M1, E(A, later), _now);
+        _now += Settle;
+        Assert.Equal(0, await Drain(worker));
+    }
+
+    [Fact]
+    public async Task Out_and_In_of_the_same_element_within_settle_keeps_the_first_In()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+        orders.Want(M1, E(A, T0), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += TimeSpan.FromSeconds(1);
+        orders.Want(M1, E(A, _now), _now);
+        _now += TimeSpan.FromMinutes(1);
+        Assert.Equal(0, await Drain(worker));
+
+        // The run in OptiPeople kept its start, and so did its fields.
+        Assert.Single(api.Sets);
+        Assert.Equal([A], api.FieldNumbers);
+    }
+
+    [Fact]
+    public async Task A_rework_after_settle_is_a_new_run_with_the_new_In()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+        orders.Want(M1, E(A, T0), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += Settle;
+        await Drain(worker);
+        var again = _now;
+        orders.Want(M1, E(A, again), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, A), (M1, ""), (M1, A)], api.Sets);
+        Assert.Equal(Local(again), ScannedIn(new MachineOrder(A, api.FieldSets[^1].Fields)));
+    }
+
+    [Fact]
+    public async Task Fields_still_waiting_are_replaced_by_the_newest_for_the_same_element()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi { FailFields = NoNetwork };
+        var worker = Worker(orders, api);
+        orders.Want(M1, E(A, T0), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        var later = T0.AddMinutes(10);
+        orders.Want(M1, E(A, later), _now);
+        Assert.Equal([A], orders.PendingFields(M1));
+
+        api.FailFields = null;
+        _now += TimeSpan.FromMinutes(1);
+        await Drain(worker);
+
+        Assert.Single(api.FieldSets);
+        Assert.Equal(Local(later), ScannedIn(new MachineOrder(A, api.FieldSets[0].Fields)));
     }
 
     [Fact]
@@ -592,7 +711,7 @@ public sealed class MachineOrdersTests : IDisposable
 
         // Then the fields, in the machine's factory, as text by label.
         await Until(() => api.FieldsOf(A) is not null);
-        Assert.Equal(new Dictionary<string, string> { ["Ordre"] = "58556", ["Position"] = "5", ["Underposition"] = "1", ["Emne"] = "3" }, api.FieldsOf(A));
+        Assert.Equal(new Dictionary<string, string> { ["Ordre"] = "58556", ["Position"] = "5", ["Underposition"] = "1", ["Emne"] = "3", ["Scannet ind"] = Local(T0) }, api.FieldsOf(A));
         Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("ExternalSetPartOrder") && r.Body!.Contains($"\"factoryId\":\"{api.Factory}\"")
             && r.Body.Contains($"\"partOrderNumber\":\"{A}\"") && r.Body.Contains("{\"label\":\"Ordre\",\"text\":\"58556\"}"));
 
