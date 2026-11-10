@@ -8,6 +8,8 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Ventisol.Station.Core;
 using Ventisol.Station.Core.Cloud;
+using Ventisol.Station.Core.Documents;
+using Ventisol.Station.Documents;
 using Ventisol.Station.Scanning;
 using Ventisol.Station.Updates;
 using Ventisol.Station.ViewModels;
@@ -18,6 +20,8 @@ public partial class MainWindow : Window
 {
     // The report page goes back to the stations after this long without a touch.
     static readonly TimeSpan ReportIdle = TimeSpan.FromSeconds(60);
+    // An open document goes back to the stations after this long without a touch.
+    static readonly TimeSpan DocumentIdle = TimeSpan.FromMinutes(3);
 
     readonly StationSettings _settings = SettingsStore.Load();
     readonly MainViewModel _vm;
@@ -26,6 +30,8 @@ public partial class MainWindow : Window
     readonly ScanSources _scans;
     readonly CloudSync _cloud;
     readonly UpdateService _updates;
+    readonly OrderDocuments _documents;
+    readonly OrderDocumentViewModel _document;
     // The scans this screen sent in the last 36 hours, so a load from OptiCloud never drops one.
     readonly List<ScanEvent> _recorded = [];
     // Taps and number keys make up scans only while OptiCloud is not set up, so a station
@@ -59,6 +65,11 @@ public partial class MainWindow : Window
         var (layout, widgets) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
         _layout = layout;
         foreach (var spec in widgets) _vm.AddWidget(spec);
+        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder));
+        _document = new OrderDocumentViewModel(_documents);
+        foreach (var s in _vm.Stations) s.DocumentsOn = _documents.IsOn;
+        Document.Attach(_document, _vm.Stations);
+        Document.CloseRequested += (_, _) => CloseDocument();
         BuildTiles();
         BuildGuides();
         BuildDots();
@@ -83,8 +94,11 @@ public partial class MainWindow : Window
         Menu.ArrangeRequested += (_, _) => { CloseMenu(); StartEditing(); };
         Menu.SetupRequested += (_, _) => { CloseMenu(); OpenSetup(); };
 
-        // A scan always brings the stations back, so its answer is seen.
-        _vm.Scanned += (_, _) => { CloseMenu(); ShowReport(false); };
+        // A scan always brings the stations back, so its answer is seen. An open document stays open
+        // (its strip shows the answer) and follows its station to a new element.
+        _vm.Scanned += (_, _) => { CloseMenu(); ShowReport(false); FollowDocument(); };
+        // The document of an element scanned in is fetched now, so a tap on the station shows it at once.
+        _vm.Recorded += (_, r) => { if (r.Kind == ScanKind.In) PrefetchDocument(r.Barcode); };
 
         _clock.Tick += (_, _) => OnTick();
         _clock.Start();
@@ -135,6 +149,9 @@ public partial class MainWindow : Window
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
         _vm.Apply(ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now)), now);
         SendMachineOrders(loaded.FromCloud);
+        foreach (var s in _vm.Stations)
+            if (s.Current is { } b) PrefetchDocument(b);
+        FollowDocument();
     }
 
     // Each mapped machine in OptiPeople gets the element in progress at its station, else none.
@@ -221,12 +238,88 @@ public partial class MainWindow : Window
         var now = DateTimeOffset.Now;
         _vm.Tick(now);
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
+        if (Document.IsOpen)
+        {
+            if (now - _lastTouch > DocumentIdle) CloseDocument();
+            else _document.UpdateStatus(now);
+        }
     }
 
     protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
     {
         base.OnPreviewMouseDown(e);
         _lastTouch = DateTimeOffset.Now;
+    }
+
+    // Reading a document is touching and scrolling it, not only tapping.
+    protected override void OnPreviewTouchDown(TouchEventArgs e)
+    {
+        base.OnPreviewTouchDown(e);
+        _lastTouch = DateTimeOffset.Now;
+    }
+
+    protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnPreviewMouseWheel(e);
+        _lastTouch = DateTimeOffset.Now;
+    }
+
+    // ===== Order documents =====
+
+    // What a station's document shows: the element in progress there, else the last one done there today.
+    DocumentTarget TargetFor(int station)
+    {
+        var s = _vm.Stations.First(x => x.Number == station);
+        if (s.State.Current is { } current) return new(s.Name, current, true, s.State.StartedAt);
+        if (_vm.LastDoneAt(station) is { } last) return new(s.Name, last.Barcode, false, last.End);
+        return new(s.Name, null, false, null);
+    }
+
+    void OpenDocument(int station)
+    {
+        if (_editing || Setup.IsOpen) return;
+        CloseMenu();
+        _lastTouch = DateTimeOffset.Now;
+        if (Document.Station != station) _document.Show(TargetFor(station));
+        Document.Open(station);
+    }
+
+    void CloseDocument()
+    {
+        if (!Document.IsOpen) return;
+        Document.Close();
+        // Back on the window, so a keyboard-mode scanner is heard (as after the setup).
+        Keyboard.Focus(this);
+    }
+
+    void FollowDocument()
+    {
+        if (Document.Station is { } n) _document.Follow(TargetFor(n));
+    }
+
+    // Finds and reads the element's document and renders its drawing, in the background. A scan never waits on it.
+    void PrefetchDocument(Barcode barcode)
+    {
+        if (!_documents.IsOn) return;
+        var (ground, ink) = OrderDocumentViewModel.DrawingColours();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var load = await _documents.LoadAsync(barcode);
+                if (load is { Status: OrderDocumentLoadStatus.Ready, Position: { Drawing: not null } p, Pdf: not null })
+                    await PdfRender.DrawingAsync(load, p, ground, ink);
+                else if (load.Status is OrderDocumentLoadStatus.FolderUnavailable or OrderDocumentLoadStatus.Unreadable)
+                    Log.Write($"Order document for {barcode.Raw}: {load.Status}, {load.Error}");
+            }
+            catch (Exception ex) { Log.Write($"Order document for {barcode.Raw} failed: {ex.Message}"); }
+        });
+    }
+
+    // The document button on a station tile (in the demo, where a tap on the tile scans).
+    void OnTileDocument(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: StationViewModel s }) OpenDocument(s.Number);
     }
 
     // ===== Stations page =====
@@ -374,6 +467,7 @@ public partial class MainWindow : Window
 
     void StartEditing()
     {
+        CloseDocument();
         _editing = true;
         ShowReport(false);
         ResetHint();
@@ -451,7 +545,13 @@ public partial class MainWindow : Window
         var tile = _tiles[id];
         if (!_editing)
         {
-            if (_demoInput && tile.Station is { } n) _demo.Scan(n); // Demo: a tap on a station scans.
+            // Demo: a tap on a station scans (its document button opens the document).
+            // Otherwise a tap opens the station's document.
+            if (tile.Station is { } n)
+            {
+                if (_demoInput) _demo.Scan(n);
+                else OpenDocument(n);
+            }
             return;
         }
         if (_dragFrom is not { } from) return;
@@ -629,6 +729,7 @@ public partial class MainWindow : Window
             // Esc on an open dropdown closes just the dropdown, not the setup with everything typed in it.
             if (Ui.IsDropDownOpen()) return;
             if (Setup.IsOpen) { Setup.Cancel(); return; }
+            if (Document.IsOpen) { CloseDocument(); return; }
             if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
             else if (_editing) StopEditing();
             else if (!_kiosk) Close();

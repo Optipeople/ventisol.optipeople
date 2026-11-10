@@ -170,3 +170,30 @@ Lengths and sizes stay as printed (`1491,0`), so nothing is lost in rounding.
   ("Mappen svarer ikke"); the listing goes on and fills the index for the next scan.
 - `RefreshAsync()` and `CheckFolderAsync(folder)` give `OrderDocumentFolderStatus(Available, Orders, Files, Error)`,
   which the setup screen shows as "Fundet 26 ordrer" or "Mappen kan ikke læses".
+
+## On the station screen
+
+A tap on a station tile opens its element's document over the stations page (`DocumentOverlay`,
+content in the reusable `OrderDocumentView`, view model `OrderDocumentViewModel`). In the demo, where a
+tap scans, the small document button at the tile's top right opens it instead. It shows the element in
+progress at the station, else the last one finished there today, else an empty state.
+
+- Header: order, position, piece ("1 af 6"), customer, Lev. uge, system, and whether it is in progress.
+- The drawing, cut from the position's page and rendered by Windows' own PDF engine (`Windows.Data.Pdf`,
+  hence the app's `net10.0-windows10.0.19041.0` target), in the screen's ink on the panel colour.
+- Cards (`ElementSheet`): Mål u/kobling, weight, colours, Karmhuller, one card per field; then the cutting
+  list and hardware/accessories as tables. "Vis hele PDF" shows every page rendered, from the position's page.
+- States: feature off, folder unavailable, order not found (with "Prøv igen"), position not in the PDF
+  (the whole PDF with a warning), and a warning when the parser reported problems.
+- Closes with "Luk", Esc, or after 3 minutes untouched. Scans go on while it is open; their answers show
+  as a strip at the bottom, and the document follows its station to a new element.
+- `OrderDocuments` finds and parses in the background (read timeout 15 s) and keeps the last 24 parsed
+  files by path, write time and size. A scan-in pre-fetches the document and renders the drawing, so the
+  tap is instant. Rendered bitmaps are cached too (`PdfRender`).
+
+A picture without tapping, with its own data folder so it never meets the running app:
+
+```
+$env:VENTISOL_STATION_DATA = "$env:TEMP\vs-snap"
+VentisolStation.exe --snapshot-document <folder> 058721010101 out.png [--pages] [--size 1920x1080]
+```

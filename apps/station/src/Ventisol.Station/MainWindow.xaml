@@ -167,6 +167,25 @@
                     </Viewbox>
                 </Border>
 
+                <!-- Opens the element's document; the way in for the demo, where a tap on the tile scans -->
+                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Width="56" Height="56"
+                        Cursor="Hand" Focusable="False" ToolTip="Produktionsliste" Click="OnTileDocument"
+                        Visibility="{Binding DocumentsOn, Converter={x:Static vm:Present.Instance}}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Grid Background="Transparent">
+                                <TextBlock x:Name="Glyph" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="22" Text="&#xE8A5;"
+                                           Foreground="{StaticResource Quiet}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Ink}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <!-- The answer to a scan: a solid status tile over the panel, dark text on colour -->
                 <Border x:Name="FlashOk" CornerRadius="8" Background="{StaticResource Ok}" Opacity="0" IsHitTestVisible="False">
                     <Viewbox x:Name="FlashOkBody" Margin="24,20" StretchDirection="DownOnly" RenderTransformOrigin="0.5,0.5">
@@ -393,6 +412,9 @@
                 </Button.Template>
             </Button>
         </Grid>
+
+        <!-- A station's element document, over the pages -->
+        <local:DocumentOverlay x:Name="Document" Grid.RowSpan="3" />
 
         <!-- The menu slides in from the right; a tap beside it closes it -->
         <Grid x:Name="MenuLayer" Grid.RowSpan="3" Visibility="Collapsed">

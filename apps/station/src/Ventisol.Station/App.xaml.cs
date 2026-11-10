@@ -38,6 +38,14 @@ public partial class App : Application
         FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement),
             new FrameworkPropertyMetadata(XmlLanguage.GetLanguage(da.IetfLanguageTag)));
 
+        // A developer's picture of the document screen (Documents/DocumentSnapshot.cs), then exit.
+        if (e.Args.Contains(Documents.DocumentSnapshot.Flag, StringComparer.OrdinalIgnoreCase))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Documents.DocumentSnapshot.Run(this, e.Args);
+            return;
+        }
+
         // --kiosk on the shop floor PC: full screen, no window buttons.
         var kiosk = e.Args.Contains("--kiosk", StringComparer.OrdinalIgnoreCase);
         // --showcase starts with sample scans on the screen.

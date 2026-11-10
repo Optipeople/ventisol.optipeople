@@ -77,6 +77,10 @@ public sealed partial class MainViewModel : ObservableObject
         Scanned?.Invoke(this, EventArgs.Empty);
     }
 
+    // The last element finished at a station today, if any.
+    public WorkRecord? LastDoneAt(int station) =>
+        History.Where(r => r.Station.Number == station).MaxBy(r => r.End);
+
     // Today as OptiCloud has it: on start, so a restart loses nothing, and on a viewer every few seconds.
     public void Apply(ReplayResult today, DateTimeOffset now)
     {

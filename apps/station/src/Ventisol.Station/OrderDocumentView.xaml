@@ -1,0 +1,561 @@
+<!-- An element's production document, for operators at arm's length: who and what in a strip at the
+     top, the drawing big on the left, the key facts as cards and the cutting list and hardware as ruled
+     tables on the right. "Vis hele PDF" shows the pages as printed. Fills whatever it is given, so the
+     same control can be a whole station screen later. DataContext is an OrderDocumentViewModel. -->
+<UserControl x:Class="Ventisol.Station.OrderDocumentView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Ventisol.Station.ViewModels"
+             xmlns:doc="clr-namespace:Ventisol.Station.Core.Documents;assembly=Ventisol.Station.Core"
+             x:Name="Self">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Shown" />
+
+        <Style x:Key="Left" TargetType="TextBlock" BasedOn="{StaticResource TextBase}">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <!-- Small bold label over a value -->
+        <Style x:Key="Label" TargetType="TextBlock" BasedOn="{StaticResource Kicker}">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Panel}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="24,18" />
+            <Setter Property="Margin" Value="6" />
+        </Style>
+        <Style x:Key="Cell" TargetType="TextBlock" BasedOn="{StaticResource Left}">
+            <Setter Property="FontSize" Value="20" />
+            <Setter Property="Margin" Value="0,0,32,0" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        </Style>
+        <Style x:Key="Num" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+        <Style x:Key="Head" TargetType="TextBlock" BasedOn="{StaticResource Cell}">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        </Style>
+        <Style x:Key="HeadNum" TargetType="TextBlock" BasedOn="{StaticResource Head}">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+        <Style x:Key="Row" TargetType="Border">
+            <Setter Property="BorderBrush" Value="{StaticResource Rule}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="0,10" />
+        </Style>
+        <Style x:Key="TableTitle" TargetType="TextBlock" BasedOn="{StaticResource Left}">
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+
+        <!-- A stat in the header: hidden when it has no value (set the value in Tag) -->
+        <Style x:Key="Stat" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,48,0" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="StatValue" TargetType="TextBlock" BasedOn="{StaticResource Left}">
+            <Setter Property="FontSize" Value="40" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,-2,0,0" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        </Style>
+
+        <!-- Big touch buttons, as on the layout bar -->
+        <Style x:Key="BigButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Ink}" />
+            <Setter Property="Background" Value="{StaticResource Rule}" />
+            <Setter Property="FontFamily" Value="{StaticResource Hanken}" />
+            <Setter Property="FontSize" Value="22" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Height" Value="64" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="8" Background="{TemplateBinding Background}" Padding="28,0">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Opacity" Value="0.8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A thin scroll bar in the panel's own colours, as on the setup screen -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="8" />
+            <Setter Property="MinWidth" Value="8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border CornerRadius="4" Background="{StaticResource Rule}" />
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Cutting list: shared columns, so the rows line up; a column empty in every row is hidden -->
+        <DataTemplate x:Key="CutRow" DataType="{x:Type doc:SheetCutRow}">
+            <Border x:Name="Line" Style="{StaticResource Row}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CProfile" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CWidth" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CQty" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CLength" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CSide" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CSteel" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CSteelLength" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CField" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="CClear" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="Profile" Style="{StaticResource Cell}" FontWeight="Bold" Text="{Binding Profile}" />
+                    <TextBlock Grid.Column="1" Style="{StaticResource Num}" Text="{Binding Width}"
+                               Visibility="{Binding DataContext.Sheet.Cutting.ShowWidth, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="2" Style="{StaticResource Num}" Text="{Binding Quantity}" />
+                    <TextBlock Grid.Column="3" Style="{StaticResource Num}" FontWeight="Bold" Text="{Binding Length}" />
+                    <TextBlock Grid.Column="4" Style="{StaticResource Cell}" Text="{Binding Side}" />
+                    <TextBlock Grid.Column="5" Style="{StaticResource Cell}" Foreground="{StaticResource Ink3}" Text="{Binding Steel}"
+                               Visibility="{Binding DataContext.Sheet.Cutting.ShowSteel, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="6" Style="{StaticResource Num}" Foreground="{StaticResource Ink3}" Text="{Binding SteelLength}"
+                               Visibility="{Binding DataContext.Sheet.Cutting.ShowSteel, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="7" Style="{StaticResource Num}" Text="{Binding Field}"
+                               Visibility="{Binding DataContext.Sheet.Cutting.ShowField, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="8" Style="{StaticResource Num}" Text="{Binding Clearance}"
+                               Visibility="{Binding DataContext.Sheet.Cutting.ShowClearance, ElementName=Self, Converter={StaticResource Shown}}" />
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <!-- A section (Karm, Ramme ...) as a kicker over its rows -->
+                <DataTrigger Binding="{Binding IsHeading}" Value="True">
+                    <Setter TargetName="Line" Property="Padding" Value="0,22,0,8" />
+                    <Setter TargetName="Profile" Property="FontSize" Value="15" />
+                    <Setter TargetName="Profile" Property="Foreground" Value="{StaticResource Ink3}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="PartRow" DataType="{x:Type doc:SheetPartRow}">
+            <Border x:Name="Line" Style="{StaticResource Row}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="PQty" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="PColour" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="PSize" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="PMount" />
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="PPlace" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="Qty" Style="{StaticResource Num}" FontWeight="Bold" MinWidth="44" Text="{Binding Quantity}" />
+                    <TextBlock x:Name="Description" Grid.Column="1" Style="{StaticResource Cell}" TextWrapping="Wrap" Text="{Binding Description}" />
+                    <TextBlock Grid.Column="2" Style="{StaticResource Cell}" Foreground="{StaticResource Ink3}" Text="{Binding Colour}"
+                               Visibility="{Binding DataContext.Sheet.Parts.ShowColour, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="3" Style="{StaticResource Num}" Text="{Binding Size}"
+                               Visibility="{Binding DataContext.Sheet.Parts.ShowSize, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="4" Style="{StaticResource Cell}" Text="{Binding Mounting}"
+                               Visibility="{Binding DataContext.Sheet.Parts.ShowMounting, ElementName=Self, Converter={StaticResource Shown}}" />
+                    <TextBlock Grid.Column="5" Style="{StaticResource Cell}" Foreground="{StaticResource Ink3}" Text="{Binding Placement}"
+                               Visibility="{Binding DataContext.Sheet.Parts.ShowPlacement, ElementName=Self, Converter={StaticResource Shown}}" />
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsHeading}" Value="True">
+                    <Setter TargetName="Line" Property="Padding" Value="0,22,0,8" />
+                    <Setter TargetName="Description" Property="Grid.Column" Value="0" />
+                    <Setter TargetName="Description" Property="Grid.ColumnSpan" Value="6" />
+                    <Setter TargetName="Description" Property="FontSize" Value="15" />
+                    <Setter TargetName="Description" Property="FontWeight" Value="Bold" />
+                    <Setter TargetName="Description" Property="Foreground" Value="{StaticResource Ink3}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header: order, position and piece first, then whose it is and when it goes -->
+        <Border Background="{StaticResource Panel}" CornerRadius="8" Padding="32,18,18,18">
+            <DockPanel>
+                <ContentPresenter DockPanel.Dock="Right" VerticalAlignment="Center" Content="{Binding Actions, ElementName=Self}" />
+                <StackPanel VerticalAlignment="Center">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Style="{StaticResource Stat}" Tag="{Binding Sheet.Order}">
+                            <TextBlock Style="{StaticResource Label}" Text="ORDRE" />
+                            <TextBlock x:Name="OrderValue" Text="{Binding Sheet.Order}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource StatValue}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding InProgress}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource OkText}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Style="{StaticResource Stat}" Tag="{Binding Sheet.Position}">
+                            <TextBlock Style="{StaticResource Label}" Text="POSITION" />
+                            <TextBlock Style="{StaticResource StatValue}" Text="{Binding Sheet.Position}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Style="{StaticResource Stat}" Tag="{Binding Sheet.Piece}">
+                            <TextBlock Style="{StaticResource Label}" Text="EMNE" />
+                            <TextBlock Style="{StaticResource StatValue}" Text="{Binding Sheet.Piece}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="3" Style="{StaticResource Stat}" Tag="{Binding Sheet.Customer}">
+                            <TextBlock Style="{StaticResource Label}" Text="KUNDE" />
+                            <TextBlock Style="{StaticResource StatValue}" Text="{Binding Sheet.Customer}" ToolTip="{Binding Sheet.Customer}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="4" Style="{StaticResource Stat}" Tag="{Binding Sheet.DeliveryWeek}">
+                            <TextBlock Style="{StaticResource Label}" Text="LEV. UGE" />
+                            <TextBlock Style="{StaticResource StatValue}" Text="{Binding Sheet.DeliveryWeek}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="5" Style="{StaticResource Stat}" Tag="{Binding Sheet.System}">
+                            <TextBlock Style="{StaticResource Label}" Text="SYSTEM" />
+                            <TextBlock Style="{StaticResource StatValue}" Text="{Binding Sheet.System}" />
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Ellipse Width="10" Height="10" Margin="0,1,10,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource Off}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding InProgress}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}" Text="{Binding StatusText}" />
+                    </StackPanel>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Something to know before reading on: a solid warn strip, dark text on colour -->
+        <Border Grid.Row="1" Background="{StaticResource Warn}" CornerRadius="8" Padding="24,14" Margin="0,12,0,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Warning}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Style="{StaticResource Left}" FontSize="20" FontWeight="Bold" Foreground="{StaticResource Dark}"
+                       TextWrapping="Wrap" Text="{Binding Warning}" />
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <!-- The element: drawing left, facts and tables right -->
+            <Grid x:Name="Element">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding State}" Value="{x:Static vm:DocumentState.Ready}" />
+                                    <Condition Binding="{Binding ShowingPages}" Value="False" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible" />
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="5*" />
+                    <ColumnDefinition Width="6" />
+                    <ColumnDefinition Width="7*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Background="{StaticResource Panel}" CornerRadius="8" Margin="0,0,6,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Style="{StaticResource Label}" Margin="24,20,24,0" Text="TEGNING" />
+                        <Image Grid.Row="1" Margin="28,16" Source="{Binding Drawing}" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <TextBlock Grid.Row="1" Style="{StaticResource TextBase}" FontSize="20" Foreground="{StaticResource Quiet}"
+                                   VerticalAlignment="Center" Text="{Binding DrawingNote}" />
+                        <Button Grid.Row="2" Style="{StaticResource BigButton}" Margin="20,0,20,20" Content="Vis hele PDF"
+                                Command="{Binding ShowPdfCommand}"
+                                Visibility="{Binding HasPdf, Converter={StaticResource Shown}}" />
+                    </Grid>
+                </Border>
+
+                <ScrollViewer x:Name="FactsScroller" Grid.Column="2" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                    <StackPanel Margin="0,-6,6,0">
+                        <!-- The PDF's bold notes, such as "Karm og ramme pakkes særskilt" -->
+                        <ItemsControl ItemsSource="{Binding Sheet.Notes}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}" Background="{StaticResource Rule}">
+                                        <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" TextWrapping="Wrap" Text="{Binding}" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <ItemsControl ItemsSource="{Binding Sheet.Facts}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="3" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type doc:SheetFact}">
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource Label}" Text="{Binding Label}" />
+                                            <TextBlock Style="{StaticResource Left}" FontSize="30" FontWeight="Bold" Margin="0,2,0,0"
+                                                       Typography.NumeralAlignment="Tabular" Text="{Binding Value}" ToolTip="{Binding Value}" />
+                                            <TextBlock Style="{StaticResource Left}" FontSize="16" Foreground="{StaticResource Ink3}" Text="{Binding Detail}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- One card per field (Felt): opening, sash size, glass and panes -->
+                        <ItemsControl ItemsSource="{Binding Sheet.Fields}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type doc:SheetField}">
+                                    <Border Style="{StaticResource Card}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="160" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
+                                                <TextBlock Style="{StaticResource Label}" Text="{Binding Title}" />
+                                                <TextBlock Style="{StaticResource Left}" FontSize="30" FontWeight="Bold" TextWrapping="Wrap"
+                                                           Text="{Binding Opening}" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="1" Style="{StaticResource Head}" VerticalAlignment="Top" Margin="0,8,0,0" Text="Rammemål"
+                                                       Visibility="{Binding FrameSize, Converter={x:Static vm:Present.Instance}}" />
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Left}" FontSize="24" FontWeight="Bold"
+                                                       Margin="0,4,0,0" Typography.NumeralAlignment="Tabular" Text="{Binding FrameSize}" />
+                                            <TextBlock Grid.Row="2" Style="{StaticResource Head}" VerticalAlignment="Top" Margin="0,10,0,0" Text="Glas" />
+                                            <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,6,0,0">
+                                                <TextBlock Style="{StaticResource Left}" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" Text="{Binding Glass}" />
+                                                <ItemsControl ItemsSource="{Binding GlassLayers}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}" TextWrapping="Wrap" Text="{Binding}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                            <TextBlock Grid.Row="3" Style="{StaticResource Head}" VerticalAlignment="Top" Margin="0,12,0,0" Text="Glasmål" />
+                                            <ItemsControl Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" ItemsSource="{Binding Panes}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Style="{StaticResource Left}" FontSize="22" FontWeight="Bold"
+                                                                   Typography.NumeralAlignment="Tabular" Text="{Binding}" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Grid.Row="4" Style="{StaticResource Head}" VerticalAlignment="Top" Margin="0,12,0,0" Text="Tætning"
+                                                       Visibility="{Binding Seals, Converter={x:Static vm:Present.Instance}}" />
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource Left}" FontSize="20" Margin="0,10,0,0"
+                                                       Text="{Binding SealsText}" Visibility="{Binding Seals, Converter={x:Static vm:Present.Instance}}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Border x:Name="CuttingPanel" Style="{StaticResource Card}" Grid.IsSharedSizeScope="True"
+                                Visibility="{Binding Sheet.Cutting.Rows, Converter={x:Static vm:Present.Instance}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TableTitle}" Text="AFKORTNING" />
+                                <Border Style="{StaticResource Row}" Padding="0,0,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CProfile" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CWidth" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CQty" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CLength" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CSide" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CSteel" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CSteelLength" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CField" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="CClear" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource Head}" Text="Profil" />
+                                        <TextBlock Grid.Column="1" Style="{StaticResource HeadNum}" Text="Bredde"
+                                                   Visibility="{Binding Sheet.Cutting.ShowWidth, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="2" Style="{StaticResource HeadNum}" Text="Stk." />
+                                        <TextBlock Grid.Column="3" Style="{StaticResource HeadNum}" Text="Længde" />
+                                        <TextBlock Grid.Column="4" Style="{StaticResource Head}" Text="Side" />
+                                        <TextBlock Grid.Column="5" Style="{StaticResource Head}" Text="Stål"
+                                                   Visibility="{Binding Sheet.Cutting.ShowSteel, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="6" Style="{StaticResource HeadNum}" Text="Længde"
+                                                   Visibility="{Binding Sheet.Cutting.ShowSteel, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="7" Style="{StaticResource HeadNum}" Text="Felt"
+                                                   Visibility="{Binding Sheet.Cutting.ShowField, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="8" Style="{StaticResource HeadNum}" Text="Lysm. T/V"
+                                                   Visibility="{Binding Sheet.Cutting.ShowClearance, Converter={StaticResource Shown}}" />
+                                    </Grid>
+                                </Border>
+                                <ItemsControl ItemsSource="{Binding Sheet.Cutting.Rows}" ItemTemplate="{StaticResource CutRow}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="PartsPanel" Style="{StaticResource Card}" Grid.IsSharedSizeScope="True"
+                                Visibility="{Binding Sheet.Parts.Rows, Converter={x:Static vm:Present.Instance}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TableTitle}" Text="BESLAG OG TILBEHØR" />
+                                <Border Style="{StaticResource Row}" Padding="0,0,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="PQty" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="PColour" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="PSize" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="PMount" />
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="PPlace" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource HeadNum}" MinWidth="44" Text="Antal" />
+                                        <TextBlock Grid.Column="1" Style="{StaticResource Head}" Text="Beskrivelse" />
+                                        <TextBlock Grid.Column="2" Style="{StaticResource Head}" Text="Farve"
+                                                   Visibility="{Binding Sheet.Parts.ShowColour, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="3" Style="{StaticResource HeadNum}" Text="Mål"
+                                                   Visibility="{Binding Sheet.Parts.ShowSize, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="4" Style="{StaticResource Head}" Text="Mont./Løs"
+                                                   Visibility="{Binding Sheet.Parts.ShowMounting, Converter={StaticResource Shown}}" />
+                                        <TextBlock Grid.Column="5" Style="{StaticResource Head}" Text="Placering"
+                                                   Visibility="{Binding Sheet.Parts.ShowPlacement, Converter={StaticResource Shown}}" />
+                                    </Grid>
+                                </Border>
+                                <ItemsControl ItemsSource="{Binding Sheet.Parts.Rows}" ItemTemplate="{StaticResource PartRow}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- The whole PDF as printed, from the position's page -->
+            <DockPanel Visibility="{Binding ShowingPages, Converter={StaticResource Shown}}">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BigButton}" Content="Tilbage til elementet"
+                            Command="{Binding HidePdfCommand}"
+                            Visibility="{Binding CanLeavePages, Converter={StaticResource Shown}}" />
+                    <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" Text="Hele produktionslisten" />
+                </DockPanel>
+                <ScrollViewer x:Name="PagesScroller" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                    <ItemsControl ItemsSource="{Binding Pages}" x:Name="PagesList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:PdfPageViewModel}">
+                                <StackPanel Margin="0,0,10,28" MaxWidth="1500">
+                                    <TextBlock x:Name="Caption" Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}"
+                                               Margin="0,0,0,8" Text="{Binding Caption}" />
+                                    <Border Background="White" CornerRadius="4">
+                                        <Viewbox Stretch="Uniform">
+                                            <Grid Width="{Binding Width}" Height="{Binding Height}">
+                                                <Image Source="{Binding Image}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                                                <TextBlock x:Name="Wait" Style="{StaticResource TextBase}" FontSize="14" Foreground="{StaticResource Off}"
+                                                           VerticalAlignment="Center" Text="Tegner siden" Visibility="Collapsed" />
+                                            </Grid>
+                                        </Viewbox>
+                                    </Border>
+                                </StackPanel>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsPosition}" Value="True">
+                                        <Setter TargetName="Caption" Property="Foreground" Value="{StaticResource OkText}" />
+                                        <Setter TargetName="Caption" Property="FontWeight" Value="Bold" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Image}" Value="{x:Null}">
+                                        <Setter TargetName="Wait" Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Failed}" Value="True">
+                                        <Setter TargetName="Wait" Property="Text" Value="Siden kan ikke vises" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+
+            <!-- Loading, nothing there, or why not: big and calm, in the middle -->
+            <Border Background="{StaticResource Panel}" CornerRadius="8">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding State}" Value="{x:Static vm:DocumentState.Ready}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="900" Margin="40">
+                    <TextBlock Style="{StaticResource TextBase}" FontSize="36" FontWeight="Bold" TextWrapping="Wrap" TextAlignment="Center"
+                               Text="{Binding MessageTitle}" />
+                    <TextBlock Style="{StaticResource TextBase}" FontSize="20" Foreground="{StaticResource Ink3}" TextWrapping="Wrap"
+                               TextAlignment="Center" Margin="0,12,0,0" Text="{Binding MessageDetail}" />
+                    <Button Style="{StaticResource BigButton}" Margin="0,32,0,0" HorizontalAlignment="Center" Content="Prøv igen"
+                            Command="{Binding RetryCommand}" Visibility="{Binding CanRetry, Converter={StaticResource Shown}}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

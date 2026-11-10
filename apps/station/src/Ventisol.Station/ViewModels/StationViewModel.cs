@@ -25,6 +25,8 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [ObservableProperty] public partial string? DetailText { get; private set; }
     [ObservableProperty] public partial string ElapsedText { get; private set; } = "";
     [ObservableProperty] public partial bool ScannerConnected { get; set; } = true;
+    // Order documents are set up: the tile shows a button for its element's document.
+    [ObservableProperty] public partial bool DocumentsOn { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFlashOk), nameof(IsFlashWarn))]
