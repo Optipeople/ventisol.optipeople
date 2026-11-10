@@ -57,4 +57,26 @@ public class LineFramerTests
         Assert.Empty(f.Push("1234567890"));
         Assert.Equal(["12345"], f.Push("\r\n"));
     }
+
+    // A Zebra cradle in CDC mode sent the barcode with no line end; the reader flushes on a pause.
+    [Fact]
+    public void Flush_gives_what_came_with_no_line_end()
+    {
+        var f = new LineFramer();
+        Assert.Empty(f.Push("05855605"));
+        Assert.Empty(f.Push("0101"));
+        Assert.True(f.HasPending);
+        Assert.Equal("058556050101", f.Flush());
+        Assert.False(f.HasPending);
+        Assert.Null(f.Flush());
+    }
+
+    [Fact]
+    public void Flush_after_a_whole_line_has_nothing()
+    {
+        var f = new LineFramer();
+        Assert.Equal(["058556050101"], f.Push("058556050101\r\n"));
+        Assert.False(f.HasPending);
+        Assert.Null(f.Flush());
+    }
 }

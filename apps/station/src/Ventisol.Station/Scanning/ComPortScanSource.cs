@@ -13,6 +13,8 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
     static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
     // A new COM port shows up a moment after the device event.
     static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
+    // How long a barcode with no line end may pause before it counts as whole.
+    static readonly TimeSpan LineIdle = TimeSpan.FromMilliseconds(100);
 
     readonly Dictionary<string, OpenPort> _open = [];
     readonly Dictionary<string, string> _lastError = [];
@@ -143,7 +145,13 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
         {
             while (true)
             {
-                var n = await port.Serial.BaseStream.ReadAsync(buffer);
+                var read = port.Serial.BaseStream.ReadAsync(buffer).AsTask();
+                // A cradle set up with no suffix sends the barcode and nothing after it: once the
+                // data pauses, what came is the scan. The same read is then awaited on.
+                if (port.Framer.HasPending && await Task.WhenAny(read, Task.Delay(LineIdle)) != read
+                    && port.Framer.Flush() is { } rest)
+                    Raise(Scanned, new RawScan(port.Id, rest, DateTimeOffset.Now));
+                var n = await read;
                 if (n == 0) break;
                 // Barcodes are ASCII; Latin1 maps each byte to one char, so no byte is ever split.
                 foreach (var line in port.Framer.Push(Encoding.Latin1.GetString(buffer, 0, n)))
