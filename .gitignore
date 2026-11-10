@@ -4,3 +4,6 @@ obj/
 *.user
 dist/
 .env*
+
+# Customer order PDFs, kept local only
+orderdocs/
