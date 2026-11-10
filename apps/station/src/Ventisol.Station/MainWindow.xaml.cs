@@ -57,7 +57,7 @@ public partial class MainWindow : Window
     public MainWindow(bool kiosk, bool showcase)
     {
         InitializeComponent();
-        _vm = new MainViewModel(_settings.Stations.Select(s => s.Config));
+        _vm = new MainViewModel(_settings.Stations.Select(s => s.Config)) { IsViewer = _settings.Mode == StationMode.Viewer };
         DataContext = _vm;
         _demo = new DemoScanner(_vm);
         _kiosk = kiosk;
@@ -166,7 +166,9 @@ public partial class MainWindow : Window
     void ShowCloudStatus()
     {
         var status = _cloud.Status;
-        _vm.CloudText = status.Text;
+        // A viewer that can't reach OptiCloud still shows what it read last; say how old that is.
+        var stale = _settings.Mode == StationMode.Viewer && status.State is CloudState.Offline or CloudState.Error && status.LastSync is not null;
+        _vm.CloudText = stale ? $"{status.Text} · data fra {status.LastSync!.Value.ToLocalTime():HH':'mm}" : status.Text;
         _vm.CloudHealth = status.State switch { CloudState.Online => "Ok", CloudState.Error => "Alarm", _ => "Warn" };
     }
 
@@ -186,6 +188,8 @@ public partial class MainWindow : Window
         // Only a station waiting in "Identificér" takes a scan from the setup; any other scan is work
         // at a station and counts, also while someone has the setup open.
         if (Setup.ViewModel is { } setup && setup.Stations.Any(s => s.IsIdentifying)) { setup.OnRawScan(scan); return; }
+        // A viewer only shows what OptiCloud has. A scan here would show on this screen alone and never be sent.
+        if (_settings.Mode == StationMode.Viewer) { Log.Write($"Scan on a viewer, ignored: {scan.Raw}"); return; }
         if (StationFor(scan.ScannerId) is { } n) _vm.Scan(n, scan.Raw, scan.At);
         else Log.Write($"Scan from scanner {scan.ScannerId}, which no station has: {scan.Raw}");
     }

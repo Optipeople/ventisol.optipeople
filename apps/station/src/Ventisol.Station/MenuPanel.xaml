@@ -107,6 +107,12 @@
                 </Border>
                 <Border Style="{StaticResource Row}">
                     <DockPanel>
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Value}" Text="{Binding RoleText, Mode=OneTime}" />
+                        <TextBlock Style="{StaticResource Left}" Text="Rolle" />
+                    </DockPanel>
+                </Border>
+                <Border Style="{StaticResource Row}">
+                    <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                             <Ellipse Width="10" Height="10" VerticalAlignment="Center" Margin="0,1,10,0">
                                 <Ellipse.Style>
@@ -136,8 +142,10 @@
                     </DockPanel>
                 </Border>
 
-                <TextBlock Style="{StaticResource Section}" Text="SCANNERE" />
-                <ItemsControl ItemsSource="{Binding Stations}">
+                <TextBlock Style="{StaticResource Section}" Text="SCANNERE"
+                           Visibility="{Binding ShowsScanners, Mode=OneTime, Converter={x:Static vm:Present.Instance}}" />
+                <ItemsControl ItemsSource="{Binding Stations}"
+                              Visibility="{Binding ShowsScanners, Mode=OneTime, Converter={x:Static vm:Present.Instance}}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:StationViewModel}">
                             <Border Style="{StaticResource Row}">

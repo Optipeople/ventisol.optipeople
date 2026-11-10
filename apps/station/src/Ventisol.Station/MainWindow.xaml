@@ -160,7 +160,8 @@
                                                Text="{Binding DetailText}" />
                                 </StackPanel>
                                 <TextBlock x:Name="Hint" Style="{StaticResource TextBase}" FontSize="22" VerticalAlignment="Center"
-                                           Foreground="{StaticResource Quiet}" Text="Scan et element" />
+                                           Foreground="{StaticResource Quiet}"
+                                           Text="{Binding DataContext.IdleText, Mode=OneTime, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </Grid>
                         </Border>
                     </StackPanel>

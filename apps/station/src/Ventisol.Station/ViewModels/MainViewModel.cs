@@ -39,6 +39,13 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial string CloudHealth { get; set; } = "Warn";
     [ObservableProperty] public partial string UpdateText { get; set; } = "Ikke installeret";
 
+    // The screen's role, as set up. A viewer has no scanners, so the menu leaves their rows out.
+    public bool IsViewer { get; init; }
+    public bool ShowsScanners => !IsViewer;
+    public string RoleText => IsViewer ? "Visning" : "Scanstation";
+    // What a free station says. Nobody scans at a viewer, so it doesn't ask for a scan.
+    public string IdleText => IsViewer ? "Venter på scanning" : "Scan et element";
+
     // When the last scan came in anywhere, so updates wait for a quiet moment.
     public DateTimeOffset LastScanAt { get; private set; } = DateTimeOffset.MinValue;
 
