@@ -33,7 +33,13 @@ The app tells a scanner from a person by speed (a fast burst ended by Enter). It
 known as `keyboard`, so it scans for whichever station is set to scanner `keyboard`.
 
 For the real setup, switch each cradle to a COM port: scan the "USB CDC Host" programming barcode
-in the LI3678 Product Reference Guide. The app then finds it by its USB serial number.
+in the LI3678 Product Reference Guide. The app then knows it by the USB port it is plugged into
+(`usb:` plus the Windows location path, e.g. `usb:PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(7)#USB(4)`),
+not by its serial number: in CDC mode every cradle reports the same one, `USB_CDC_SYMBOL_SCANNER`.
+The setup screen shows it as "USB-port 7.4 (COM3)": root port 7, port 4 on the hub. So keep each
+cradle in its own hub port; a spare cradle plugged into the same port takes over that station.
+Moving a cradle to another port means identifying it again in the setup screen. Settings saved
+before this hold a serial number and show as "ikke tilsluttet" until the station is identified again.
 
 ## Release and updates
 

@@ -184,7 +184,8 @@ public partial class MainWindow : Window
         var vm = new SetupViewModel(SettingsStore.Load(), SettingsStore.LoadPassword(),
             testConnection: (s, pw, ct) => CloudSync.TestConnectionAsync(s, pw, ct),
             loadMachines: (s, pw, ct) => CloudSync.LoadMachinesAsync(s, pw, ct),
-            connectedScanners: () => _scans.Connected);
+            connectedScanners: () => _scans.Connected,
+            scannerPort: id => _scans.Sources.OfType<ComPortScanSource>().FirstOrDefault()?.PortOf(id));
         vm.Saved += (settings, newPassword) =>
         {
             SettingsStore.Save(settings);

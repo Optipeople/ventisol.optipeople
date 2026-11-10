@@ -1,18 +1,24 @@
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using Ventisol.Station.Core;
 
 namespace Ventisol.Station.Scanning;
 
 // A cradle in CDC mode as Windows sees it: a USB device with a COM port.
-// Id is its USB serial number, which stays the same when Windows renumbers COM ports.
+// Id is the USB port it is plugged into ("usb:" + location path, see UsbPort), which stays the same
+// when Windows renumbers COM ports, and tells cradles apart although they all report the same
+// serial number in CDC mode. Only if Windows has no location path is it the USB serial number.
 public sealed record Cradle(string Id, string PortName, bool IsZebra, string Name);
 
 public static partial class CradleFinder
 {
     // The Ports device class: every COM port, USB or not.
     const string PortsClass = "{4d36e978-e325-11ce-bfc1-08002be10318}";
+
+    // Devices already logged as having no location path, so it is said once, not every poll.
+    static readonly HashSet<string> NoLocationLogged = new(StringComparer.OrdinalIgnoreCase);
 
     // The USB serial devices present now. Zebra cradles only, if there is at least one;
     // otherwise any USB serial device, so another scanner works on a dev PC.
@@ -30,23 +36,29 @@ public static partial class CradleFinder
                 var pnpId = device["PNPDeviceID"] as string;
                 if (ComName().Match(name) is not { Success: true } com) continue;
                 if (!UsbDeviceId.TryParse(pnpId, out var usb)) continue;
-                all.Add(new Cradle(SerialOf(pnpId!, usb, log), com.Groups[1].Value, usb.IsZebra, name));
+                all.Add(new Cradle(IdOf(pnpId!, usb, log), com.Groups[1].Value, usb.IsZebra, name));
             }
         }
         return all.Any(c => c.IsZebra) ? all.Where(c => c.IsZebra).ToList() : all;
     }
 
-    static string SerialOf(string pnpId, UsbDeviceId usb, Action<string>? log)
+    static string IdOf(string pnpId, UsbDeviceId usb, Action<string>? log)
+    {
+        // A composite device puts the COM port on an interface; the port is the parent's.
+        var parentId = usb.IsInterface ? ParentOf(pnpId) : null;
+        if (LocationOf(parentId ?? pnpId) is { } path) return UsbPort.IdOf(path);
+
+        lock (NoLocationLogged)
+            if (NoLocationLogged.Add(pnpId))
+                log?.Invoke($"{pnpId} has no USB location path; it is known by its USB serial number instead.");
+        return SerialOf(pnpId, usb, parentId);
+    }
+
+    static string SerialOf(string pnpId, UsbDeviceId usb, string? parentId)
     {
         if (usb.HasSerial) return usb.Instance;
-
-        // A composite device puts the COM port on an interface; the serial is on its parent.
-        if (usb.IsInterface && ParentOf(pnpId) is { } parentId
-            && UsbDeviceId.TryParse(parentId, out var parent) && parent.HasSerial)
-            return parent.Instance;
-
+        if (UsbDeviceId.TryParse(parentId, out var parent) && parent.HasSerial) return parent.Instance;
         // No serial number: the instance id is still stable while it stays in the same USB port.
-        log?.Invoke($"{pnpId} has no USB serial number; it is known by its USB port instead.");
         return pnpId;
     }
 
@@ -58,8 +70,43 @@ public static partial class CradleFinder
         return CM_Get_Device_IDW(parent, buffer, buffer.Length, 0) == 0 ? new string(buffer).TrimEnd('\0') : null;
     }
 
+    // DEVPKEY_Device_LocationPaths of a device, e.g. PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(7)#USB(4).
+    static string? LocationOf(string instanceId)
+    {
+        try
+        {
+            if (CM_Locate_DevNodeW(out var node, instanceId, 0) != 0) return null;
+            var key = LocationPathsKey;
+            uint size = 0;
+            var cr = CM_Get_DevNode_PropertyW(node, ref key, out _, null, ref size, 0);
+            if (cr != CR_BUFFER_SMALL || size == 0) return null;
+            var buffer = new byte[size];
+            if (CM_Get_DevNode_PropertyW(node, ref key, out var type, buffer, ref size, 0) != 0) return null;
+            if (type != DEVPROP_TYPE_STRING_LIST && type != DEVPROP_TYPE_STRING) return null;
+            var paths = Encoding.Unicode.GetString(buffer, 0, (int)size).Split('\0');
+            return UsbPort.PickLocationPath(paths);
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
     [GeneratedRegex(@"\((COM\d+)\)", RegexOptions.IgnoreCase)]
     private static partial Regex ComName();
+
+    const int CR_BUFFER_SMALL = 0x1A;
+    const uint DEVPROP_TYPE_STRING = 0x12;
+    const uint DEVPROP_TYPE_STRING_LIST = 0x2012;
+
+    static readonly DevPropKey LocationPathsKey = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 37);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct DevPropKey(Guid fmtid, uint pid)
+    {
+        public Guid Fmtid = fmtid;
+        public uint Pid = pid;
+    }
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     static extern int CM_Locate_DevNodeW(out uint devInst, string deviceId, uint flags);
@@ -69,4 +116,7 @@ public static partial class CradleFinder
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     static extern int CM_Get_Device_IDW(uint devInst, [Out] char[] buffer, int length, uint flags);
+
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    static extern int CM_Get_DevNode_PropertyW(uint devInst, ref DevPropKey key, out uint type, [Out] byte[]? buffer, ref uint size, uint flags);
 }

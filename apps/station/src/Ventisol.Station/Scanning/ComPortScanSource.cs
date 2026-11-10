@@ -29,6 +29,12 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
         get { lock (_open) return [.. _open.Keys]; }
     }
 
+    // The COM port a connected scanner is on right now, for the setup screen. Null if not open.
+    public string? PortOf(string scannerId)
+    {
+        lock (_open) return _open.TryGetValue(scannerId, out var p) ? p.PortName : null;
+    }
+
     public void Start()
     {
         if (_started || _disposed) return;
@@ -79,7 +85,7 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
     {
         var found = new Dictionary<string, Cradle>();
         foreach (var c in CradleFinder.Find(Log))
-            if (!found.TryAdd(c.Id, c)) Log($"{c.PortName} has the same serial number as {found[c.Id].PortName}; ignored.");
+            if (!found.TryAdd(c.Id, c)) Log($"{c.PortName} has the same id as {found[c.Id].PortName} ({c.Id}); ignored.");
 
         // Gone, or moved to another COM port.
         List<OpenPort> stale;

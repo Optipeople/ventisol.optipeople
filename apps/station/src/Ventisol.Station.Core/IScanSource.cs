@@ -1,6 +1,6 @@
 namespace Ventisol.Station.Core;
 
-// A scan as it came off a scanner. ScannerId is the cradle's USB serial number, or for the
+// A scan as it came off a scanner. ScannerId is the USB port of the cradle (see UsbPort), or for the
 // demo scanner its station number as text. Raw is exactly what the scanner sent, without the line end.
 public sealed record RawScan(string ScannerId, string Raw, DateTimeOffset At);
 

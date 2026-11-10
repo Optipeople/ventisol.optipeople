@@ -29,6 +29,7 @@ public sealed partial class SetupViewModel : ObservableObject
     readonly Func<StationSettings, string, CancellationToken, Task<string?>> _testConnection;
     readonly Func<StationSettings, string, CancellationToken, Task<IReadOnlyList<(Guid Id, string Name)>>> _loadMachines;
     readonly Func<IReadOnlyCollection<string>> _connectedScanners;
+    readonly Func<string, string?>? _scannerPort;
     readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     readonly int _uiThread = Environment.CurrentManagedThreadId;
     readonly CancellationTokenSource _closing = new();
@@ -42,17 +43,20 @@ public sealed partial class SetupViewModel : ObservableObject
     public const string KeyboardScannerLabel = "Tastatur-scanner (USB HID)";
 
     // savedPassword is the one SettingsStore holds now (null if none). It is only used to test and fetch
-    // until a new one is typed, and is never handed back.
+    // until a new one is typed, and is never handed back. scannerPort gives the COM port a connected
+    // scanner is on, for its label.
     public SetupViewModel(
         StationSettings settings,
         string? savedPassword,
         Func<StationSettings, string, CancellationToken, Task<string?>> testConnection,
         Func<StationSettings, string, CancellationToken, Task<IReadOnlyList<(Guid Id, string Name)>>> loadMachines,
-        Func<IReadOnlyCollection<string>> connectedScanners)
+        Func<IReadOnlyCollection<string>> connectedScanners,
+        Func<string, string?>? scannerPort = null)
     {
         _testConnection = testConnection;
         _loadMachines = loadMachines;
         _connectedScanners = connectedScanners;
+        _scannerPort = scannerPort;
         _savedPassword = string.IsNullOrEmpty(savedPassword) ? null : savedPassword;
 
         settings = StationSettingsJson.Normalize(settings);
@@ -326,11 +330,12 @@ public sealed partial class SetupViewModel : ObservableObject
         if (extra is not null) ids.Add(extra);
         ids.Remove(KeyboardScannerId);
         var options = new List<ScannerOption> { new(null, "Ingen scanner") };
-        options.AddRange(ids.Order(StringComparer.OrdinalIgnoreCase).Select(id => new ScannerOption(id, id)));
+        options.AddRange(ids.Select(id => new ScannerOption(id, UsbPort.Label(id, PortOf(id))))
+            .OrderBy(o => o.Label, StringComparer.OrdinalIgnoreCase));
         options.Add(new ScannerOption(KeyboardScannerId, KeyboardScannerLabel));
         foreach (var id in chosen.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase)
                      .Where(id => !ids.Contains(id) && !string.Equals(id, KeyboardScannerId, StringComparison.OrdinalIgnoreCase)))
-            options.Add(new ScannerOption(id, id + NotConnected));
+            options.Add(new ScannerOption(id, UsbPort.Label(id) + NotConnected));
 
         Replace(Scanners, options, () =>
         {
@@ -354,6 +359,12 @@ public sealed partial class SetupViewModel : ObservableObject
     }
 
     const string NotConnected = " · ikke tilsluttet";
+
+    string? PortOf(string id)
+    {
+        try { return _scannerPort?.Invoke(id); }
+        catch { return null; }
+    }
 
     static string Short(Guid id) => id.ToString()[..8];
 

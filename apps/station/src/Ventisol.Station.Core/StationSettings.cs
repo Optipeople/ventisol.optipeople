@@ -5,8 +5,9 @@ namespace Ventisol.Station.Core;
 public enum StationMode { Scan, Viewer }
 
 // One station as set up on the setup screen. MachineId is the station's machine in OptiCloud,
-// ScannerSerial the USB serial number of the cradle that belongs to it (COM port numbers move,
-// serial numbers don't). Either is null until it has been set up.
+// ScannerSerial the scanner id of the cradle that belongs to it: the USB port it is plugged into
+// ("usb:" + location path, see UsbPort), or "keyboard". COM port numbers move, the USB port doesn't.
+// Either is null until it has been set up.
 public sealed record StationSetup(int Number, string Name, StationKind Kind, Guid? MachineId = null, string? ScannerSerial = null)
 {
     public StationConfig Config => new(Number, Name, Kind);
