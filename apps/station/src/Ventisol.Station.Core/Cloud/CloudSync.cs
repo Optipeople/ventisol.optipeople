@@ -149,12 +149,12 @@ public sealed class CloudSync : IDisposable
         return true;
     }
 
-    // Per mapped machine, the order it should have now ("" for none), as MachineOrders.DesiredFrom
+    // Per mapped machine, the order it should have now (MachineOrder.None for none), as MachineOrders.DesiredFrom
     // gives it. Call after every scan and every rebuild of the screen; fromCloud when the rebuild was
     // from a Loaded with FromCloud. Nothing is sent before that: a journal alone may miss an element
     // in progress. Sent in the background once it has held for MachineOrders.DefaultSettle.
     // Ignored in Viewer mode or without OptiCloud.
-    public void SetMachineOrders(IReadOnlyDictionary<Guid, string> desired, bool fromCloud = false)
+    public void SetMachineOrders(IReadOnlyDictionary<Guid, MachineOrder> desired, bool fromCloud = false)
     {
         if (_orders is null) return;
         _orders.Want(desired, _ordersClock());

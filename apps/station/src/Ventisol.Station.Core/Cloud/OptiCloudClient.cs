@@ -117,11 +117,12 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         return d.Str("number")?.Trim() ?? "";
     }
 
-    // Makes number the machine's current order (the server's time), ending the run before; "" clears
-    // it (a hidden default order). Not idempotent: the same number again starts a new run, so only
-    // send what differs from what the machine has.
-    public Task SetOrderToMachineAsync(Guid machineId, string number, CancellationToken ct = default) =>
-        SendAsync(HttpMethod.Post, "api/RealtimeDashboard/SetOrderToMachine", new { machineId, number, expectedSpeed = 0 }, ct);
+    // Makes order.Number the machine's current order (the server's time), ending the run before; ""
+    // clears it (a hidden default order). Not idempotent: the same number again starts a new run, so
+    // only send what differs from what the machine has. order.Fields are not sent yet: how OptiPeople
+    // takes custom fields is still being found out.
+    public Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Post, "api/RealtimeDashboard/SetOrderToMachine", new { machineId, number = order.Number, expectedSpeed = 0 }, ct);
 
     // keyword is OptiCloud's free-text search; what it matches on is not documented.
     public async Task<RowsPage> GetRowsPagedAsync(Guid tableId, int page, int pageSize, string orderBy, bool ascending, string? keyword = null, CancellationToken ct = default)

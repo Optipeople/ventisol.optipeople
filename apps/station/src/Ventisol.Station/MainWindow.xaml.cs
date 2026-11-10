@@ -137,7 +137,7 @@ public partial class MainWindow : Window
         SendMachineOrders(loaded.FromCloud);
     }
 
-    // Each mapped machine in OptiPeople gets the order in progress at its station, else none.
+    // Each mapped machine in OptiPeople gets the element in progress at its station, else none.
     // CloudSync sends it in the background, only in Scan mode with OptiCloud set up, and not before
     // the screen has been rebuilt from OptiCloud (fromCloud).
     void SendMachineOrders(bool fromCloud = false)

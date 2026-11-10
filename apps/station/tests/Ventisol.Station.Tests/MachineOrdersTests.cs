@@ -10,6 +10,11 @@ public sealed class MachineOrdersTests : IDisposable
     static readonly TimeSpan Settle = MachineOrders.DefaultSettle;
     static readonly Guid M1 = Guid.Parse("a1000000-0000-4000-8000-000000000010"), M2 = Guid.Parse("a1000000-0000-4000-8000-000000000020");
 
+    // Elements by barcode: A and A2 are two pieces of one order, B and C other orders.
+    const string A = "058556050103", A2 = "058556050104", B = "060001010101", C = "077777010101";
+
+    static MachineOrder E(string barcode) => MachineOrder.From(Code(barcode));
+
     readonly string _folder = TempFolder();
     readonly List<string> _log = [];
     DateTimeOffset _now = T0;
@@ -37,11 +42,11 @@ public sealed class MachineOrdersTests : IDisposable
             return Task.FromResult(Current.GetValueOrDefault(machineId, ""));
         }
 
-        public Task SetOrderToMachineAsync(Guid machineId, string number, CancellationToken ct = default)
+        public Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default)
         {
             if (FailSet is { } x) throw x;
-            Current[machineId] = number;
-            Sets.Add((machineId, number));
+            Current[machineId] = order.Number;
+            Sets.Add((machineId, order.Number));
             if (LoseAnswer) throw new OptiCloudException(OptiCloudException.Unreachable + " (intet svar)");
             return Task.CompletedTask;
         }
@@ -67,12 +72,12 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi();
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         Assert.Equal(0, await Drain(worker));
 
         _now += Settle;
         await Drain(worker);
-        Assert.Equal([(M1, "58556")], api.Sets);
+        Assert.Equal([(M1, A)], api.Sets);
         Assert.Equal(1, api.Reads);
 
         _now += TimeSpan.FromMinutes(5);
@@ -85,32 +90,32 @@ public sealed class MachineOrdersTests : IDisposable
         var orders = new MachineOrders();
         var api = new FakeApi();
         var worker = Worker(orders, api);
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
 
-        orders.Want(M1, "", _now);
+        orders.Want(M1, MachineOrder.None, _now);
         _now += Settle - TimeSpan.FromSeconds(1);
         Assert.Equal(0, await Drain(worker));
         _now += TimeSpan.FromSeconds(1);
         await Drain(worker);
 
-        Assert.Equal([(M1, "58556"), (M1, "")], api.Sets);
+        Assert.Equal([(M1, A), (M1, "")], api.Sets);
     }
 
     [Fact]
-    public async Task Out_then_In_of_the_same_order_within_settle_sends_nothing()
+    public async Task Out_then_In_of_the_same_element_within_settle_sends_nothing()
     {
         var orders = new MachineOrders();
         var api = new FakeApi();
         var worker = Worker(orders, api);
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
 
-        orders.Want(M1, "", _now);
+        orders.Want(M1, MachineOrder.None, _now);
         _now += TimeSpan.FromSeconds(1);
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += TimeSpan.FromMinutes(1);
         Assert.Equal(0, await Drain(worker));
 
@@ -118,22 +123,46 @@ public sealed class MachineOrdersTests : IDisposable
     }
 
     [Fact]
-    public async Task A_quick_switch_sends_only_the_new_order()
+    public async Task A_quick_switch_sends_only_the_new_element()
     {
         var orders = new MachineOrders();
         var api = new FakeApi();
         var worker = Worker(orders, api);
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
 
-        orders.Want(M1, "", _now);
+        orders.Want(M1, MachineOrder.None, _now);
         _now += TimeSpan.FromSeconds(1);
-        orders.Want(M1, "60001", _now);
+        orders.Want(M1, E(B), _now);
         _now += Settle;
         await Drain(worker);
 
-        Assert.Equal([(M1, "58556"), (M1, "60001")], api.Sets);
+        Assert.Equal([(M1, A), (M1, B)], api.Sets);
+    }
+
+    [Fact]
+    public async Task Switching_to_another_element_of_the_same_order_sends_the_new_element()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        // Straight from one piece to the next, and Out of it then In of a third within settle.
+        orders.Want(M1, E(A2), _now);
+        _now += Settle;
+        await Drain(worker);
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += TimeSpan.FromSeconds(1);
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, A), (M1, A2), (M1, A)], api.Sets);
+        Assert.Equal(1, api.Reads);
     }
 
     [Fact]
@@ -142,14 +171,14 @@ public sealed class MachineOrdersTests : IDisposable
         var orders = new MachineOrders();
         var api = new FakeApi();
         var worker = Worker(orders, api);
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
 
         // Every scan and every reload of the screen wishes it again.
         for (var i = 0; i < 5; i++)
         {
-            orders.Want(M1, "58556", _now);
+            orders.Want(M1, E(A), _now);
             _now += Settle;
             Assert.Equal(0, await Drain(worker));
         }
@@ -164,22 +193,22 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi();
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += TimeSpan.FromSeconds(2);
-        orders.Want(M2, "60001", _now);
+        orders.Want(M2, E(B), _now);
         _now += TimeSpan.FromSeconds(1);
         await Drain(worker);
-        Assert.Equal([(M1, "58556")], api.Sets);
+        Assert.Equal([(M1, A)], api.Sets);
 
         // M1 is cleared while M2 settles, and the other way round: neither holds the other back.
-        orders.Want(M1, "", _now);
+        orders.Want(M1, MachineOrder.None, _now);
         _now += TimeSpan.FromSeconds(2);
         await Drain(worker);
-        Assert.Equal([(M1, "58556"), (M2, "60001")], api.Sets);
+        Assert.Equal([(M1, A), (M2, B)], api.Sets);
 
         _now += TimeSpan.FromSeconds(1);
         await Drain(worker);
-        Assert.Equal([(M1, "58556"), (M2, "60001"), (M1, "")], api.Sets);
+        Assert.Equal([(M1, A), (M2, B), (M1, "")], api.Sets);
     }
 
     [Fact]
@@ -189,7 +218,7 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi { FailSet = NoNetwork };
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
         Assert.Empty(api.Sets);
@@ -201,13 +230,13 @@ public sealed class MachineOrdersTests : IDisposable
         Assert.Equal(Outbox.Backoff[1], orders.DueIn(_now));
 
         // Meanwhile the element is finished and another started; the network comes back.
-        orders.Want(M1, "60001", _now);
+        orders.Want(M1, E(B), _now);
         api.FailSet = null;
         var reads = api.Reads;
         _now += Outbox.Backoff[1];
         await Drain(worker);
 
-        Assert.Equal([(M1, "60001")], api.Sets);
+        Assert.Equal([(M1, B)], api.Sets);
         Assert.Equal(reads + 1, api.Reads);
         // The same failure on every retry is logged once.
         Assert.Single(_log, l => l.Contains(OptiCloudException.Unreachable));
@@ -220,7 +249,7 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi { LoseAnswer = true };
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
         api.LoseAnswer = false;
@@ -229,7 +258,7 @@ public sealed class MachineOrdersTests : IDisposable
         await Drain(worker);
 
         // It got in the first time: the read shows it, so no second run is started.
-        Assert.Equal([(M1, "58556")], api.Sets);
+        Assert.Equal([(M1, A)], api.Sets);
         Assert.Equal(2, api.Reads);
     }
 
@@ -237,14 +266,14 @@ public sealed class MachineOrdersTests : IDisposable
     public async Task After_a_restart_each_machine_is_read_and_set_only_when_it_differs()
     {
         var api = new FakeApi();
-        api.Current[M1] = "58556";
-        api.Current[M2] = "77777";
+        api.Current[M1] = A;
+        api.Current[M2] = C;
         var m3 = Guid.NewGuid();
 
         // A new start: the screen is rebuilt from the journal and wishes every mapped machine.
         var orders = new MachineOrders();
         var worker = Worker(orders, api);
-        orders.Want(new Dictionary<Guid, string> { [M1] = "58556", [M2] = "", [m3] = "" }, _now);
+        orders.Want(new Dictionary<Guid, MachineOrder> { [M1] = E(A), [M2] = MachineOrder.None, [m3] = MachineOrder.None }, _now);
         _now += Settle;
         await Drain(worker);
 
@@ -261,10 +290,10 @@ public sealed class MachineOrdersTests : IDisposable
     {
         var orders = new MachineOrders();
         var api = new FakeApi { FailRead = new OptiCloudException("OptiCloud kender ikke adressen (404)", 404, rejected: true) };
-        api.Current[M1] = "58556";
+        api.Current[M1] = A;
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         for (var i = 0; i < 6; i++)
         {
@@ -290,7 +319,7 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi { FailSet = NoNetwork };
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
         api.FailRead = NoNetwork;
@@ -311,16 +340,16 @@ public sealed class MachineOrdersTests : IDisposable
     {
         var orders = new MachineOrders(held: true);
         var api = new FakeApi();
-        api.Current[M1] = "58556";
+        api.Current[M1] = A;
         var worker = Worker(orders, api);
 
         // The journal alone has nothing in progress...
-        orders.Want(M1, "", _now);
+        orders.Want(M1, MachineOrder.None, _now);
         _now += TimeSpan.FromMinutes(1);
         Assert.Equal(0, await Drain(worker));
 
         // ...OptiCloud's 36 hours still have the element in progress.
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         orders.Release();
         _now += Settle;
         await Drain(worker);
@@ -336,7 +365,7 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeApi { FailRead = NoNetwork };
         var worker = Worker(orders, api);
 
-        orders.Want(M1, "58556", _now);
+        orders.Want(M1, E(A), _now);
         _now += Settle;
         await Drain(worker);
 
@@ -345,7 +374,7 @@ public sealed class MachineOrdersTests : IDisposable
     }
 
     [Fact]
-    public void Desired_is_the_order_in_progress_per_mapped_machine()
+    public void Desired_is_the_element_in_progress_per_mapped_machine()
     {
         var setups = new[]
         {
@@ -354,28 +383,41 @@ public sealed class MachineOrdersTests : IDisposable
             new StationSetup(3, "Station 30", StationKind.Assembly),
         };
         var states = StationConfig.Defaults.Take(3).Select(c => new StationState(c)).ToList();
-        states[0].Scan(Code("058556050103"), T0);
-        states[2].Scan(Code("060001010101"), T0);
+        states[0].Scan(Code(A), T0);
+        states[2].Scan(Code(B), T0);
 
         var desired = MachineOrders.DesiredFrom(setups, states);
 
         Assert.Equal(2, desired.Count);
-        Assert.Equal("58556", desired[M1]);
-        Assert.Equal("", desired[M2]);
+        Assert.Equal(A, desired[M1].Number);
+        Assert.Equal("", desired[M2].Number);
+        Assert.Empty(desired[M2].Fields);
     }
 
     [Fact]
-    public void A_station_that_switches_element_gives_its_machine_the_new_order()
+    public void The_order_is_the_full_barcode_with_its_parts_as_fields()
+    {
+        var order = MachineOrder.From(Code("058556050103"));
+
+        Assert.Equal("058556050103", order.Number);
+        Assert.Equal([new("Ordre", "58556"), new("Position", "5"), new("Underposition", "1"), new("Emne", "3")], order.Fields);
+    }
+
+    [Fact]
+    public void A_station_that_switches_element_gives_its_machine_the_new_element()
     {
         var setups = new[] { new StationSetup(1, "Station 10", StationKind.Assembly, M1) };
         var state = new StationState(StationConfig.Defaults[0]);
-        state.Scan(Code("058556050103"), T0);
-        state.Scan(Code("060001010101"), T0.AddMinutes(1));
+        state.Scan(Code(A), T0);
+        state.Scan(Code(A2), T0.AddMinutes(1));
 
-        Assert.Equal("60001", MachineOrders.DesiredFrom(setups, [state])[M1]);
+        Assert.Equal(A2, MachineOrders.DesiredFrom(setups, [state])[M1].Number);
 
-        state.Scan(Code("060001010101"), T0.AddMinutes(2));
-        Assert.Equal("", MachineOrders.DesiredFrom(setups, [state])[M1]);
+        state.Scan(Code(B), T0.AddMinutes(2));
+        Assert.Equal(B, MachineOrders.DesiredFrom(setups, [state])[M1].Number);
+
+        state.Scan(Code(B), T0.AddMinutes(3));
+        Assert.Equal("", MachineOrders.DesiredFrom(setups, [state])[M1].Number);
     }
 
     // CloudSync end to end against the fake API, with a clock that moves.
@@ -395,17 +437,17 @@ public sealed class MachineOrdersTests : IDisposable
         await Until(() => fromCloud);
 
         // Before the screen is rebuilt from OptiCloud, nothing goes out.
-        sync.SetMachineOrders(new Dictionary<Guid, string> { [machine] = "58556" });
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = E(A) });
         _now += Settle;
         await Task.Delay(300);
         Assert.Equal(0, api.Count("RealtimeDashboard"));
 
-        sync.SetMachineOrders(new Dictionary<Guid, string> { [machine] = "58556" }, fromCloud: true);
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = E(A) }, fromCloud: true);
         await Until(() => api.Sets.Length == 1);
-        Assert.Equal((machine, "58556"), api.Sets[0]);
-        Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains("\"number\":\"58556\"") && r.Body.Contains("\"expectedSpeed\":0"));
+        Assert.Equal((machine, A), api.Sets[0]);
+        Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains($"\"number\":\"{A}\"") && r.Body.Contains("\"expectedSpeed\":0"));
 
-        sync.SetMachineOrders(new Dictionary<Guid, string> { [machine] = "" });
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = MachineOrder.None });
         _now += Settle;
         await Until(() => api.Sets.Length == 2);
         Assert.Equal((machine, ""), api.Sets[1]);
@@ -419,7 +461,7 @@ public sealed class MachineOrdersTests : IDisposable
         sync.Start();
         await Until(() => sync.Status.State == CloudState.Online && api.Count("GetRowsPaged") > 0);
 
-        sync.SetMachineOrders(new Dictionary<Guid, string> { [api.Machines[1].Id] = "58556" }, fromCloud: true);
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [api.Machines[1].Id] = E(A) }, fromCloud: true);
         _now += Settle;
         await Task.Delay(300);
 
@@ -434,9 +476,9 @@ public sealed class MachineOrdersTests : IDisposable
         var machine = api.Machines[0].Id;
 
         Assert.Equal("", await client.GetCurrentOrderAsync(machine));
-        await client.SetOrderToMachineAsync(machine, "58556");
-        Assert.Equal("58556", await client.GetCurrentOrderAsync(machine));
-        await client.SetOrderToMachineAsync(machine, "");
+        await client.SetOrderToMachineAsync(machine, E(A));
+        Assert.Equal(A, await client.GetCurrentOrderAsync(machine));
+        await client.SetOrderToMachineAsync(machine, MachineOrder.None);
         Assert.Equal("", await client.GetCurrentOrderAsync(machine));
     }
 }

@@ -130,11 +130,16 @@ Each station set up with a machine (`MachineId`) keeps that machine's current or
 in step with the station, so OptiCloud's order time and reports follow the scans. The
 `VentisolScans` rows are written exactly as before; this comes on top.
 
-- The rule: a machine's order is the order of the element in progress at its station, else none.
-  Scan In sets it, Scan Out clears it, a switch to another element (a different barcode while
-  busy) gives it the new element's order. The order number is the barcode's order as plain
-  digits: `058556050103` gives `58556`.
-- `POST /api/RealtimeDashboard/SetOrderToMachine` `{ "machineId": "<uuid>", "number": "58556", "expectedSpeed": 0 }`
+- The rule: a machine's order is the element in progress at its station, else none. Time is
+  kept per element: the order number is the full 12-digit barcode, `058556050103` as it is, so
+  every element is an order of its own in OptiPeople. Scan In sets it, Scan Out clears it, a
+  switch to another element (a different barcode while busy) gives it the new element, also when
+  that is the next piece of the same order.
+- Each order will also carry the barcode's parts as custom fields, as plain digits:
+  `058556050103` gives `Ordre` 58556, `Position` 5, `Underposition` 1, `Emne` 3. The app builds
+  them (`MachineOrder.From`) but does not send them yet: how OptiPeople takes order custom fields
+  is still being found out.
+- `POST /api/RealtimeDashboard/SetOrderToMachine` `{ "machineId": "<uuid>", "number": "058556050103", "expectedSpeed": 0 }`
   makes it the machine's current order and ends the run of the one before; `number: ""` clears it
   (OptiPeople then runs a hidden default order). An unknown number is created in the factory.
   The server stamps the time; there is no time field. Always HTTP 200, errors in the envelope.
@@ -145,8 +150,8 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   cleared one has `isDefaultPartInfo: true` and `number: ""`. Both count as none.
 - Desired state, not history: since the server stamps the time, scans are never replayed. Per
   machine only the latest wish counts, and it is sent once it has held for 3 seconds. An Out and
-  In of the same order within that sends nothing; a quick Out and In of another order sends only
-  the new one.
+  In of the same element within that sends nothing; a quick Out and In of another element (of
+  the same order or another) sends only the new one.
 - On start nothing is sent until the screen has been rebuilt from OptiCloud's 36 hours (the
   journal alone may miss an element in progress). Then every mapped machine is read and set only
   if it differs. So a restart leaves a running order alone, and a machine whose station has

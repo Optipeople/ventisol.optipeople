@@ -2,15 +2,42 @@ using System.Globalization;
 
 namespace Ventisol.Station.Core.Cloud;
 
-// What the worker should do next for one machine: read what OptiPeople has on it, or set Number
-// on it ("" clears it).
-public sealed record MachineOrderStep(Guid MachineId, string Number, bool Read);
+// A custom field on an order, by its name in OptiPeople (Danish, as the users see it).
+public sealed record OrderField(string Name, string Value);
+
+// What a machine should run in OptiPeople: Number is the order number ("" for none), Fields the
+// custom fields that go with it. Fields follow from Number (both come from the one barcode), so
+// two orders with the same Number are the same order: only Number is compared and read back.
+public sealed record MachineOrder(string Number, IReadOnlyList<OrderField> Fields)
+{
+    public static readonly MachineOrder None = new("", []);
+
+    public MachineOrder(string number) : this(number?.Trim() ?? "", []) { }
+
+    // The element as OptiPeople gets it: the full 12-digit barcode as the number, so every element
+    // is an order of its own and its time is its own; order, position, sub-position and piece as
+    // fields, as plain digits: 058556050103 gives Ordre 58556, Position 5, Underposition 1, Emne 3.
+    public static MachineOrder From(Barcode barcode) => new(barcode.Raw,
+    [
+        new("Ordre", barcode.Order.ToString(CultureInfo.InvariantCulture)),
+        new("Position", barcode.Position.ToString(CultureInfo.InvariantCulture)),
+        new("Underposition", barcode.SubPosition.ToString(CultureInfo.InvariantCulture)),
+        new("Emne", barcode.Piece.ToString(CultureInfo.InvariantCulture)),
+    ]);
+}
+
+// What the worker should do next for one machine: read what OptiPeople has on it, or set Order
+// on it (an empty Number clears it).
+public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, bool Read)
+{
+    public string Number => Order.Number;
+}
 
 // The order each station's machine should have in OptiPeople, and what is known to be there.
 // OptiPeople holds one current order per machine and stamps the time itself, so this is desired
 // state, not history: per machine only the latest wish counts, and it is sent once it has been
-// the same for Settle (an Out and In of the same order sends nothing, a quick switch sends only
-// the new order). SetOrderToMachine is not idempotent (the same number again starts a new run),
+// the same for Settle (an Out and In of the same element sends nothing, a quick switch sends only
+// the new element). SetOrderToMachine is not idempotent (the same number again starts a new run),
 // so nothing is sent that the machine already has, and what it has is not assumed: at first, and
 // after a failure (the call may have got in), the machine is read first and set only when it
 // differs; nothing is ever set while what the machine has is unknown. Only machines given a wish
@@ -29,7 +56,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
 
     sealed class Entry
     {
-        public string Desired = "";
+        public MachineOrder Desired = MachineOrder.None;
         public DateTimeOffset ChangedAt;
         // What OptiPeople has, as far as known. Null: not known, read it before any set.
         public string? Known;
@@ -39,45 +66,43 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         public DateTimeOffset DueAt(TimeSpan settle) => ChangedAt + settle > RetryAt ? ChangedAt + settle : RetryAt;
     }
 
-    // The order number as OptiPeople gets it: the digits of the barcode's order, no leading zero.
-    public static string Number(Barcode barcode) => barcode.Order.ToString(CultureInfo.InvariantCulture);
-
-    // Per mapped machine, the order of the element in progress at its station, else "".
+    // Per mapped machine, the element in progress at its station, else none.
     // Stations with no machine are left out. Two stations on one machine (a setup mistake):
     // the one that started last wins.
-    public static IReadOnlyDictionary<Guid, string> DesiredFrom(IEnumerable<StationSetup> setups, IEnumerable<StationState> states)
+    public static IReadOnlyDictionary<Guid, MachineOrder> DesiredFrom(IEnumerable<StationSetup> setups, IEnumerable<StationState> states)
     {
         var byNumber = states.GroupBy(s => s.Station.Number).ToDictionary(g => g.Key, g => g.First());
-        var desired = new Dictionary<Guid, string>();
+        var desired = new Dictionary<Guid, MachineOrder>();
         foreach (var group in setups.Where(s => s.MachineId is not null).GroupBy(s => s.MachineId!.Value))
         {
             var busy = group.Select(s => byNumber.GetValueOrDefault(s.Number)).Where(s => s?.Current is not null)
                 .OrderByDescending(s => s!.StartedAt).FirstOrDefault();
-            desired[group.Key] = busy is null ? "" : Number(busy.Current!);
+            desired[group.Key] = busy is null ? MachineOrder.None : MachineOrder.From(busy.Current!);
         }
         return desired;
     }
 
     // The wish for each machine given. A change starts the settle time again; the same wish again
     // changes nothing. Machines not given are left as they are.
-    public void Want(IReadOnlyDictionary<Guid, string> desired, DateTimeOffset now)
+    // Compared by Number only.
+    public void Want(IReadOnlyDictionary<Guid, MachineOrder> desired, DateTimeOffset now)
     {
         lock (_gate)
         {
-            foreach (var (machine, number) in desired)
+            foreach (var (machine, order) in desired)
             {
-                var n = number?.Trim() ?? "";
-                if (!_machines.TryGetValue(machine, out var e)) _machines[machine] = new Entry { Desired = n, ChangedAt = now };
-                else if (e.Desired != n)
+                var o = order is null ? MachineOrder.None : order with { Number = order.Number?.Trim() ?? "" };
+                if (!_machines.TryGetValue(machine, out var e)) _machines[machine] = new Entry { Desired = o, ChangedAt = now };
+                else if (e.Desired.Number != o.Number)
                 {
-                    e.Desired = n;
+                    e.Desired = o;
                     e.ChangedAt = now;
                 }
             }
         }
     }
 
-    public void Want(Guid machine, string number, DateTimeOffset now) => Want(new Dictionary<Guid, string> { [machine] = number }, now);
+    public void Want(Guid machine, MachineOrder order, DateTimeOffset now) => Want(new Dictionary<Guid, MachineOrder> { [machine] = order }, now);
 
     public bool IsHeld { get { lock (_gate) return _held; } }
 
@@ -93,7 +118,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         lock (_gate)
         {
             if (_held) return null;
-            var due = _machines.Where(m => m.Value.Known != m.Value.Desired && m.Value.DueAt(_settle) <= now)
+            var due = _machines.Where(m => m.Value.Known != m.Value.Desired.Number && m.Value.DueAt(_settle) <= now)
                 .OrderBy(m => m.Value.DueAt(_settle)).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
             if (due is not { } d) return null;
             return new MachineOrderStep(d.Key, d.Value.Desired, Read: d.Value.Known is null);
@@ -105,7 +130,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     {
         lock (_gate)
         {
-            var waiting = _machines.Values.Where(e => e.Known != e.Desired).Select(e => e.DueAt(_settle)).ToList();
+            var waiting = _machines.Values.Where(e => e.Known != e.Desired.Number).Select(e => e.DueAt(_settle)).ToList();
             if (waiting.Count == 0) return null;
             var at = waiting.Min();
             return at <= now ? TimeSpan.Zero : at - now;
@@ -119,7 +144,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         {
             if (!_machines.TryGetValue(machine, out var e)) return false;
             e.Known = current?.Trim() ?? "";
-            if (e.Known != e.Desired) return false;
+            if (e.Known != e.Desired.Number) return false;
             Reset(e);
             return true;
         }
@@ -156,7 +181,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     // What each machine wants and what is known to be there, for tests and the log.
     public IReadOnlyDictionary<Guid, (string Desired, string? Known)> Snapshot()
     {
-        lock (_gate) return _machines.ToDictionary(m => m.Key, m => (m.Value.Desired, m.Value.Known));
+        lock (_gate) return _machines.ToDictionary(m => m.Key, m => (m.Value.Desired.Number, m.Value.Known));
     }
 
     static void Reset(Entry e)
@@ -172,8 +197,9 @@ public interface IMachineOrderApi
     // The machine's current order number, "" when it has none.
     Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default);
 
-    // Makes number the machine's current order, ending the run of the one before; "" clears it.
-    Task SetOrderToMachineAsync(Guid machineId, string number, CancellationToken ct = default);
+    // Makes order the machine's current order, ending the run of the one before; an empty Number
+    // clears it. The order's Fields go with it.
+    Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default);
 }
 
 // Keeps OptiPeople in step with MachineOrders in the background: one call at a time, never
@@ -221,7 +247,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
 
         try
         {
-            await api.SetOrderToMachineAsync(step.MachineId, step.Number, ct);
+            await api.SetOrderToMachineAsync(step.MachineId, step.Order, ct);
             orders.Sent(step.MachineId, step.Number);
             _logged = null;
             log($"OptiCloud: maskine {step.MachineId} har nu {name}");

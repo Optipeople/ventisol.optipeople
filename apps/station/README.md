@@ -17,7 +17,7 @@ Run once: `dotnet run --project src/Ventisol.Station`. Options after `--`: `--ki
 
 Scans come from the cradles (and, for a demo, from `DemoScanner`: tap a tile, or press 1 to 7;
 Shift+number scans a different element, Ctrl+number unplugs that scanner). With OptiCloud set up,
-every scan goes to the `VentisolScans` table and the station's machine gets the order in progress
+every scan goes to the `VentisolScans` table and the station's machine gets the element in progress as its order
 (see `docs/opticloud-scans.md`).
 
 In the app: the logo opens the menu (version, connection, scanners, "Tilpas layout").
