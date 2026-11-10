@@ -95,8 +95,12 @@ it. A viewer has no journal: it records nothing.
 - The app reads the last 36 hours, not just today: an element scanned in before midnight and out
   in the morning must still be in progress after a restart in the night (an update, a reboot).
   What is done is then limited to today (see Rules).
+- A scan station (Scan mode) reads it the same way once its start has read the 36 hours. Its
+  widgets and report (Seneste ordrer, the numbers, the day's orders and stations) then count what
+  OptiCloud has, from every PC, plus its own scans not sent yet. Its stations keep their own state:
+  only what is done today follows OptiCloud (`LoadedScans.Refresh`, `MainViewModel.ApplyDone`).
 - What that costs: a few thousand rows a day is about 6 pages of 500 a day, so about 9 for the
-  36 hours. A viewer polls every 5 seconds; most polls read only from 10 minutes before the newest
+  36 hours. A viewer or a scan station polls every 5 seconds; most polls read only from 10 minutes before the newest
   scan (one page), and every 12th poll (about once a minute) reads the whole 36 hours, to catch
   scans a station sent late with their own, older scan time. A late scan shows on viewers within
   about a minute.

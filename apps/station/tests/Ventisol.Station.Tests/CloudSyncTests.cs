@@ -50,7 +50,7 @@ public sealed class CloudSyncTests : IDisposable
         var loaded = Watch(sync);
 
         sync.Start();
-        await Until(() => sync.Status.State == CloudState.Online && Count(loaded) == 2);
+        await Until(() => sync.Status.State == CloudState.Online && Count(loaded) >= 2);
         Assert.True(sync.Record(In(A, 1, Now.AddMinutes(-1))));
         await Until(() => api.RowCount == 1 && sync.Pending == 0);
 
@@ -78,7 +78,7 @@ public sealed class CloudSyncTests : IDisposable
         await Until(() => sync.Status.State == CloudState.Offline);
         Assert.Equal("Offline · 1 scanning venter", sync.Status.Text);
         api.Down = false;
-        await Until(() => Count(loaded) == 2);
+        await Until(() => Count(loaded) >= 2);
 
         var today = Today(loaded[1]);
         Assert.Single(today.Done);
@@ -103,7 +103,7 @@ public sealed class CloudSyncTests : IDisposable
         var loaded = Watch(sync);
 
         sync.Start();
-        await Until(() => Count(loaded) == 2);
+        await Until(() => Count(loaded) >= 2);
 
         var today = Today(loaded[1]);
         Assert.Equal([1], today.InProgress.Keys);
@@ -182,6 +182,26 @@ public sealed class CloudSyncTests : IDisposable
         Assert.Empty(Today(loaded[1]).InProgress);
         Assert.Single(Today(loaded[1]).Done);
         Assert.Equal(0, api.Count("CreateRow"));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_scan_station_keeps_following_other_pcs_scans()
+    {
+        var api = new FakeOptiCloud();
+        using var sync = Sync(api);
+        var loaded = Watch(sync);
+
+        sync.Start();
+        await Until(() => Count(loaded) >= 2);
+        Assert.False(loaded[1].Refresh);
+
+        // Another PC scans an element in and out at its station; this one has its own unsent scan.
+        Assert.True(sync.Record(In(A, 1, Now.AddMinutes(-1))));
+        api.AddRow(In(B, 2, Now.AddMinutes(-20)));
+        api.AddRow(Out(B, 2, Now.AddMinutes(-10)));
+
+        await Until(() => { lock (loaded) return loaded.Any(l => l.Refresh && Today(l).Done.Count == 1 && l.Events.Any(e => e.Barcode.Raw == A)); });
+        Assert.Equal(0, api.Count("SetOrderToMachine"));
     }
 
     [Fact(Timeout = 10000)]

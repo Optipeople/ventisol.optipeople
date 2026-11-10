@@ -10,7 +10,9 @@ public sealed record ReplayResult(IReadOnlyDictionary<int, (Barcode Barcode, Dat
 // The scans CloudSync has, raw, from Since (the start of the window read) on. The app adds the
 // scans it recorded itself and replays them on its own thread, so none of its scans is undone.
 // FromCloud: read from OptiCloud, not only this PC's journal and outbox.
-public sealed record LoadedScans(IReadOnlyList<ScanEvent> Events, DateTimeOffset Since, bool FromCloud = false);
+// Refresh: a Scan mode PC reading OptiCloud again after its start, for the widgets and the report.
+// The stations on the screen keep their own state then; only what is done today follows OptiCloud.
+public sealed record LoadedScans(IReadOnlyList<ScanEvent> Events, DateTimeOffset Since, bool FromCloud = false, bool Refresh = false);
 
 // The rules are in docs/opticloud-scans.md (Rules), shared with the reports site and checked
 // against the same vectors (docs/scan-rules-vectors.json).

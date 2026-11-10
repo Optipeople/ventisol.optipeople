@@ -9,7 +9,7 @@ public sealed record OrderRow(string Order, string Elements, string Total, strin
 // Fill and Rest split the bar; GridLength so the view can lay it out without a converter.
 public sealed record StationRow(string Name, string Done, string Average, string Utilization, GridLength Fill, GridLength Rest);
 
-// The operators' view of the day: orders and stations, from this screen's own scans.
+// The operators' view of the day: orders and stations, from the scans in OptiCloud (MainViewModel.History).
 public sealed partial class ReportViewModel(MainViewModel main) : ObservableObject
 {
     const int OrderRows = 8;

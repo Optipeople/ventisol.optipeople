@@ -24,7 +24,8 @@ public sealed partial class MainViewModel : ObservableObject
     // Clocks, numbers and lists placed among the stations.
     public ObservableCollection<WidgetViewModel> Widgets { get; } = [];
 
-    // Everything done on this screen since it started. Moves to OptiCloud with the API.
+    // What is done today, as OptiCloud has it (every station, every PC), plus this screen's own
+    // scans since it was last read. The widgets and the report count from it.
     public List<WorkRecord> History { get; } = [];
 
     public string Version { get; } =
@@ -110,6 +111,15 @@ public sealed partial class MainViewModel : ObservableObject
             if (today.InProgress.TryGetValue(s.Number, out var p)) s.Restore(p.Barcode, p.Since, now);
             else s.Restore(null, default, now);
         }
+        _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
+    }
+
+    // OptiCloud read again on a scan station: what is done today follows it, so the widgets and the
+    // report count other PCs' scans too. The stations here keep their own state: they take the scans.
+    public void ApplyDone(ReplayResult today)
+    {
+        History.Clear();
+        History.AddRange(today.Done);
         _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
     }
 

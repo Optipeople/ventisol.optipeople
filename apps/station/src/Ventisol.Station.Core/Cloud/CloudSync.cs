@@ -9,6 +9,8 @@ public sealed record CloudStatus(CloudState State, string Text, int Pending, Dat
 // Scan mode: every scan goes to the outbox on disk at once and is sent in the background, and to
 // a local journal. At start Loaded comes at once from the journal and the outbox, then again
 // when OptiCloud has been read, with everything together.
+// After that load a Scan mode PC keeps reading OptiCloud like a viewer, so its widgets and report
+// follow every station's scans, also those of other PCs (Loaded with Refresh).
 // Viewer mode: OptiCloud is read every 5 seconds and Loaded is raised whenever the scans changed
 // (and at midnight). A viewer records nothing, but still sends what an earlier Scan mode left.
 // Loaded holds the raw scans of the last Window (36 hours), so an element scanned in yesterday
@@ -181,6 +183,9 @@ public sealed class CloudSync : IDisposable
                 await RetryAsync(() => LoadOnceAsync(table, ct), ct);
                 // After the load, so it acts on the screen as OptiCloud has it (it also waits for Release).
                 if (_orders is not null) _ = RunOrdersAsync(client, ct);
+                // It has just read the whole window, so the first poll waits its turn.
+                await _delay(PollInterval, ct);
+                await PollAsync(table, ct, refresh: true);
             }
             else await PollAsync(table, ct);
             await sender;
@@ -250,7 +255,8 @@ public sealed class CloudSync : IDisposable
         return events;
     }
 
-    async Task PollAsync(ScanTable table, CancellationToken ct)
+    // refresh: Scan mode. Loaded then also holds this PC's scans not sent yet, and says Refresh.
+    async Task PollAsync(ScanTable table, CancellationToken ct, bool refresh = false)
     {
         var cache = new Dictionary<Guid, ScanEvent>();
         HashSet<Guid>? shown = null;
@@ -281,7 +287,8 @@ public sealed class CloudSync : IDisposable
                 {
                     shown = [.. cache.Keys];
                     day = today;
-                    Raise(cache.Values, start);
+                    if (refresh) Raise(cache.Values.Concat(Local(start)), start, fromCloud: true, refresh: true);
+                    else Raise(cache.Values, start);
                 }
                 await _delay(PollInterval, ct);
             }
@@ -316,10 +323,10 @@ public sealed class CloudSync : IDisposable
     }
 
     // Each ScanId once, oldest first, nothing from before since.
-    void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since, bool fromCloud = false)
+    void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since, bool fromCloud = false, bool refresh = false)
     {
         List<ScanEvent> list = [.. events.Where(e => e.At >= since).DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction)];
-        if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud));
+        if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud, refresh));
     }
 
     void Synced()

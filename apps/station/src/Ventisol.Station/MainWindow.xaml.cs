@@ -149,7 +149,9 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.Now;
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
-        _vm.Apply(ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now)), now);
+        var today = ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now));
+        if (loaded.Refresh) { _vm.ApplyDone(today); return; }
+        _vm.Apply(today, now);
         SendMachineOrders(loaded.FromCloud);
         foreach (var s in _vm.Stations)
             if (s.Current is { } b) PrefetchDocument(b);
