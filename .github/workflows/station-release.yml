@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  UPDATE_REPO: ${{ vars.UPDATE_REPO || 'Optipeople/ventisol-station-updates' }}
+  UPDATE_REPO: ${{ vars.UPDATE_REPO || 'Optipeople/ventisol.station.updates' }}
   # Same as the Velopack package in Ventisol.Station.csproj.
   VPK_VERSION: 1.2.161
   # Never change: installed PCs find their updates by this id.

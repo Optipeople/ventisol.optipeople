@@ -13,7 +13,7 @@ namespace Ventisol.Station.Updates;
 // that called Start.
 public sealed class UpdateService(string updateUrl, Func<bool> isQuiet, Action<string> log) : INotifyPropertyChanged, IDisposable
 {
-    public const string DefaultUrl = "https://github.com/Optipeople/ventisol-station-updates";
+    public const string DefaultUrl = "https://github.com/Optipeople/ventisol.station.updates";
 
     static readonly TimeSpan CheckEvery = TimeSpan.FromHours(1);
     // How often a downloaded update looks for its quiet moment.
