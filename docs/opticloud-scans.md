@@ -147,14 +147,17 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   machine only the latest wish counts, and it is sent once it has held for 3 seconds. An Out and
   In of the same order within that sends nothing; a quick Out and In of another order sends only
   the new one.
-- On start, once the screen is rebuilt from the journal (and again from OptiCloud), every mapped
-  machine is read and set only if it differs. So a restart leaves a running order alone, and a
-  machine whose station has nothing in progress is cleared, also when the order was set by hand
-  on the dashboard. After a failed call (it may have got in) the machine is read again before
-  anything is sent. A read the server refuses, or answers in a shape we can't use, is skipped
-  and the order set directly.
+- On start nothing is sent until the screen has been rebuilt from OptiCloud's 36 hours (the
+  journal alone may miss an element in progress). Then every mapped machine is read and set only
+  if it differs. So a restart leaves a running order alone, and a machine whose station has
+  nothing in progress is cleared, also when the order was set by hand on the dashboard.
+- Nothing is ever set while the machine's order is unknown. After a failed call (it may have got
+  in) the machine is read again first. A read that fails for any reason (no network, refused, an
+  answer we can't use) is retried with backoff, never skipped.
 - Failures wait 2, 5, 15, 30, then every 60 seconds (a wrong password 15 minutes), and then send
-  whatever is wished by then. Each distinct failure is logged once; each set is logged. Nothing
+  whatever is wished by then. Settle and backoff run on a monotonic clock. Each distinct failure
+  is logged once until a machine is in step again; each set is logged. Its own loop: a failure
+  there never stops the scans being sent. Nothing
   is shown on the screen.
 - Only in Scan mode with OptiCloud set up, and only machines a station is mapped to: a viewer and
   a station with no machine never send, and other machines are never touched. Two stations on one

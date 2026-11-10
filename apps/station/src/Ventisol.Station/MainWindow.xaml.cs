@@ -134,15 +134,16 @@ public partial class MainWindow : Window
         var now = DateTimeOffset.Now;
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
         _vm.Apply(ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now)), now);
-        SendMachineOrders();
+        SendMachineOrders(loaded.FromCloud);
     }
 
     // Each mapped machine in OptiPeople gets the order in progress at its station, else none.
-    // CloudSync sends it in the background, only in Scan mode with OptiCloud set up.
-    void SendMachineOrders()
+    // CloudSync sends it in the background, only in Scan mode with OptiCloud set up, and not before
+    // the screen has been rebuilt from OptiCloud (fromCloud).
+    void SendMachineOrders(bool fromCloud = false)
     {
         if (_settings.Mode != StationMode.Scan) return;
-        _cloud.SetMachineOrders(MachineOrders.DesiredFrom(_settings.Stations, _vm.Stations.Select(s => s.State)));
+        _cloud.SetMachineOrders(MachineOrders.DesiredFrom(_settings.Stations, _vm.Stations.Select(s => s.State)), fromCloud);
     }
 
     void ShowCloudStatus()

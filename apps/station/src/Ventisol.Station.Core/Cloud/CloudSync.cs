@@ -36,6 +36,9 @@ public sealed class CloudSync : IDisposable
     readonly string? _password;
     readonly Action<string> _log;
     readonly Func<DateTimeOffset> _clock;
+    // Settle and backoff of the machine orders: monotonic, so a change of the PC's clock can't
+    // stall or rush them. The injected clock in tests.
+    readonly Func<DateTimeOffset> _ordersClock;
     readonly HttpMessageHandler? _handler;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
     readonly Outbox _outbox;
@@ -60,13 +63,15 @@ public sealed class CloudSync : IDisposable
         _password = password;
         _log = log;
         _clock = clock ?? (() => DateTimeOffset.Now);
+        _ordersClock = clock ?? Monotonic();
         _handler = handler;
         _delay = delay ?? Task.Delay;
         _outbox = new Outbox(Path.Combine(dataFolder, "outbox"), log);
         // A viewer records nothing, so it has nothing of its own to remember.
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
-        if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders();
+        // Held until the screen has been rebuilt from OptiCloud (SetMachineOrders with rebuilt).
+        if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true);
         _status = Make();
         _outbox.PendingChanged += (_, _) => Publish();
         _outbox.Sent += (_, _) => Synced();
@@ -145,12 +150,15 @@ public sealed class CloudSync : IDisposable
     }
 
     // Per mapped machine, the order it should have now ("" for none), as MachineOrders.DesiredFrom
-    // gives it. Call after every scan and every rebuild of the screen. Sent in the background once
-    // it has held for MachineOrders.DefaultSettle. Ignored in Viewer mode or without OptiCloud.
-    public void SetMachineOrders(IReadOnlyDictionary<Guid, string> desired)
+    // gives it. Call after every scan and every rebuild of the screen; fromCloud when the rebuild was
+    // from a Loaded with FromCloud. Nothing is sent before that: a journal alone may miss an element
+    // in progress. Sent in the background once it has held for MachineOrders.DefaultSettle.
+    // Ignored in Viewer mode or without OptiCloud.
+    public void SetMachineOrders(IReadOnlyDictionary<Guid, string> desired, bool fromCloud = false)
     {
-        if (_orders is null || desired.Count == 0) return;
-        _orders.Want(desired, _clock());
+        if (_orders is null) return;
+        _orders.Want(desired, _ordersClock());
+        if (fromCloud) _orders.Release();
     }
 
     async Task RunAsync(CancellationToken ct)
@@ -163,10 +171,14 @@ public sealed class CloudSync : IDisposable
 
             // A PC switched from Scan to Viewer may still have scans to send.
             var sender = _settings.Mode == StationMode.Scan || _outbox.Pending > 0 ? _outbox.RunAsync(table.AddAsync, ct, _delay) : Task.CompletedTask;
-            var orders = _orders is null ? Task.CompletedTask : new MachineOrderSync(_orders, client, _log, _clock, _delay).RunAsync(ct);
-            if (_settings.Mode == StationMode.Scan) await RetryAsync(() => LoadOnceAsync(table, ct), ct);
+            if (_settings.Mode == StationMode.Scan)
+            {
+                await RetryAsync(() => LoadOnceAsync(table, ct), ct);
+                // After the load, so it acts on the screen as OptiCloud has it (it also waits for Release).
+                if (_orders is not null) _ = RunOrdersAsync(client, ct);
+            }
             else await PollAsync(table, ct);
-            await Task.WhenAll(sender, orders);
+            await sender;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x)
@@ -175,6 +187,21 @@ public sealed class CloudSync : IDisposable
             _log($"OptiCloud stoppede: {x}");
             Failed(x);
         }
+    }
+
+    // Its own loop, its own failures: it never stops the scans, and they never stop it.
+    async Task RunOrdersAsync(OptiCloudClient client, CancellationToken ct)
+    {
+        try { await new MachineOrderSync(_orders!, client, _log, _ordersClock, _delay).RunAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception x) { _log($"OptiCloud: maskinernes ordrer stoppede: {x}"); }
+    }
+
+    static Func<DateTimeOffset> Monotonic()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var ticks = System.Diagnostics.Stopwatch.GetTimestamp();
+        return () => start + System.Diagnostics.Stopwatch.GetElapsedTime(ticks);
     }
 
     async Task ConnectAsync(OptiCloudClient client, ScanTable table, CancellationToken ct)
@@ -198,7 +225,7 @@ public sealed class CloudSync : IDisposable
         var local = Local(since);
         var events = (await table.ReadSinceAsync(since, ct)).Concat(local).ToList();
         Synced();
-        Raise(events, since);
+        Raise(events, since, fromCloud: true);
     }
 
     // What this PC knows without the network.
@@ -276,10 +303,10 @@ public sealed class CloudSync : IDisposable
     }
 
     // Each ScanId once, oldest first, nothing from before since.
-    void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since)
+    void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since, bool fromCloud = false)
     {
         List<ScanEvent> list = [.. events.Where(e => e.At >= since).DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction)];
-        if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since));
+        if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud));
     }
 
     void Synced()

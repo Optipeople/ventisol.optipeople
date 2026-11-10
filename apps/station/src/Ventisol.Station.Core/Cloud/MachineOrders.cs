@@ -13,25 +13,26 @@ public sealed record MachineOrderStep(Guid MachineId, string Number, bool Read);
 // the new order). SetOrderToMachine is not idempotent (the same number again starts a new run),
 // so nothing is sent that the machine already has, and what it has is not assumed: at first, and
 // after a failure (the call may have got in), the machine is read first and set only when it
-// differs. Only machines given a wish are ever touched.
+// differs; nothing is ever set while what the machine has is unknown. Only machines given a wish
+// are ever touched. Held until Release: nothing is due before the screen has been rebuilt from
+// OptiCloud, so a wish from the journal alone is never acted on.
 // No I/O and no clock of its own, so it can be tested; MachineOrderSync does the calls.
 // Safe to use from any thread.
-public sealed class MachineOrders(TimeSpan? settle = null)
+public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
 {
     public static readonly TimeSpan DefaultSettle = TimeSpan.FromSeconds(3);
 
     readonly TimeSpan _settle = settle ?? DefaultSettle;
     readonly Lock _gate = new();
     readonly Dictionary<Guid, Entry> _machines = [];
+    bool _held = held;
 
     sealed class Entry
     {
         public string Desired = "";
         public DateTimeOffset ChangedAt;
-        // What OptiPeople has, as far as known. Null: not known, read (or set) before trusting it.
+        // What OptiPeople has, as far as known. Null: not known, read it before any set.
         public string? Known;
-        // The read itself failed in a way a retry won't fix: set without reading.
-        public bool SkipRead;
         public int Failures;
         public DateTimeOffset RetryAt = DateTimeOffset.MinValue;
 
@@ -78,15 +79,24 @@ public sealed class MachineOrders(TimeSpan? settle = null)
 
     public void Want(Guid machine, string number, DateTimeOffset now) => Want(new Dictionary<Guid, string> { [machine] = number }, now);
 
-    // The next thing due, or null when every machine is in step or still settling or waiting.
+    public bool IsHeld { get { lock (_gate) return _held; } }
+
+    // From now on wishes are acted on.
+    public void Release()
+    {
+        lock (_gate) _held = false;
+    }
+
+    // The next thing due, or null when held, or every machine is in step or still settling or waiting.
     public MachineOrderStep? Next(DateTimeOffset now)
     {
         lock (_gate)
         {
+            if (_held) return null;
             var due = _machines.Where(m => m.Value.Known != m.Value.Desired && m.Value.DueAt(_settle) <= now)
                 .OrderBy(m => m.Value.DueAt(_settle)).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
             if (due is not { } d) return null;
-            return new MachineOrderStep(d.Key, d.Value.Desired, Read: d.Value.Known is null && !d.Value.SkipRead);
+            return new MachineOrderStep(d.Key, d.Value.Desired, Read: d.Value.Known is null);
         }
     }
 
@@ -102,30 +112,22 @@ public sealed class MachineOrders(TimeSpan? settle = null)
         }
     }
 
-    // What OptiPeople has on the machine now ("" for none).
-    public void Read(Guid machine, string current)
+    // What OptiPeople has on the machine now ("" for none). True when that is what is wished.
+    public bool Read(Guid machine, string current)
     {
         lock (_gate)
         {
-            if (!_machines.TryGetValue(machine, out var e)) return;
+            if (!_machines.TryGetValue(machine, out var e)) return false;
             e.Known = current?.Trim() ?? "";
-            e.SkipRead = false;
-            if (e.Known == e.Desired) Reset(e);
+            if (e.Known != e.Desired) return false;
+            Reset(e);
+            return true;
         }
     }
 
-    // The read failed. When the read itself is the trouble (refused, an answer we can't use), the
-    // machine is set without reading, at once. Otherwise (no network, the login) it is a failure:
-    // wait as Failed does.
-    public TimeSpan? ReadFailed(Guid machine, DateTimeOffset now, Exception x)
-    {
-        if (x is OptiCloudException { IsRejected: false, IsAuth: false } o && o.Message != OptiCloudException.Unexpected) return Failed(machine, now, x);
-        lock (_gate)
-        {
-            if (_machines.TryGetValue(machine, out var e)) e.SkipRead = true;
-        }
-        return null;
-    }
+    // The read failed, for whatever reason: wait with backoff and read again. Never set blind, as
+    // a set of the order the machine already runs starts a new run.
+    public TimeSpan ReadFailed(Guid machine, DateTimeOffset now, Exception x) => Failed(machine, now, x);
 
     public void Sent(Guid machine, string number)
     {
@@ -146,7 +148,6 @@ public sealed class MachineOrders(TimeSpan? settle = null)
             if (!_machines.TryGetValue(machine, out var e)) return TimeSpan.Zero;
             var wait = Outbox.Wait(x, e.Failures++);
             e.Known = null;
-            e.SkipRead = false;
             e.RetryAt = now + wait;
             return wait;
         }
@@ -160,7 +161,6 @@ public sealed class MachineOrders(TimeSpan? settle = null)
 
     static void Reset(Entry e)
     {
-        e.SkipRead = false;
         e.Failures = 0;
         e.RetryAt = DateTimeOffset.MinValue;
     }
@@ -207,12 +207,13 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
         {
             try
             {
-                orders.Read(step.MachineId, await api.GetCurrentOrderAsync(step.MachineId, ct));
+                // In step with nothing to send counts as working again; a read before a set does not.
+                if (orders.Read(step.MachineId, await api.GetCurrentOrderAsync(step.MachineId, ct))) _logged = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception x)
             {
-                Note($"OptiCloud: maskinens ordre kunne ikke læses: {Message(x)}");
+                Note(x, "læses");
                 orders.ReadFailed(step.MachineId, clock(), x);
             }
             return true;
@@ -228,7 +229,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception x)
         {
-            Note($"OptiCloud: maskinens ordre kunne ikke sættes: {Message(x)}");
+            Note(x, "sættes");
             orders.Failed(step.MachineId, clock(), x);
         }
         return true;
@@ -236,11 +237,13 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
 
     static string Message(Exception x) => x is OptiCloudException ? x.Message : $"{x.GetType().Name}: {x.Message}";
 
-    // The same failure on every retry is logged once, until a set works again.
-    void Note(string message)
+    // The same failure on every retry is logged once, until a machine is in step again. Keyed on the error
+    // alone, so a read and a set failing alike in turn log once too.
+    void Note(Exception x, string what)
     {
+        var message = Message(x);
         if (message == _logged) return;
         _logged = message;
-        log(message);
+        log($"OptiCloud: maskinens ordre kunne ikke {what}: {message}");
     }
 }

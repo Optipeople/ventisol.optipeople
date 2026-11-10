@@ -257,19 +257,75 @@ public sealed class MachineOrdersTests : IDisposable
     }
 
     [Fact]
-    public async Task A_read_that_is_refused_sets_without_reading_once()
+    public async Task A_refused_read_never_sets_blind_and_keeps_reading_with_backoff()
     {
         var orders = new MachineOrders();
         var api = new FakeApi { FailRead = new OptiCloudException("OptiCloud kender ikke adressen (404)", 404, rejected: true) };
+        api.Current[M1] = "58556";
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, "58556", _now);
+        _now += Settle;
+        for (var i = 0; i < 6; i++)
+        {
+            await Drain(worker);
+            _now += TimeSpan.FromMinutes(1);
+        }
+
+        // Never set while unknown: the machine may run it already, and a set would split the run.
+        Assert.Empty(api.Sets);
+        Assert.Equal(6, api.Reads);
+        Assert.Single(_log);
+
+        // Once it can be read, it is in step and nothing is sent.
+        api.FailRead = null;
+        await Drain(worker);
+        Assert.Empty(api.Sets);
+    }
+
+    [Fact]
+    public async Task A_read_and_a_set_failing_alike_in_turn_log_once()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi { FailSet = NoNetwork };
         var worker = Worker(orders, api);
 
         orders.Want(M1, "58556", _now);
         _now += Settle;
         await Drain(worker);
+        api.FailRead = NoNetwork;
+        for (var i = 0; i < 3; i++)
+        {
+            _now += TimeSpan.FromMinutes(1);
+            await Drain(worker);
+        }
+        api.FailRead = null;
         _now += TimeSpan.FromMinutes(1);
         await Drain(worker);
 
-        Assert.Equal([(M1, "58556")], api.Sets);
+        Assert.Single(_log);
+    }
+
+    [Fact]
+    public async Task Nothing_is_sent_while_held_and_the_wish_at_release_counts()
+    {
+        var orders = new MachineOrders(held: true);
+        var api = new FakeApi();
+        api.Current[M1] = "58556";
+        var worker = Worker(orders, api);
+
+        // The journal alone has nothing in progress...
+        orders.Want(M1, "", _now);
+        _now += TimeSpan.FromMinutes(1);
+        Assert.Equal(0, await Drain(worker));
+
+        // ...OptiCloud's 36 hours still have the element in progress.
+        orders.Want(M1, "58556", _now);
+        orders.Release();
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Empty(api.Sets);
         Assert.Equal(1, api.Reads);
     }
 
@@ -333,11 +389,18 @@ public sealed class MachineOrdersTests : IDisposable
         var api = new FakeOptiCloud();
         var machine = api.Machines[1].Id;
         using var sync = Sync(api, StationMode.Scan);
+        var fromCloud = false;
+        sync.Loaded += (_, l) => { if (l.FromCloud) fromCloud = true; };
         sync.Start();
-        await Until(() => sync.Status.State == CloudState.Online);
+        await Until(() => fromCloud);
 
+        // Before the screen is rebuilt from OptiCloud, nothing goes out.
         sync.SetMachineOrders(new Dictionary<Guid, string> { [machine] = "58556" });
         _now += Settle;
+        await Task.Delay(300);
+        Assert.Equal(0, api.Count("RealtimeDashboard"));
+
+        sync.SetMachineOrders(new Dictionary<Guid, string> { [machine] = "58556" }, fromCloud: true);
         await Until(() => api.Sets.Length == 1);
         Assert.Equal((machine, "58556"), api.Sets[0]);
         Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains("\"number\":\"58556\"") && r.Body.Contains("\"expectedSpeed\":0"));
@@ -356,7 +419,7 @@ public sealed class MachineOrdersTests : IDisposable
         sync.Start();
         await Until(() => sync.Status.State == CloudState.Online && api.Count("GetRowsPaged") > 0);
 
-        sync.SetMachineOrders(new Dictionary<Guid, string> { [api.Machines[1].Id] = "58556" });
+        sync.SetMachineOrders(new Dictionary<Guid, string> { [api.Machines[1].Id] = "58556" }, fromCloud: true);
         _now += Settle;
         await Task.Delay(300);
 
