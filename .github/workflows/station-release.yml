@@ -1,4 +1,5 @@
-# A tag like station-v1.2.0 builds, tests, packages and publishes station app version 1.2.0.
+# Every push to main that touches the station app builds, tests, packages and publishes version
+# 1.0.<run number>. The station PCs pick it up within the hour and install it when the floor is quiet.
 # This repo is private, so the update packages go to a public repo (UPDATE_REPO) as a GitHub Release.
 # The station PCs read that repo without a token (UpdateService.DefaultUrl must point at it).
 #
@@ -14,7 +15,9 @@ name: station-release
 
 on:
   push:
-    tags: ['station-v*']
+    branches: [main]
+    paths: ['apps/station/**', '.github/workflows/station-release.yml']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,12 +47,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Version from tag
+      # Run numbers only go up, so every release is newer than the one before.
+      - name: Version
         id: version
-        run: |
-          $v = '${{ github.ref_name }}'.Substring('station-v'.Length)
-          if ($v -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Tag must look like station-v1.2.0, got ${{ github.ref_name }}" }
-          "value=$v" >> $env:GITHUB_OUTPUT
+        run: '"value=1.0.${{ github.run_number }}" >> $env:GITHUB_OUTPUT'
 
       - run: dotnet restore Ventisol.Station.slnx
       - run: dotnet build Ventisol.Station.slnx -c Release --no-restore -p:Version=${{ steps.version.outputs.value }}

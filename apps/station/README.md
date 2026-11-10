@@ -54,11 +54,11 @@ before this hold a serial number and show as "ikke tilsluttet" until the station
 
 ## Release and updates
 
-Push a tag `station-v1.2.0` and `station-release.yml` builds, tests and publishes version 1.2.0:
+Every push to main that touches `apps/station` makes `station-release.yml` build, test and publish
+version `1.0.<run number>` (it can also be started by hand from the Actions tab):
 self-contained win-x64, packaged with [Velopack](https://velopack.io), uploaded as a GitHub Release to
 the public repo `Optipeople/ventisol-station-updates` (repo variable `UPDATE_REPO`). Public, because
-this repo is private and we don't want a token on every PC. A tag with a suffix, like
-`station-v1.3.0-beta1`, is a pre-release the stations skip. `station-ci.yml` builds and tests every
+this repo is private and we don't want a token on every PC. `station-ci.yml` builds and tests every
 push to main and every pull request that touches `apps/station`.
 
 Secrets: `RELEASE_TOKEN` (Contents read and write on the updates repo). Code signing with Azure
