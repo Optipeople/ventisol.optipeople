@@ -92,8 +92,9 @@ dotnet run --project tools/FakeOptiCloud -- 5100         # another port (or FAKE
 ```
 
 `http://localhost:5099/fake/state` shows everything it holds, without a login. It also takes the machine order calls
-(`SetOrderToMachine`, `GetCurrentOrderActiveByMachineId`, held in memory only), so a scan at a station
-with a machine shows as that machine's order in `/fake/state` after about 3 seconds. `--forbid-writes`
+(`SetOrderToMachine`, `GetCurrentOrderActiveByMachineId`, `Machine/Get`, `ExternalSetPartOrder`, held in
+memory only), so a scan at a station with a machine shows as that machine's order in `/fake/state` after
+about 3 seconds, and its fields under `orderFields`. `--forbid-writes`
 (or `FAKE_FORBID_WRITES=1`) makes every `CreateRow` a 403, as for a user who may read but not write.
 
 Start the app with its own data folder, so your real settings are left alone:

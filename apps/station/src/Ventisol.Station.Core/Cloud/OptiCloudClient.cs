@@ -119,10 +119,33 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 
     // Makes order.Number the machine's current order (the server's time), ending the run before; ""
     // clears it (a hidden default order). Not idempotent: the same number again starts a new run, so
-    // only send what differs from what the machine has. order.Fields are not sent yet: how OptiPeople
-    // takes custom fields is still being found out.
+    // only send what differs from what the machine has. It ignores custom fields: SetOrderFieldsAsync.
     public Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, "api/RealtimeDashboard/SetOrderToMachine", new { machineId, number = order.Number, expectedSpeed = 0 }, ct);
+
+    // Gives the order order.Number its Fields as the order's own custom fields (customFieldItems,
+    // text), in the machine's factory. Upserts by label, so safe to repeat, and leaves the machine's
+    // run alone. Nothing to do for no order or no fields.
+    public async Task SetOrderFieldsAsync(Guid machineId, MachineOrder order, CancellationToken ct = default)
+    {
+        if (order.Number.Length == 0 || order.Fields.Count == 0) return;
+        var factoryId = await GetFactoryIdAsync(machineId, ct);
+        await SendAsync(HttpMethod.Post, "api/PartOrderNumber/ExternalSetPartOrder",
+            new { factoryId, partOrderNumber = order.Number, customFields = order.Fields.Select(f => new { label = f.Name, text = f.Value }).ToList() }, ct);
+    }
+
+    // The factory a machine is in, asked once per machine and kept: orders live per factory.
+    public async Task<Guid> GetFactoryIdAsync(Guid machineId, CancellationToken ct = default)
+    {
+        lock (_factories) if (_factories.TryGetValue(machineId, out var known)) return known;
+        var d = await GetAsync($"api/Machine/Get/{machineId}", ct);
+        var id = d.ValueKind == JsonValueKind.Object ? d.Guid("factoryId") : null;
+        if (id is null) throw new OptiCloudException(OptiCloudException.Unexpected);
+        lock (_factories) _factories[machineId] = id.Value;
+        return id.Value;
+    }
+
+    readonly Dictionary<Guid, Guid> _factories = [];
 
     // keyword is OptiCloud's free-text search; what it matches on is not documented.
     public async Task<RowsPage> GetRowsPagedAsync(Guid tableId, int page, int pageSize, string orderBy, bool ascending, string? keyword = null, CancellationToken ct = default)

@@ -50,6 +50,19 @@ public sealed class MachineOrdersTests : IDisposable
             if (LoseAnswer) throw new OptiCloudException(OptiCloudException.Unreachable + " (intet svar)");
             return Task.CompletedTask;
         }
+
+        // Every fields call that got in, by order number. Never touches Current: the run is left alone.
+        public List<(Guid Machine, string Number, IReadOnlyList<OrderField> Fields)> FieldSets { get; } = [];
+        public Exception? FailFields;
+
+        public Task SetOrderFieldsAsync(Guid machineId, MachineOrder order, CancellationToken ct = default)
+        {
+            if (FailFields is { } x) throw x;
+            FieldSets.Add((machineId, order.Number, order.Fields));
+            return Task.CompletedTask;
+        }
+
+        public string[] FieldNumbers => [.. FieldSets.Select(f => f.Number)];
     }
 
     MachineOrderSync Worker(MachineOrders orders, FakeApi api) => new(orders, api, _log.Add, () => _now);
@@ -374,6 +387,136 @@ public sealed class MachineOrdersTests : IDisposable
     }
 
     [Fact]
+    public async Task A_set_is_followed_by_the_fields_of_the_element_and_a_clear_by_none()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal([A], api.FieldNumbers);
+        Assert.Equal(E(A).Fields, api.FieldSets[0].Fields);
+        Assert.Empty(orders.PendingFields(M1));
+
+        // The same element wished again sends neither; a clear has no fields.
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A), (M1, "")], api.Sets);
+        Assert.Equal([A], api.FieldNumbers);
+    }
+
+    [Fact]
+    public async Task A_failed_fields_call_is_retried_with_backoff_and_never_sets_again()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi { FailFields = NoNetwork };
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal([A], orders.PendingFields(M1));
+        Assert.Equal(Outbox.Backoff[0], orders.DueIn(_now));
+
+        _now += Outbox.Backoff[0];
+        await Drain(worker);
+        Assert.Equal(Outbox.Backoff[1], orders.DueIn(_now));
+
+        api.FailFields = null;
+        _now += Outbox.Backoff[1];
+        await Drain(worker);
+
+        // The run was never split: one set, one read, and the fields got in once.
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal(1, api.Reads);
+        Assert.Equal([A], api.FieldNumbers);
+        Assert.Null(orders.DueIn(_now));
+        Assert.Single(_log, l => l.Contains(OptiCloudException.Unreachable));
+    }
+
+    [Fact]
+    public async Task Fields_of_an_element_the_machine_has_left_are_still_sent_in_order()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi { FailFields = NoNetwork };
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        orders.Want(M1, E(A2), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A), (M1, A2)], api.Sets);
+        Assert.Equal([A, A2], orders.PendingFields(M1));
+
+        api.FailFields = null;
+        _now += TimeSpan.FromMinutes(1);
+        await Drain(worker);
+
+        Assert.Equal([A, A2], api.FieldNumbers);
+        Assert.Equal([(M1, A), (M1, A2)], api.Sets);
+    }
+
+    [Fact]
+    public async Task A_failed_fields_call_does_not_hold_back_a_set()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi { FailFields = NoNetwork };
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        // Fields wait for their backoff; the next element is set as soon as it has settled.
+        orders.Want(M1, E(B), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A), (M1, B)], api.Sets);
+    }
+
+    [Fact]
+    public async Task A_machine_found_running_the_element_still_gets_its_fields()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        api.Current[M1] = A;
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Empty(api.Sets);
+        Assert.Equal([A], api.FieldNumbers);
+    }
+
+    [Fact]
+    public void At_most_the_newest_fields_wait_per_machine()
+    {
+        var orders = new MachineOrders();
+        for (var i = 1; i <= MachineOrders.MaxPendingFields + 2; i++)
+        {
+            var number = $"0585560501{i:00}";
+            orders.Want(M1, E(number), _now);
+            orders.Sent(M1, E(number));
+        }
+
+        var pending = orders.PendingFields(M1);
+        Assert.Equal(MachineOrders.MaxPendingFields, pending.Count);
+        Assert.Equal("058556050103", pending[0]);
+    }
+
+    [Fact]
     public void Desired_is_the_element_in_progress_per_mapped_machine()
     {
         var setups = new[]
@@ -447,10 +590,32 @@ public sealed class MachineOrdersTests : IDisposable
         Assert.Equal((machine, A), api.Sets[0]);
         Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains($"\"number\":\"{A}\"") && r.Body.Contains("\"expectedSpeed\":0"));
 
+        // Then the fields, in the machine's factory, as text by label.
+        await Until(() => api.FieldsOf(A) is not null);
+        Assert.Equal(new Dictionary<string, string> { ["Ordre"] = "58556", ["Position"] = "5", ["Underposition"] = "1", ["Emne"] = "3" }, api.FieldsOf(A));
+        Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("ExternalSetPartOrder") && r.Body!.Contains($"\"factoryId\":\"{api.Factory}\"")
+            && r.Body.Contains($"\"partOrderNumber\":\"{A}\"") && r.Body.Contains("{\"label\":\"Ordre\",\"text\":\"58556\"}"));
+
         sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = MachineOrder.None });
         _now += Settle;
         await Until(() => api.Sets.Length == 2);
         Assert.Equal((machine, ""), api.Sets[1]);
+    }
+
+    [Fact]
+    public async Task The_client_asks_a_machine_for_its_factory_once()
+    {
+        var api = new FakeOptiCloud();
+        using var client = api.Client();
+        var machine = api.Machines[0].Id;
+
+        await client.SetOrderFieldsAsync(machine, E(A));
+        await client.SetOrderFieldsAsync(machine, E(B));
+        await client.SetOrderFieldsAsync(machine, MachineOrder.None);
+
+        Assert.Equal(1, api.Requests.Count(r => r.Path.StartsWith("api/Machine/Get/")));
+        Assert.Equal(2, api.Count("ExternalSetPartOrder"));
+        Assert.Equal("1", api.FieldsOf(B)!["Underposition"]);
     }
 
     [Fact(Timeout = 10000)]

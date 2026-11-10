@@ -89,7 +89,12 @@ app.MapPost("/api/IncomacAuthentication/ForgotPassword", () => Data(true));
 app.MapPost("/api/User/SetNewForgottenPassword", () => Data(true));
 
 app.MapGet("/api/Machine/GetByAccountId/{accountId:guid}", (Guid accountId) =>
-    accountId != Store.Account ? Results.StatusCode(403) : Data(Store.Machines.Select(m => new { id = m.Id, name = m.Name, accountId = Store.Account })));
+    accountId != Store.Account ? Results.StatusCode(403) : Data(Store.Machines.Select(m => new { id = m.Id, name = m.Name, accountId = Store.Account, factoryId = Store.Factory })));
+
+app.MapGet("/api/Machine/Get/{id:guid}", (Guid id) =>
+    Store.Machines.Any(m => m.Id == id)
+        ? Data(new { id, name = Store.Machines.First(m => m.Id == id).Name, accountId = Store.Account, factoryId = Store.Factory })
+        : Error("Machine not found"));
 
 app.MapGet("/api/MasterData/GetTables/{accountId:guid}", (Guid accountId) =>
     accountId != Store.Account ? Results.StatusCode(403) : Data(store.Read(d => d.Tables.Select(TableJson).ToList())));
@@ -218,11 +223,30 @@ app.MapGet("/api/RealtimeDashboard/GetCurrentOrderActiveByMachineId", (Guid mach
         ? Data(new { partInformationId = run.PartInformationId, partOrderNumberId = run.PartOrderNumberId, number = run.Number, startDate = run.Start, isDefaultPartInfo = run.Number.Length == 0 })
         : Data(new { partInformationId = Guid.Empty, partOrderNumberId = Guid.Empty, number = (string?)null, startDate = DateTime.MinValue, isDefaultPartInfo = false }));
 
+// Each order's custom fields as ExternalSetPartOrder left them, by number, in memory only. As live:
+// upserts by label, and leaves the machine's run alone.
+var orderFields = new System.Collections.Concurrent.ConcurrentDictionary<string, Dictionary<string, string?>>();
+
+app.MapPost("/api/PartOrderNumber/ExternalSetPartOrder", async (HttpContext ctx) =>
+{
+    var b = await JsonBody(ctx.Request);
+    if (!Guid.TryParse((string?)b?["factoryId"], out var factory) || factory != Store.Factory) return Error("Factory not found");
+    var number = ((string?)b?["partOrderNumber"])?.Trim() ?? "";
+    if (number.Length == 0) return Error("Part order number is required");
+    var fields = orderFields.GetOrAdd(number, _ => []);
+    lock (fields)
+        foreach (var f in b?["customFields"]?.AsArray() ?? [])
+            if ((string?)f?["label"] is { } label) fields[label] = (string?)f?["text"];
+    ctx.Items["note"] = $"fields of {number}";
+    return Data(null);
+});
+
 app.MapGet("/fake/state", () => Results.Json(store.Read(d => new
 {
     account = Store.Account, accountName = Store.AccountName, user = Store.User,
     machines = Store.Machines.Select(m => new { id = m.Id, name = m.Name }),
     machineOrders = orders.ToDictionary(o => o.Key, o => o.Value.Number),
+    orderFields = orderFields.ToDictionary(o => o.Key, o => { lock (o.Value) return new Dictionary<string, string?>(o.Value); }),
     tables = d.Tables.Select(t => new { t.Id, t.Name, columns = t.Columns.Select(c => $"{c.Name}:{c.DataType}"), rowCount = t.Rows.Count, rows = t.Rows }).ToList(),
 }), new JsonSerializerOptions { WriteIndented = true }));
 
@@ -307,6 +331,7 @@ namespace FakeOptiCloud
         public const string User = "demo@ventisol.dk", Password = "demo", AccountName = "Ventisol";
         public static readonly Guid Account = Guid.Parse("7e3c2a10-5b4d-4f6e-9a21-0c8d7b6e5f40");
         public static readonly Guid UserId = Guid.Parse("1a2b3c4d-0000-4000-8000-00000000d3e0");
+        public static readonly Guid Factory = Guid.Parse("f1000000-0000-4000-8000-0000000000f1");
         public static readonly TimeSpan TokenLife = TimeSpan.FromHours(1);
 
         public static readonly (Guid Id, string Name)[] Machines =

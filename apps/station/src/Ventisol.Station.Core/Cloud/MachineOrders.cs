@@ -26,11 +26,14 @@ public sealed record MachineOrder(string Number, IReadOnlyList<OrderField> Field
     ]);
 }
 
-// What the worker should do next for one machine: read what OptiPeople has on it, or set Order
-// on it (an empty Number clears it).
-public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, bool Read)
+public enum MachineOrderAction { Read, Set, Fields }
+
+// What the worker should do next for one machine: read what OptiPeople has on it, set Order on it
+// (an empty Number clears it), or give the order Order.Number its Fields.
+public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, MachineOrderAction Action)
 {
     public string Number => Order.Number;
+    public bool Read => Action == MachineOrderAction.Read;
 }
 
 // The order each station's machine should have in OptiPeople, and what is known to be there.
@@ -43,11 +46,17 @@ public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, bool R
 // differs; nothing is ever set while what the machine has is unknown. Only machines given a wish
 // are ever touched. Held until Release: nothing is due before the screen has been rebuilt from
 // OptiCloud, so a wish from the journal alone is never acted on.
+// Fields: SetOrderToMachine ignores them, so once a machine is known to run an element (set, or
+// found there by a read) its fields are queued and sent by a call of their own. That call is
+// idempotent and leaves the run alone, so it is retried with its own backoff and never causes a
+// set again. Fields of an element the machine has since left are still sent: they belong to that
+// order. At most MaxPendingFields wait per machine; the oldest is dropped beyond that.
 // No I/O and no clock of its own, so it can be tested; MachineOrderSync does the calls.
 // Safe to use from any thread.
 public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
 {
     public static readonly TimeSpan DefaultSettle = TimeSpan.FromSeconds(3);
+    public const int MaxPendingFields = 20;
 
     readonly TimeSpan _settle = settle ?? DefaultSettle;
     readonly Lock _gate = new();
@@ -62,6 +71,10 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         public string? Known;
         public int Failures;
         public DateTimeOffset RetryAt = DateTimeOffset.MinValue;
+        // Orders whose fields are still to be sent, oldest first, and their own backoff.
+        public readonly List<MachineOrder> Fields = [];
+        public int FieldFailures;
+        public DateTimeOffset FieldsAt = DateTimeOffset.MinValue;
 
         public DateTimeOffset DueAt(TimeSpan settle) => ChangedAt + settle > RetryAt ? ChangedAt + settle : RetryAt;
     }
@@ -113,6 +126,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     }
 
     // The next thing due, or null when held, or every machine is in step or still settling or waiting.
+    // A read or set comes before fields: the run's start time matters, the fields can wait.
     public MachineOrderStep? Next(DateTimeOffset now)
     {
         lock (_gate)
@@ -120,8 +134,12 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
             if (_held) return null;
             var due = _machines.Where(m => m.Value.Known != m.Value.Desired.Number && m.Value.DueAt(_settle) <= now)
                 .OrderBy(m => m.Value.DueAt(_settle)).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
-            if (due is not { } d) return null;
-            return new MachineOrderStep(d.Key, d.Value.Desired, Read: d.Value.Known is null);
+            if (due is { } d)
+                return new MachineOrderStep(d.Key, d.Value.Desired, d.Value.Known is null ? MachineOrderAction.Read : MachineOrderAction.Set);
+            var fields = _machines.Where(m => m.Value.Fields.Count > 0 && m.Value.FieldsAt <= now)
+                .OrderBy(m => m.Value.FieldsAt).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
+            if (fields is { } f) return new MachineOrderStep(f.Key, f.Value.Fields[0], MachineOrderAction.Fields);
+            return null;
         }
     }
 
@@ -130,7 +148,8 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     {
         lock (_gate)
         {
-            var waiting = _machines.Values.Where(e => e.Known != e.Desired.Number).Select(e => e.DueAt(_settle)).ToList();
+            var waiting = _machines.Values.Where(e => e.Known != e.Desired.Number).Select(e => e.DueAt(_settle))
+                .Concat(_machines.Values.Where(e => e.Fields.Count > 0).Select(e => e.FieldsAt)).ToList();
             if (waiting.Count == 0) return null;
             var at = waiting.Min();
             return at <= now ? TimeSpan.Zero : at - now;
@@ -146,6 +165,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
             e.Known = current?.Trim() ?? "";
             if (e.Known != e.Desired.Number) return false;
             Reset(e);
+            QueueFields(e, e.Desired);
             return true;
         }
     }
@@ -154,14 +174,45 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     // a set of the order the machine already runs starts a new run.
     public TimeSpan ReadFailed(Guid machine, DateTimeOffset now, Exception x) => Failed(machine, now, x);
 
-    public void Sent(Guid machine, string number)
+    public void Sent(Guid machine, MachineOrder order)
     {
         lock (_gate)
         {
             if (!_machines.TryGetValue(machine, out var e)) return;
-            e.Known = number;
+            e.Known = order.Number;
             Reset(e);
+            QueueFields(e, order);
         }
+    }
+
+    // The fields of order got in: off the queue, and the next waits no longer.
+    public void FieldsSent(Guid machine, string number)
+    {
+        lock (_gate)
+        {
+            if (!_machines.TryGetValue(machine, out var e)) return;
+            e.Fields.RemoveAll(o => o.Number == number);
+            e.FieldFailures = 0;
+            e.FieldsAt = DateTimeOffset.MinValue;
+        }
+    }
+
+    // The fields call failed: the same fields again after the backoff. Returns the wait.
+    public TimeSpan FieldsFailed(Guid machine, DateTimeOffset now, Exception x)
+    {
+        lock (_gate)
+        {
+            if (!_machines.TryGetValue(machine, out var e)) return TimeSpan.Zero;
+            var wait = Outbox.Wait(x, e.FieldFailures++);
+            e.FieldsAt = now + wait;
+            return wait;
+        }
+    }
+
+    // The orders whose fields still wait for a machine, oldest first, for tests and the log.
+    public IReadOnlyList<string> PendingFields(Guid machine)
+    {
+        lock (_gate) return _machines.TryGetValue(machine, out var e) ? [.. e.Fields.Select(o => o.Number)] : [];
     }
 
     // The call failed: wait with backoff, then read again first, as it is not known whether it
@@ -184,6 +235,13 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         lock (_gate) return _machines.ToDictionary(m => m.Key, m => (m.Value.Desired.Number, m.Value.Known));
     }
 
+    static void QueueFields(Entry e, MachineOrder order)
+    {
+        if (order.Number.Length == 0 || order.Fields.Count == 0 || e.Fields.Any(o => o.Number == order.Number)) return;
+        e.Fields.Add(order);
+        if (e.Fields.Count > MaxPendingFields) e.Fields.RemoveAt(0);
+    }
+
     static void Reset(Entry e)
     {
         e.Failures = 0;
@@ -191,7 +249,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     }
 }
 
-// The two OptiPeople calls the worker needs. OptiCloudClient is the real one.
+// The OptiPeople calls the worker needs. OptiCloudClient is the real one.
 public interface IMachineOrderApi
 {
     // The machine's current order number, "" when it has none.
@@ -200,6 +258,10 @@ public interface IMachineOrderApi
     // Makes order the machine's current order, ending the run of the one before; an empty Number
     // clears it. The order's Fields go with it.
     Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default);
+
+    // Gives the order order.Number (in machineId's factory) its Fields. Idempotent, and leaves the
+    // machine's run alone.
+    Task SetOrderFieldsAsync(Guid machineId, MachineOrder order, CancellationToken ct = default);
 }
 
 // Keeps OptiPeople in step with MachineOrders in the background: one call at a time, never
@@ -229,6 +291,23 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
     {
         if (orders.Next(clock()) is not { } step) return false;
         var name = step.Number.Length > 0 ? $"ordre {step.Number}" : "ingen ordre";
+        if (step.Action == MachineOrderAction.Fields)
+        {
+            try
+            {
+                await api.SetOrderFieldsAsync(step.MachineId, step.Order, ct);
+                orders.FieldsSent(step.MachineId, step.Number);
+                _logged = null;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception x)
+            {
+                Note(x, $"felterne til ordre {step.Number} kunne ikke sendes");
+                orders.FieldsFailed(step.MachineId, clock(), x);
+            }
+            return true;
+        }
+
         if (step.Read)
         {
             try
@@ -239,7 +318,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception x)
             {
-                Note(x, "læses");
+                Note(x, "maskinens ordre kunne ikke læses");
                 orders.ReadFailed(step.MachineId, clock(), x);
             }
             return true;
@@ -248,14 +327,14 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
         try
         {
             await api.SetOrderToMachineAsync(step.MachineId, step.Order, ct);
-            orders.Sent(step.MachineId, step.Number);
+            orders.Sent(step.MachineId, step.Order);
             _logged = null;
             log($"OptiCloud: maskine {step.MachineId} har nu {name}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception x)
         {
-            Note(x, "sættes");
+            Note(x, "maskinens ordre kunne ikke sættes");
             orders.Failed(step.MachineId, clock(), x);
         }
         return true;
@@ -270,6 +349,6 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
         var message = Message(x);
         if (message == _logged) return;
         _logged = message;
-        log($"OptiCloud: maskinens ordre kunne ikke {what}: {message}");
+        log($"OptiCloud: {what}: {message}");
     }
 }

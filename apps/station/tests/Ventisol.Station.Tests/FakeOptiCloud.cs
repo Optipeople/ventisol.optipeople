@@ -33,6 +33,10 @@ public sealed class FakeOptiCloud : HttpMessageHandler
     public Dictionary<Guid, string> Orders { get; } = [];
     public List<(Guid Machine, string Number)> OrderSets { get; } = [];
     public (Guid Machine, string Number)[] Sets { get { lock (_gate) return [.. OrderSets]; } }
+    // The one factory every machine is in, and each order's custom fields as ExternalSetPartOrder left them.
+    public Guid Factory { get; } = Guid.NewGuid();
+    public Dictionary<string, Dictionary<string, string>> OrderFields { get; } = [];
+    public Dictionary<string, string>? FieldsOf(string number) { lock (_gate) return OrderFields.TryGetValue(number, out var f) ? new(f) : null; }
 
     public bool RefreshWorks { get; set; } = true;
     public bool IgnoreOrder { get; set; }
@@ -155,6 +159,20 @@ public sealed class FakeOptiCloud : HttpMessageHandler
                 Orders[machine] = number;
                 OrderSets.Add((machine, number));
                 return Data(new { partInformationId = Guid.NewGuid(), partOrderNumberId = Guid.NewGuid(), number, startDate = "2026-11-10T08:00:00", endDate = (string?)null });
+            }
+            case ("Machine", "Get"):
+            {
+                var id = Guid.Parse(last);
+                if (!Machines.Any(m => m.Id == id)) return Json(new { data = (object?)null, errors = new[] { new { title = "NotFound", message = "Machine not found" } } });
+                return Data(new { id, name = Machines.First(m => m.Id == id).Name, factoryId = Factory });
+            }
+            case ("PartOrderNumber", "ExternalSetPartOrder"):
+            {
+                if ((string?)b!["factoryId"] != Factory.ToString()) return Json(new { data = (object?)null, errors = new[] { new { title = "NotFound", message = "Factory not found" } } });
+                var number = (string)b["partOrderNumber"]!;
+                if (!OrderFields.TryGetValue(number, out var fields)) OrderFields[number] = fields = [];
+                foreach (var f in b["customFields"]!.AsArray()) fields[(string)f!["label"]!] = (string)f["text"]!;
+                return Json(new { data = (object?)null, errors = Array.Empty<object>(), meta = new { } });
             }
             case ("RealtimeDashboard", "GetCurrentOrderActiveByMachineId"):
             {
