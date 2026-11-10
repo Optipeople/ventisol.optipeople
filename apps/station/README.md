@@ -3,6 +3,8 @@
 Native Windows app for the central PC at Ventisol. WPF on .NET 10, in the Optipeople product language
 (Hanken Grotesk, midnight green, status colours mean state).
 
+**[Download the latest installer](https://github.com/Optipeople/ventisol-station-updates/releases/latest/download/VentisolStation-win-Setup.exe)** (always the newest version). See [Release and updates](#release-and-updates).
+
 ```
 src/Ventisol.Station        WPF app: window, theme, view models
 src/Ventisol.Station.Core   logic without UI: barcode parsing, station state
@@ -66,7 +68,7 @@ Trusted Signing runs when `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT
 the variables `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`.
 Without it the installer is unsigned and Defender may flag it.
 
-Install a station once with `VentisolStation-win-Setup.exe` from the latest release. It installs for
+Install a station once with [`VentisolStation-win-Setup.exe`](https://github.com/Optipeople/ventisol-station-updates/releases/latest/download/VentisolStation-win-Setup.exe) from the latest release. It installs for
 the Windows user in `%LOCALAPPDATA%\VentisolStation` and adds the app to that user's startup
 (`HKCU\...\Run`, `--kiosk`). Uninstalling removes it again. Let the station PC log in a local
 Windows user automatically (netplwiz, or Sysinternals Autologon), so a power cut ends with the app
