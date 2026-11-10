@@ -803,6 +803,89 @@ public sealed class MachineOrdersTests : IDisposable
     }
 
     [Fact]
+    public async Task An_Out_and_In_of_the_same_element_during_a_stop_read_keeps_the_new_In()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, _) = await InStepOnA(changes);
+        var worker = new MachineOrderSync(orders, new ScanDuringRead(api, () =>
+        {
+            orders.Want(M1, MachineOrder.None, _now);
+            orders.Want(M1, E(A, _now), _now);
+        }), _log.Add, () => _now, changed: changes.Add);
+
+        api.Current[M1] = "";
+        _now += Verify;
+        Assert.True(await worker.RunOnceAsync());
+
+        // Not a stop: the operator's new In of A stands, and the machine gets A again once settled.
+        Assert.Empty(changes);
+        Assert.Null(orders.StoppedOn(M1));
+        _now += Settle;
+        await Drain(new MachineOrderSync(orders, api, _log.Add, () => _now, changed: changes.Add));
+        Assert.Equal([(M1, A), (M1, A)], api.Sets);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public async Task An_order_that_is_not_an_element_is_never_cleared()
+    {
+        var orders = new MachineOrders(verify: Verify);
+        var api = new FakeApi();
+        api.Current[M1] = "Manuel 7";
+        var worker = Worker(orders, api);
+
+        // A restart with nothing in progress: the hand-started order is left as it is, and not read again.
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += Settle;
+        await Drain(worker);
+        var reads = api.Reads;
+        _now += TimeSpan.FromMinutes(5);
+        Assert.Equal(0, await Drain(worker));
+        Assert.Empty(api.Sets);
+        Assert.Equal(reads, api.Reads);
+        Assert.Equal("Manuel 7", orders.Snapshot()[M1].Known);
+
+        // A scan In still gives the machine the element over it.
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A)], api.Sets);
+    }
+
+    [Fact]
+    public async Task An_element_left_on_a_machine_with_nothing_in_progress_is_still_cleared()
+    {
+        var orders = new MachineOrders(verify: Verify);
+        var api = new FakeApi();
+        api.Current[M1] = C;
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, "")], api.Sets);
+    }
+
+    [Fact]
+    public async Task A_scan_Out_while_a_read_finds_a_hand_started_order_leaves_that_order()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, _) = await InStepOnA(changes);
+        var worker = new MachineOrderSync(orders, new ScanDuringRead(api, () => orders.Want(M1, MachineOrder.None, _now)), _log.Add, () => _now, changed: changes.Add);
+
+        api.Current[M1] = "Manuel 7";
+        _now += Verify;
+        Assert.True(await worker.RunOnceAsync());
+        _now += TimeSpan.FromMinutes(5);
+        await Drain(new MachineOrderSync(orders, api, _log.Add, () => _now, changed: changes.Add));
+
+        Assert.Empty(changes);
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal("Manuel 7", api.Current[M1]);
+    }
+
+    [Fact]
     public async Task The_first_read_still_sets_the_wish_when_the_machine_has_something_else()
     {
         var changes = new List<MachineOrderChange>();

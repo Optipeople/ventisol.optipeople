@@ -37,8 +37,9 @@ public enum MachineOrderAction { Read, Set, Fields, Verify }
 
 // What the worker should do next for one machine: read what OptiPeople has on it, set Order on it
 // (an empty Number clears it), give the order Order.Number its Fields, or read the machine again to
-// see that it still runs Order.Number (Verify).
-public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, MachineOrderAction Action)
+// see that it still runs Order.Number (Verify). Wish: which wish of the machine it was made for,
+// so a verify read can tell that the station's wish changed while it was under way.
+public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, MachineOrderAction Action, int Wish = 0)
 {
     public string Number => Order.Number;
     public bool Read => Action == MachineOrderAction.Read;
@@ -69,6 +70,8 @@ public sealed record MachineOrderChange(Guid MachineId, string Stopped, string C
 // the element at its station, and the machine is left alone until its station wishes another
 // element. Only an order the app knew the machine to run counts: the first read and the read after
 // a failure still set what is wished. Without verify (null) a machine in step is never read again.
+// The app only ever clears an order of its own: one whose number is an element barcode. A machine
+// found running anything else while its station has nothing in progress is left as it is.
 // No I/O and no clock of its own, so it can be tested; MachineOrderSync does the calls.
 // Safe to use from any thread.
 public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, TimeSpan? verify = null)
@@ -100,11 +103,17 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         public int VerifyFailures;
         // The element stopped in OptiPeople: the machine is left alone until another is wished.
         public string? Stopped;
+        // Counts every change of the wished Number, so a read can tell the wish moved on meanwhile,
+        // also when it came back to the same Number (an Out and In of the same element).
+        public int Wish;
 
         // In step on an element and not left alone: the one state in which it is read again.
         public bool InStep => Stopped is null && Known is { Length: > 0 } k && k == Desired.Number;
+        // Nothing wished, and the machine runs an order that is not one of ours (someone started it
+        // by hand): never cleared, so that counts as in step too.
+        public bool Foreign => Desired.Number.Length == 0 && Known is { Length: > 0 } k && !Barcode.TryParse(k, out _);
         // Something to read or set: not in step, and not left alone.
-        public bool Behind => Stopped is null && Known != Desired.Number;
+        public bool Behind => Stopped is null && Known != Desired.Number && !Foreign;
 
         public DateTimeOffset DueAt(TimeSpan settle) => ChangedAt + settle > RetryAt ? ChangedAt + settle : RetryAt;
     }
@@ -142,6 +151,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
                 {
                     // The station let go of the stopped element (the app ended it): still left alone.
                     e.Desired = o;
+                    e.Wish++;
                 }
                 else if (e.Desired.Number != o.Number)
                 {
@@ -153,6 +163,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
                         e.Known = null;
                     }
                     e.Desired = o;
+                    e.Wish++;
                     e.ChangedAt = now;
                     e.VerifyAt = DateTimeOffset.MinValue;
                 }
@@ -195,7 +206,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
             foreach (var e in _machines.Values.Where(e => e.InStep && e.VerifyAt == DateTimeOffset.MinValue)) e.VerifyAt = now + every;
             var verify = _machines.Where(m => m.Value.InStep && m.Value.VerifyAt <= now)
                 .OrderBy(m => m.Value.VerifyAt).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
-            if (verify is { } v) return new MachineOrderStep(v.Key, v.Value.Desired, MachineOrderAction.Verify);
+            if (verify is { } v) return new MachineOrderStep(v.Key, v.Value.Desired, MachineOrderAction.Verify, v.Value.Wish);
             return null;
         }
     }
@@ -214,14 +225,15 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         }
     }
 
-    // What OptiPeople has on the machine now ("" for none). True when that is what is wished.
+    // What OptiPeople has on the machine now ("" for none). True when that is what is wished, or
+    // nothing is wished and the order there is not one of ours (left alone).
     public bool Read(Guid machine, string current)
     {
         lock (_gate)
         {
             if (!_machines.TryGetValue(machine, out var e)) return false;
             e.Known = current?.Trim() ?? "";
-            if (e.Known != e.Desired.Number) return false;
+            if (e.Known != e.Desired.Number && !e.Foreign) return false;
             Reset(e);
             QueueFields(e, e.Desired);
             return true;
@@ -236,8 +248,9 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
     // verify from now. Something else, while the station still wishes asked: OptiPeople stopped or
     // changed it, so that is what is known, nothing is set, the machine is left alone until another
     // element is wished, and the change is returned for the app to end the element. When the wish
-    // changed while the read was under way, it is an ordinary read: the new wish is sent as usual.
-    public MachineOrderChange? Verified(Guid machine, string asked, string current, DateTimeOffset now)
+    // changed while the read was under way (wish is not the machine's wish any more, even if it came
+    // back to the same Number), it is an ordinary read: the new wish is sent as usual.
+    public MachineOrderChange? Verified(Guid machine, string asked, int wish, string current, DateTimeOffset now)
     {
         lock (_gate)
         {
@@ -246,7 +259,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
             e.VerifyFailures = 0;
             e.VerifyAt = _verify is { } every ? now + every : DateTimeOffset.MinValue;
             if (e.Stopped is not null) return null;
-            if (asked.Length == 0 || e.Desired.Number != asked || e.Known != asked)
+            if (asked.Length == 0 || e.Wish != wish || e.Desired.Number != asked || e.Known != asked)
             {
                 // The wish (or what was known) moved on meanwhile.
                 if (e.Known is not null) e.Known = current;
@@ -427,7 +440,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             try
             {
                 var current = await api.GetCurrentOrderAsync(step.MachineId, ct);
-                if (orders.Verified(step.MachineId, step.Number, current, clock()) is { } change)
+                if (orders.Verified(step.MachineId, step.Number, step.Wish, current, clock()) is { } change)
                 {
                     log($"OptiCloud: maskine {step.MachineId} kører ikke længere {name} ({(change.Current.Length > 0 ? $"nu ordre {change.Current}" : "nu ingen ordre")}), sættes ikke tilbage");
                     changed?.Invoke(change);
