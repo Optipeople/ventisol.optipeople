@@ -385,3 +385,170 @@ to be shown as one. No error came back from anything tried.
 Last call `""`. Station 10 shows `number: ""`, `isDefaultPartInfo: true` (no real order).
 Left behind in the factory: orders 58556 and 58557 (Batch Number, status Active) and the default
 order; the test made 10 short runs (10 `SetOrderToMachine` calls) on Station 10 between 12:33:41 and 12:35:04 on 2026-11-10.
+
+## Order custom fields
+
+Tested live on 2026-11-10 against production, on Station 10 only (`201f8152-cbd1-4a3b-c9ac-08df3f1a322f`,
+factory `7d8f4bec-dfce-4a89-efc2-08d85ecac2d3`), with the element barcodes `058556050103` and
+`058557050101` as order numbers. Station 10 was left on `number: ""` (default order).
+
+### Two different kinds
+
+OptiCloud has two unrelated custom field systems for orders:
+
+| | Per-order fields (`customFieldItems`) | Per-machine fields (`machineOrderCustomFields`) |
+|---|---|---|
+| Where defined | Nowhere. Free label and value pairs stored **on each `PartOrderNumber`** (factory level) | Labels defined **per machine** (`MachineOrderCustomField`), max 5 in the backoffice UI |
+| Enabled by | Nothing | `hasOrderCustomFieldsEnabled` on the machine |
+| Write | `PartOrderNumber/ExternalSetPartOrder` or `PartOrderNumber/Update` | `PUT /api/Machine/UpdateMachineOrderCustomFieldValues` |
+| Read back | `GetOrderNumber`, `PartOrderNumber/GetById`, `GetByMachineIdAndNumber`, `GetByPage` | **Not found.** Every read returns `machineOrderCustomFieldValues: []` |
+| Shown in | The dashboard "Order" widget (`orderDetails.customFieldItems`, by `customFieldType`) | No backoffice screen, except the machine settings page that defines the labels |
+
+**Use `customFieldItems`.** They need no setup, they come back from the same lookup the station
+already does, and the widget shows them. The per-machine fields could be defined and a value write
+returned 200, but nothing reads the values back over the API (probably only the operator panel app
+does), so they are documented below for completeness only.
+
+### `SetOrderToMachine` ignores custom fields
+
+Sent with all three arrays on top of `{machineId, number, expectedSpeed, totalAmountToProduce}`:
+
+```json
+{"machineId":"201f8152-...","number":"058557050101","expectedSpeed":0,"totalAmountToProduce":null,
+ "customFieldItems":[{"customFieldType":0,"label":"Ordre","value1":"58557","sortOrder":0}, ...],
+ "machineOrderCustomFields":[{"id":"fad48b68-...","label":"Ordre","value":"58557"}],
+ "machineOrderCustomFieldValues":[{"machineOrderCustomFieldId":"fad48b68-...","label":"Ordre","value":"58556"}, ...]}
+```
+
+200, the run started as usual, and the order came back with `customFieldItems: []` and
+`machineOrderCustomFieldValues: []`. So a second call is needed. The backoffice widget never sends
+custom fields either: its `setOrderToMachine` posts only `machineId`, `number`,
+`totalAmountToProduce`, `expectedSpeed`.
+
+### Setting the fields: `POST /api/PartOrderNumber/ExternalSetPartOrder` (recommended)
+
+```json
+{"factoryId":"7d8f4bec-dfce-4a89-efc2-08d85ecac2d3","partOrderNumber":"058557050101",
+ "customFields":[{"label":"Ordre","text":"58557"},{"label":"Position","text":"5"},
+                 {"label":"Underposition","text":"1"},{"label":"Emne","text":"1"}]}
+```
+
+200, `{"data":null,"errors":[],"meta":{}}`, 240 to 540 ms. Then `GetOrderNumber?machineId=&number=058557050101`:
+
+```json
+{"data":[{"id":"b08d7631-d844-47f9-1e50-08df3bb4944f","number":"058557050101","factoryId":"7d8f4bec-...",
+ "identifierType":0,"status":0,"isDefaultPartInfo":false,
+ "customFieldItems":[
+  {"id":"958d6537-...","customFieldType":0,"label":"Ordre","value1":"58557","value2":null,"sortOrder":0,"imageRefId":null},
+  {"id":"b9435dc2-...","customFieldType":0,"label":"Position","value1":"5","value2":null,"sortOrder":0,"imageRefId":null},
+  {"id":"ad3497f0-...","customFieldType":0,"label":"Underposition","value1":"1","value2":null,"sortOrder":0,"imageRefId":null},
+  {"id":"cf47143a-...","customFieldType":0,"label":"Emne","value1":"1","value2":null,"sortOrder":0,"imageRefId":null}],
+ "machineOrderCustomFields":[],"machineOrderCustomFieldValues":[]}],"errors":[],"meta":{}}
+```
+
+- Fields become `customFieldType: 0` (text) with `value1` = `text`. Every `sortOrder` is 0; the list
+  came back in the order sent.
+- **Idempotent.** Sent a second time with the same body: still four items, same ids. It upserts by
+  label.
+- It does **not** touch the run: the machine's current `partInformationId` and `startDate` were
+  unchanged after it. So it can be sent after `SetOrderToMachine` without cutting the run.
+- Needs only `factoryId`, no machine.
+- Not tested: whether it creates an order that does not exist yet (both test numbers already
+  existed). The swagger calls it "create or update". Sending it after `SetOrderToMachine`, which
+  is known to create the order, avoids depending on that.
+- Values are free strings, stored as sent. Send `"58556"`, `"5"`, `"1"`, `"3"` (or padded, as the UI
+  should show them).
+
+### Alternative: `PUT /api/PartOrderNumber/Update`
+
+What the backoffice order editor sends. Needs the order id, so a lookup first:
+
+```json
+{"id":"8a216ab8-5775-4a23-1e4f-08df3bb4944f","number":"058556050103","factoryId":"7d8f4bec-dfce-4a89-efc2-08d85ecac2d3",
+ "identifierType":0,"status":0,
+ "customFieldItems":[
+  {"id":null,"customFieldType":0,"label":"Ordre","value1":"58556","value2":"","sortOrder":0},
+  {"id":null,"customFieldType":0,"label":"Position","value1":"5","value2":"","sortOrder":1},
+  {"id":null,"customFieldType":0,"label":"Underposition","value1":"1","value2":"","sortOrder":2},
+  {"id":null,"customFieldType":0,"label":"Emne","value1":"3","value2":"","sortOrder":3}]}
+```
+
+200, `data: null`. Read back in the same shape as above, with `sortOrder` 0 to 3 kept. It is a
+full replace of the order, so it also writes `identifierType`, `status` and the rest, and fields
+left out may be reset. Prefer `ExternalSetPartOrder`.
+
+### Reading them back
+
+- `GET /api/RealtimeDashboard/GetOrderNumber?machineId=&number=` gives `data[0].customFieldItems`
+  (so do `PartOrderNumber/GetById?partOrderId=`, `PartOrderNumber/GetByMachineIdAndNumber`,
+  `GetByMachineId` and `GetByPage`).
+- `GET /api/RealtimeDashboard/GetCurrentOrderActiveByMachineId` has **no** custom fields, only
+  `partOrderNumberId` and `number`. Read the fields with `GetOrderNumber` on that number.
+- `Report/CurrentUnitInformation` (which has `customFields` per the External API doc) answered 500
+  on Station 10, and so did `OperatorPanelApp/GetByMachineIdAndNumber`.
+
+### Per-machine fields, as found
+
+`GET /api/MachineOrderCustomField/GetByMachineId/{machineId}`. On "Montage Kvalitet":
+
+```json
+{"data":{"machineId":"75c5ac14-ef3a-422b-f68e-08ddda1d0267","hasOrderCustomFieldsEnabled":true,
+ "machineOrderCustomFields":[{"id":"749d8393-471c-47ae-e1c6-08dea9b8a0d6","label":"Order No","value":"Order No"}]},
+ "errors":[],"meta":{}}
+```
+
+On a machine without them: `hasOrderCustomFieldsEnabled: false`, `machineOrderCustomFields: []`.
+`value` is the label again (the backoffice sends `value: label`).
+
+Defined on Station 10 with `POST /api/MachineOrderCustomField/Create`:
+
+```json
+{"machineId":"201f8152-cbd1-4a3b-c9ac-08df3f1a322f","hasOrderCustomFieldsEnabled":true,
+ "machineOrderCustomFields":[{"label":"Ordre","value":"Ordre"},{"label":"Position","value":"Position"},
+  {"label":"Underposition","value":"Underposition"},{"label":"Emne","value":"Emne"}]}
+```
+
+200, the response has the same shape as `GetByMachineId`, with ids (`fad48b68-...` Ordre,
+`ac96d82d-...` Position, `d9d5283d-...` Underposition, `758ffcc6-...` Emne), in the order sent.
+`PUT /api/MachineOrderCustomField/Update` with the same body plus each `id` returned the same four,
+unchanged. The backoffice uses `Create` when no field has an id yet and `Update` otherwise;
+`ToggleFeature/{machineId}?enabled=` flips only the flag. A second `Create` was not tried (it would
+likely add duplicates, and nothing could be deleted).
+
+Values written with `PUT /api/Machine/UpdateMachineOrderCustomFieldValues`:
+
+```json
+{"machineId":"201f8152-...","machineOrderCustomFieldValues":[
+ {"machineOrderCustomFieldId":"fad48b68-...","partOrderNumberId":"8a216ab8-...","partOrderNumberName":"058556050103",
+  "label":"Ordre","value":"58556"}, ...]}
+```
+
+200, `data: null`, but no read shows them (`GetOrderNumber`, `GetById`, `GetByMachineIdAndNumber`,
+`GetByPage`, `GetPartOrderNumberFactoryByMachineId` all give `machineOrderCustomFieldValues: []`;
+`MachineOrderCustomField/Get/{id}` gives only `{id, label, value}`).
+
+### What the station app should do
+
+No first-connect setup is needed for `customFieldItems`. Per scanned element:
+
+1. `POST /api/RealtimeDashboard/SetOrderToMachine`
+   `{machineId, number: "058556050103", expectedSpeed: 0, totalAmountToProduce: null}`
+   (skip when that number is already current, see the live test above).
+2. `POST /api/PartOrderNumber/ExternalSetPartOrder`
+   `{factoryId, partOrderNumber: "058556050103", customFields: [{label: "Ordre", text: "58556"}, {label: "Position", text: "5"}, {label: "Underposition", text: "1"}, {label: "Emne", text: "3"}]}`.
+   Safe to resend; could be skipped when `GetOrderNumber` already shows the four labels.
+
+The one thing to get on first connect is the machine's `factoryId` (or keep it in settings).
+
+If the per-machine fields are wanted anyway (for the operator panel), the idempotent setup per
+machine is: `GET MachineOrderCustomField/GetByMachineId/{machineId}`. If the four labels are there
+and `hasOrderCustomFieldsEnabled` is true, do nothing. If the list is empty, `POST Create` with the
+four labels and `hasOrderCustomFieldsEnabled: true`. Otherwise `PUT Update` with the existing items
+(with their ids, so other fields the machine has are kept) plus the missing labels (no id), and
+`hasOrderCustomFieldsEnabled: true`. Keep the total at 5 or fewer.
+
+### Left behind by this test
+
+Orders `058556050103` and `058557050101` in the factory, each with four `customFieldItems`; the four
+per-machine field definitions and `hasOrderCustomFieldsEnabled: true` on Station 10; one write of
+per-machine values for `058556050103`; 3 short runs on Station 10 (13:19:33 to 13:21:19).
