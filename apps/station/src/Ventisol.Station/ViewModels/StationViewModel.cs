@@ -78,6 +78,18 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
         return result;
     }
 
+    // The element in progress ends without a scan, as it was stopped in OptiPeople: the same Out as a
+    // scan of it would give, with a flash that says why. Null when nothing is in progress.
+    public ScanResult? StopFromOptiPeople(DateTimeOffset now)
+    {
+        if (_state.Current is not { } barcode) return null;
+        var result = _state.Scan(barcode, now);
+        Clear();
+        ShowFlash(FlashKind.Out, "Stoppet i OptiPeople",
+            $"Ordre {barcode.Order} · {barcode.PositionLabel} · stk. {barcode.Piece} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
+        return result;
+    }
+
     // What OptiCloud says this station is working on, after a restart or on a viewer. No flash:
     // nobody just scanned.
     public void Restore(Barcode? barcode, DateTimeOffset since, DateTimeOffset now)

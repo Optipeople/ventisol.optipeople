@@ -127,6 +127,8 @@ public partial class MainWindow : Window
         };
         // After every scan (a switch included) each machine follows its station's state.
         _vm.Scanned += (_, _) => SendMachineOrders();
+        // And the other way: an order stopped or changed in OptiPeople ends the element at its station.
+        _cloud.MachineOrderChanged += (_, c) => Dispatcher.BeginInvoke(() => OnMachineOrderChanged(c));
         ShowCloudStatus();
         _cloud.Start();
         Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
@@ -161,6 +163,28 @@ public partial class MainWindow : Window
     {
         if (_settings.Mode != StationMode.Scan) return;
         _cloud.SetMachineOrders(MachineOrders.DesiredFrom(_settings.Stations, _vm.Stations.Select(s => s.State)), fromCloud);
+    }
+
+    // The machine's order was stopped or changed in OptiPeople: the station with that element in
+    // progress ends it as an Out, recorded like a scan's (journal, outbox, VentisolScans), so a restart
+    // and the viewers see it too. A station that has moved on to another element meanwhile keeps it.
+    void OnMachineOrderChanged(MachineOrderChange change)
+    {
+        var now = DateTimeOffset.Now;
+        var ended = false;
+        foreach (var s in _settings.Stations.Where(s => s.MachineId == change.MachineId))
+        {
+            if (!_vm.StopFromOptiPeople(s.Number, change.Stopped, now)) continue;
+            ended = true;
+            Log.Write($"OptiCloud: ordre {change.Stopped} stoppet i OptiPeople, afsluttet på station {s.Number}");
+        }
+        if (!ended)
+        {
+            Log.Write($"OptiCloud: ordre {change.Stopped} stoppet i OptiPeople, ingen station har den i gang");
+            return;
+        }
+        SendMachineOrders();
+        FollowDocument();
     }
 
     void ShowCloudStatus()

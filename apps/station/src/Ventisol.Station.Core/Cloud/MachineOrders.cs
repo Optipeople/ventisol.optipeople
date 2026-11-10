@@ -33,15 +33,20 @@ public sealed record MachineOrder(string Number, IReadOnlyList<OrderField> Field
     public bool SameFields(MachineOrder other) => Fields.SequenceEqual(other.Fields);
 }
 
-public enum MachineOrderAction { Read, Set, Fields }
+public enum MachineOrderAction { Read, Set, Fields, Verify }
 
 // What the worker should do next for one machine: read what OptiPeople has on it, set Order on it
-// (an empty Number clears it), or give the order Order.Number its Fields.
+// (an empty Number clears it), give the order Order.Number its Fields, or read the machine again to
+// see that it still runs Order.Number (Verify).
 public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, MachineOrderAction Action)
 {
     public string Number => Order.Number;
     public bool Read => Action == MachineOrderAction.Read;
 }
+
+// A machine's order was stopped or changed in OptiPeople: it ran Stopped, the order the app had set
+// (or found there), and now runs Current ("" for none).
+public sealed record MachineOrderChange(Guid MachineId, string Stopped, string Current);
 
 // The order each station's machine should have in OptiPeople, and what is known to be there.
 // OptiPeople holds one current order per machine and stamps the time itself, so this is desired
@@ -58,14 +63,22 @@ public sealed record MachineOrderStep(Guid MachineId, MachineOrder Order, Machin
 // idempotent and leaves the run alone, so it is retried with its own backoff and never causes a
 // set again. Fields of an element the machine has since left are still sent: they belong to that
 // order. At most MaxPendingFields wait per machine; the oldest is dropped beyond that.
+// OptiPeople leads when someone stops or changes the order there: with verify, a machine in step on
+// an element is read again every verify. When it no longer runs that element, it is not set back
+// (a set starts a new run and splits the time); the change is reported (Verified), so the app ends
+// the element at its station, and the machine is left alone until its station wishes another
+// element. Only an order the app knew the machine to run counts: the first read and the read after
+// a failure still set what is wished. Without verify (null) a machine in step is never read again.
 // No I/O and no clock of its own, so it can be tested; MachineOrderSync does the calls.
 // Safe to use from any thread.
-public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
+public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, TimeSpan? verify = null)
 {
     public static readonly TimeSpan DefaultSettle = TimeSpan.FromSeconds(3);
+    public static readonly TimeSpan DefaultVerify = TimeSpan.FromSeconds(5);
     public const int MaxPendingFields = 20;
 
     readonly TimeSpan _settle = settle ?? DefaultSettle;
+    readonly TimeSpan? _verify = verify;
     readonly Lock _gate = new();
     readonly Dictionary<Guid, Entry> _machines = [];
     bool _held = held;
@@ -82,6 +95,16 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         public readonly List<MachineOrder> Fields = [];
         public int FieldFailures;
         public DateTimeOffset FieldsAt = DateTimeOffset.MinValue;
+        // When the machine in step is read again; MinValue: not planned yet. Its own backoff.
+        public DateTimeOffset VerifyAt = DateTimeOffset.MinValue;
+        public int VerifyFailures;
+        // The element stopped in OptiPeople: the machine is left alone until another is wished.
+        public string? Stopped;
+
+        // In step on an element and not left alone: the one state in which it is read again.
+        public bool InStep => Stopped is null && Known is { Length: > 0 } k && k == Desired.Number;
+        // Something to read or set: not in step, and not left alone.
+        public bool Behind => Stopped is null && Known != Desired.Number;
 
         public DateTimeOffset DueAt(TimeSpan settle) => ChangedAt + settle > RetryAt ? ChangedAt + settle : RetryAt;
     }
@@ -115,10 +138,23 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
             {
                 var o = order is null ? MachineOrder.None : order with { Number = order.Number?.Trim() ?? "" };
                 if (!_machines.TryGetValue(machine, out var e)) _machines[machine] = new Entry { Desired = o, ChangedAt = now };
+                else if (e.Stopped is not null && o.Number.Length == 0)
+                {
+                    // The station let go of the stopped element (the app ended it): still left alone.
+                    e.Desired = o;
+                }
                 else if (e.Desired.Number != o.Number)
                 {
+                    // Another element after a stop in OptiPeople: what the machine runs now is not
+                    // known (someone may have started an order by hand), so it is read first.
+                    if (e.Stopped is not null)
+                    {
+                        e.Stopped = null;
+                        e.Known = null;
+                    }
                     e.Desired = o;
                     e.ChangedAt = now;
+                    e.VerifyAt = DateTimeOffset.MinValue;
                 }
                 else if (!e.Desired.SameFields(o))
                 {
@@ -140,19 +176,26 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     }
 
     // The next thing due, or null when held, or every machine is in step or still settling or waiting.
-    // A read or set comes before fields: the run's start time matters, the fields can wait.
+    // A read or set comes before fields: the run's start time matters, the fields can wait. A verify
+    // read comes last.
     public MachineOrderStep? Next(DateTimeOffset now)
     {
         lock (_gate)
         {
             if (_held) return null;
-            var due = _machines.Where(m => m.Value.Known != m.Value.Desired.Number && m.Value.DueAt(_settle) <= now)
+            var due = _machines.Where(m => m.Value.Behind && m.Value.DueAt(_settle) <= now)
                 .OrderBy(m => m.Value.DueAt(_settle)).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
             if (due is { } d)
                 return new MachineOrderStep(d.Key, d.Value.Desired, d.Value.Known is null ? MachineOrderAction.Read : MachineOrderAction.Set);
             var fields = _machines.Where(m => m.Value.Fields.Count > 0 && m.Value.FieldsAt <= now)
                 .OrderBy(m => m.Value.FieldsAt).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
             if (fields is { } f) return new MachineOrderStep(f.Key, f.Value.Fields[0], MachineOrderAction.Fields);
+            if (_verify is not { } every) return null;
+            // A machine just come in step is read again one verify from now.
+            foreach (var e in _machines.Values.Where(e => e.InStep && e.VerifyAt == DateTimeOffset.MinValue)) e.VerifyAt = now + every;
+            var verify = _machines.Where(m => m.Value.InStep && m.Value.VerifyAt <= now)
+                .OrderBy(m => m.Value.VerifyAt).Select(m => (KeyValuePair<Guid, Entry>?)m).FirstOrDefault();
+            if (verify is { } v) return new MachineOrderStep(v.Key, v.Value.Desired, MachineOrderAction.Verify);
             return null;
         }
     }
@@ -162,8 +205,9 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     {
         lock (_gate)
         {
-            var waiting = _machines.Values.Where(e => e.Known != e.Desired.Number).Select(e => e.DueAt(_settle))
-                .Concat(_machines.Values.Where(e => e.Fields.Count > 0).Select(e => e.FieldsAt)).ToList();
+            var waiting = _machines.Values.Where(e => e.Behind).Select(e => e.DueAt(_settle))
+                .Concat(_machines.Values.Where(e => e.Fields.Count > 0).Select(e => e.FieldsAt))
+                .Concat(_verify is null ? [] : _machines.Values.Where(e => e.InStep && e.VerifyAt != DateTimeOffset.MinValue).Select(e => e.VerifyAt)).ToList();
             if (waiting.Count == 0) return null;
             var at = waiting.Min();
             return at <= now ? TimeSpan.Zero : at - now;
@@ -187,6 +231,45 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     // The read failed, for whatever reason: wait with backoff and read again. Never set blind, as
     // a set of the order the machine already runs starts a new run.
     public TimeSpan ReadFailed(Guid machine, DateTimeOffset now, Exception x) => Failed(machine, now, x);
+
+    // A verify read of order asked found current on the machine. Still the same: read again one
+    // verify from now. Something else, while the station still wishes asked: OptiPeople stopped or
+    // changed it, so that is what is known, nothing is set, the machine is left alone until another
+    // element is wished, and the change is returned for the app to end the element. When the wish
+    // changed while the read was under way, it is an ordinary read: the new wish is sent as usual.
+    public MachineOrderChange? Verified(Guid machine, string asked, string current, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (!_machines.TryGetValue(machine, out var e)) return null;
+            current = current?.Trim() ?? "";
+            e.VerifyFailures = 0;
+            e.VerifyAt = _verify is { } every ? now + every : DateTimeOffset.MinValue;
+            if (e.Stopped is not null) return null;
+            if (asked.Length == 0 || e.Desired.Number != asked || e.Known != asked)
+            {
+                // The wish (or what was known) moved on meanwhile.
+                if (e.Known is not null) e.Known = current;
+                return null;
+            }
+            e.Known = current;
+            if (current == asked) return null;
+            e.Stopped = asked;
+            return new MachineOrderChange(machine, asked, current);
+        }
+    }
+
+    // A verify read failed: nothing was sent, so what is known stands. Read again after the backoff.
+    public TimeSpan VerifyFailed(Guid machine, DateTimeOffset now, Exception x)
+    {
+        lock (_gate)
+        {
+            if (!_machines.TryGetValue(machine, out var e)) return TimeSpan.Zero;
+            var wait = Outbox.Wait(x, e.VerifyFailures++);
+            e.VerifyAt = now + wait;
+            return wait;
+        }
+    }
 
     public void Sent(Guid machine, MachineOrder order)
     {
@@ -245,6 +328,12 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
         }
     }
 
+    // The element stopped in OptiPeople that the machine is left alone for, else null.
+    public string? StoppedOn(Guid machine)
+    {
+        lock (_gate) return _machines.TryGetValue(machine, out var e) ? e.Stopped : null;
+    }
+
     // What each machine wants and what is known to be there, for tests and the log.
     public IReadOnlyDictionary<Guid, (string Desired, string? Known)> Snapshot()
     {
@@ -269,6 +358,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false)
     {
         e.Failures = 0;
         e.RetryAt = DateTimeOffset.MinValue;
+        e.VerifyAt = DateTimeOffset.MinValue;
     }
 }
 
@@ -289,8 +379,9 @@ public interface IMachineOrderApi
 
 // Keeps OptiPeople in step with MachineOrders in the background: one call at a time, never
 // throws to the caller, logs each set and each distinct failure once.
+// changed hears of each order stopped or changed in OptiPeople (MachineOrders.Verified).
 public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api, Action<string> log, Func<DateTimeOffset> clock,
-    Func<TimeSpan, CancellationToken, Task>? delay = null)
+    Func<TimeSpan, CancellationToken, Task>? delay = null, Action<MachineOrderChange>? changed = null)
 {
     // How often the worker looks for a new wish when nothing is due.
     public static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(250);
@@ -327,6 +418,26 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             {
                 Note(x, $"felterne til ordre {step.Number} kunne ikke sendes");
                 orders.FieldsFailed(step.MachineId, clock(), x);
+            }
+            return true;
+        }
+
+        if (step.Action == MachineOrderAction.Verify)
+        {
+            try
+            {
+                var current = await api.GetCurrentOrderAsync(step.MachineId, ct);
+                if (orders.Verified(step.MachineId, step.Number, current, clock()) is { } change)
+                {
+                    log($"OptiCloud: maskine {step.MachineId} kører ikke længere {name} ({(change.Current.Length > 0 ? $"nu ordre {change.Current}" : "nu ingen ordre")}), sættes ikke tilbage");
+                    changed?.Invoke(change);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception x)
+            {
+                Note(x, "maskinens ordre kunne ikke læses");
+                orders.VerifyFailed(step.MachineId, clock(), x);
             }
             return true;
         }

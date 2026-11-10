@@ -14,7 +14,8 @@ public sealed record CloudStatus(CloudState State, string Text, int Pending, Dat
 // Loaded holds the raw scans of the last Window (36 hours), so an element scanned in yesterday
 // evening is still in progress; the app replays them (ScanReplay.Replay, today = Midnight(now)).
 // Scan mode also keeps each station's machine in OptiPeople on the order in progress there
-// (SetMachineOrders, MachineOrders); a viewer never does.
+// (SetMachineOrders, MachineOrders); a viewer never does. When an order is stopped or changed in
+// OptiPeople, the machine is not set back: MachineOrderChanged tells the app to end the element.
 // Everything retries with backoff and nothing throws to the caller. Events come on any thread
 // (StatusChanged also on the one calling Record or Start, Loaded also on the one calling Start);
 // Status is safe to read from any thread. One per settings: when the setup changes, dispose this
@@ -71,7 +72,7 @@ public sealed class CloudSync : IDisposable
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
         // Held until the screen has been rebuilt from OptiCloud (SetMachineOrders with rebuilt).
-        if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true);
+        if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true, verify: MachineOrders.DefaultVerify);
         _status = Make();
         _outbox.PendingChanged += (_, _) => Publish();
         _outbox.Sent += (_, _) => Synced();
@@ -82,6 +83,10 @@ public sealed class CloudSync : IDisposable
 
     public event EventHandler<CloudStatus>? StatusChanged;
     public event EventHandler<LoadedScans>? Loaded;
+
+    // Scan mode only: a machine's order was stopped or changed in OptiPeople, so the element its
+    // station has in progress ends. Comes on any thread.
+    public event EventHandler<MachineOrderChange>? MachineOrderChanged;
 
     public CloudStatus Status { get { lock (_gate) return _status; } }
 
@@ -192,9 +197,17 @@ public sealed class CloudSync : IDisposable
     // Its own loop, its own failures: it never stops the scans, and they never stop it.
     async Task RunOrdersAsync(OptiCloudClient client, CancellationToken ct)
     {
-        try { await new MachineOrderSync(_orders!, client, _log, _ordersClock, _delay).RunAsync(ct); }
+        try { await new MachineOrderSync(_orders!, client, _log, _ordersClock, _delay, Changed).RunAsync(ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x) { _log($"OptiCloud: maskinernes ordrer stoppede: {x}"); }
+    }
+
+    void Changed(MachineOrderChange change)
+    {
+        if (_disposed) return;
+        // The app's handler failing must not stop the machine orders.
+        try { MachineOrderChanged?.Invoke(this, change); }
+        catch (Exception x) { _log($"OptiCloud: stop i OptiPeople kunne ikke behandles: {x.Message}"); }
     }
 
     static Func<DateTimeOffset> Monotonic()

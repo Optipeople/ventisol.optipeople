@@ -665,6 +665,181 @@ public sealed class MachineOrdersTests : IDisposable
         Assert.Equal(Local(later), ScannedIn(new MachineOrder(A, api.FieldSets[0].Fields)));
     }
 
+    static readonly TimeSpan Verify = MachineOrders.DefaultVerify;
+
+    // A machine in step on A, set by the app, with its fields sent. Changes reported go to changes.
+    async Task<(MachineOrders Orders, FakeApi Api, MachineOrderSync Worker)> InStepOnA(List<MachineOrderChange> changes)
+    {
+        var orders = new MachineOrders(verify: Verify);
+        var api = new FakeApi();
+        var worker = new MachineOrderSync(orders, api, _log.Add, () => _now, changed: changes.Add);
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A)], api.Sets);
+        return (orders, api, worker);
+    }
+
+    [Fact]
+    public async Task A_machine_in_step_is_read_again_every_verify_and_left_alone_while_it_runs_the_element()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+        var reads = api.Reads;
+
+        _now += Verify - TimeSpan.FromSeconds(1);
+        Assert.Equal(0, await Drain(worker));
+        _now += TimeSpan.FromSeconds(1);
+        Assert.Equal(1, await Drain(worker));
+        _now += Verify;
+        Assert.Equal(1, await Drain(worker));
+
+        Assert.Equal(reads + 2, api.Reads);
+        Assert.Single(api.Sets);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public async Task An_order_stopped_in_OptiPeople_is_reported_and_never_set_back()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+
+        // "Start New Order" on the dashboard: OptiPeople runs its hidden default order, read as "".
+        api.Current[M1] = "";
+        _now += Verify;
+        await Drain(worker);
+
+        Assert.Equal([new MachineOrderChange(M1, A, "")], changes);
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal(A, orders.StoppedOn(M1));
+
+        // The app ends the element at the station: the machine still gets nothing, and is not read again.
+        orders.Want(M1, MachineOrder.None, _now);
+        var reads = api.Reads;
+        _now += TimeSpan.FromMinutes(5);
+        Assert.Equal(0, await Drain(worker));
+        Assert.Equal(reads, api.Reads);
+        Assert.Single(api.Sets);
+        Assert.Single(changes);
+    }
+
+    [Fact]
+    public async Task Another_order_started_in_OptiPeople_is_left_alone_until_the_station_scans_a_new_element()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+
+        api.Current[M1] = C;
+        _now += Verify;
+        await Drain(worker);
+        Assert.Equal([new MachineOrderChange(M1, A, C)], changes);
+
+        // Ended at the station, and someone's order C runs on: the app does not touch it.
+        orders.Want(M1, MachineOrder.None, _now);
+        _now += TimeSpan.FromMinutes(5);
+        Assert.Equal(0, await Drain(worker));
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal(C, api.Current[M1]);
+
+        // A new In at the station: the machine is read first, then gets the new element.
+        orders.Want(M1, E(B), _now);
+        Assert.Null(orders.StoppedOn(M1));
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A), (M1, B)], api.Sets);
+        Assert.Single(changes);
+    }
+
+    [Fact]
+    public async Task A_new_In_of_the_stopped_element_sets_it_again()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+        api.Current[M1] = "";
+        _now += Verify;
+        await Drain(worker);
+        orders.Want(M1, MachineOrder.None, _now);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, A), (M1, A)], api.Sets);
+    }
+
+    // The station scans in another element while the verify read is on its way.
+    sealed class ScanDuringRead(FakeApi inner, Action during) : IMachineOrderApi
+    {
+        public async Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
+        {
+            var current = await inner.GetCurrentOrderAsync(machineId, ct);
+            during();
+            return current;
+        }
+
+        public Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default) => inner.SetOrderToMachineAsync(machineId, order, ct);
+        public Task SetOrderFieldsAsync(Guid machineId, MachineOrder order, CancellationToken ct = default) => inner.SetOrderFieldsAsync(machineId, order, ct);
+    }
+
+    [Fact]
+    public async Task A_stop_read_while_the_station_moved_on_does_not_end_the_new_element()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, _) = await InStepOnA(changes);
+        var worker = new MachineOrderSync(orders, new ScanDuringRead(api, () => orders.Want(M1, E(B), _now)), _log.Add, () => _now, changed: changes.Add);
+
+        api.Current[M1] = "";
+        _now += Verify;
+        Assert.True(await worker.RunOnceAsync());
+
+        Assert.Empty(changes);
+        Assert.Null(orders.StoppedOn(M1));
+        // The new element goes out as usual, once it has settled.
+        _now += Settle;
+        await Drain(new MachineOrderSync(orders, api, _log.Add, () => _now, changed: changes.Add));
+        Assert.Equal([(M1, A), (M1, B)], api.Sets);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public async Task The_first_read_still_sets_the_wish_when_the_machine_has_something_else()
+    {
+        var changes = new List<MachineOrderChange>();
+        var orders = new MachineOrders(verify: Verify);
+        var api = new FakeApi();
+        api.Current[M1] = C;
+        var worker = new MachineOrderSync(orders, api, _log.Add, () => _now, changed: changes.Add);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public async Task A_failed_verify_read_keeps_what_is_known_and_never_sets()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+
+        api.FailRead = NoNetwork;
+        _now += Verify;
+        await Drain(worker);
+        Assert.Equal(A, orders.Snapshot()[M1].Known);
+
+        // Stopped in OptiPeople meanwhile: the next good read still counts as a stop.
+        api.FailRead = null;
+        api.Current[M1] = "";
+        _now += TimeSpan.FromMinutes(1);
+        await Drain(worker);
+
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal([new MachineOrderChange(M1, A, "")], changes);
+    }
+
     [Fact]
     public void A_station_that_switches_element_gives_its_machine_the_new_element()
     {
@@ -719,6 +894,37 @@ public sealed class MachineOrdersTests : IDisposable
         _now += Settle;
         await Until(() => api.Sets.Length == 2);
         Assert.Equal((machine, ""), api.Sets[1]);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_scan_station_hears_of_an_order_stopped_in_OptiPeople_and_does_not_set_it_back()
+    {
+        var api = new FakeOptiCloud();
+        var machine = api.Machines[1].Id;
+        using var sync = Sync(api, StationMode.Scan);
+        var fromCloud = false;
+        var changes = new List<MachineOrderChange>();
+        sync.Loaded += (_, l) => { if (l.FromCloud) fromCloud = true; };
+        sync.MachineOrderChanged += (_, c) => { lock (changes) changes.Add(c); };
+        sync.Start();
+        await Until(() => fromCloud);
+
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = E(A) }, fromCloud: true);
+        _now += Settle;
+        await Until(() => api.Sets.Length == 1 && api.FieldsOf(A) is not null);
+
+        // "Start New Order" on the dashboard.
+        api.Override = (method, path, body) =>
+            path.Contains("GetCurrentOrderActiveByMachineId") ? FakeOptiCloud.Json(new { data = new { partInformationId = Guid.NewGuid(), partOrderNumberId = Guid.NewGuid(), number = "", isDefaultPartInfo = true }, errors = Array.Empty<object>(), meta = new { } }) : null;
+        _now += MachineOrders.DefaultVerify;
+        await Until(() => { lock (changes) return changes.Count == 1; });
+
+        Assert.Equal(new MachineOrderChange(machine, A, ""), changes[0]);
+        // The app ends the element; nothing is set on the machine.
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = MachineOrder.None });
+        _now += TimeSpan.FromMinutes(1);
+        await Task.Delay(300);
+        Assert.Single(api.Sets);
     }
 
     [Fact]

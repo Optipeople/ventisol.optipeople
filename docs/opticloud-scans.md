@@ -177,6 +177,14 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   journal alone may miss an element in progress). Then every mapped machine is read and set only
   if it differs. So a restart leaves a running order alone, and a machine whose station has
   nothing in progress is cleared, also when the order was set by hand on the dashboard.
+- OptiPeople leads when someone stops or changes an order there ("Start New Order" on the
+  dashboard): a machine in step on an element is read again every 5 seconds, and when it no
+  longer runs that element it is not set back (that would split the run). The station ends the
+  element as an Out, recorded like a scanned one (journal, outbox, `VentisolScans`), and logs
+  `ordre X stoppet i OptiPeople, afsluttet på station N`. The machine is then left alone, also
+  when someone started another order on it by hand, until its station scans in an element again.
+  A scan at the station while the read was under way wins: that element is kept and sent.
+  The first read on start and the read after a failure still set what the station has.
 - Nothing is ever set while the machine's order is unknown. After a failed call (it may have got
   in) the machine is read again first. A read that fails for any reason (no network, refused, an
   answer we can't use) is retried with backoff, never skipped.
