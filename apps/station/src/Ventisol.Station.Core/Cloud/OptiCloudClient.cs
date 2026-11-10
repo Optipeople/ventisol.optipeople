@@ -27,7 +27,7 @@ public sealed record RowsPage(IReadOnlyList<CloudRow> Rows, int? Count, int? Tot
 // token fresh: on a 401 it refreshes once (one refresh for all callers at a time) and tries
 // again once; when the refresh fails it logs in with the password. Never logs anything, so
 // the password and tokens can't end up in a log. Every failure is an OptiCloudException.
-public sealed class OptiCloudClient : IDisposable
+public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 
@@ -104,6 +104,24 @@ public sealed class OptiCloudClient : IDisposable
 
     public Task CreateRowAsync(Guid tableId, IReadOnlyDictionary<string, object?> values, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"api/MasterData/CreateRow/{tableId}", new { values }, ct);
+
+    // The machine's current order ("" for none). None comes two ways: a machine never given an
+    // order has all-zero ids and number null; a cleared one runs a hidden default order
+    // (isDefaultPartInfo true, number "").
+    public async Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
+    {
+        var d = await GetAsync($"api/RealtimeDashboard/GetCurrentOrderActiveByMachineId?machineId={machineId}", ct);
+        if (d.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return "";
+        if (d.ValueKind != JsonValueKind.Object) throw new OptiCloudException(OptiCloudException.Unexpected);
+        if (d.Str("isDefaultPartInfo") == "true" || d.Prop("partOrderNumberId") is not null && d.Guid("partOrderNumberId") is null) return "";
+        return d.Str("number")?.Trim() ?? "";
+    }
+
+    // Makes number the machine's current order (the server's time), ending the run before; "" clears
+    // it (a hidden default order). Not idempotent: the same number again starts a new run, so only
+    // send what differs from what the machine has.
+    public Task SetOrderToMachineAsync(Guid machineId, string number, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Post, "api/RealtimeDashboard/SetOrderToMachine", new { machineId, number, expectedSpeed = 0 }, ct);
 
     // keyword is OptiCloud's free-text search; what it matches on is not documented.
     public async Task<RowsPage> GetRowsPagedAsync(Guid tableId, int page, int pageSize, string orderBy, bool ascending, string? keyword = null, CancellationToken ct = default)

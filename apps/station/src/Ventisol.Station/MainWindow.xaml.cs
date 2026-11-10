@@ -111,6 +111,8 @@ public partial class MainWindow : Window
             _recorded.RemoveAll(x => x.At < CloudSync.WindowStart(e.At));
             if (!_cloud.Record(e)) Log.Write($"Scan not saved for sending: {e.Barcode.Raw} {e.Direction}");
         };
+        // After every scan (a switch included) each machine follows its station's state.
+        _vm.Scanned += (_, _) => SendMachineOrders();
         ShowCloudStatus();
         _cloud.Start();
         Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
@@ -132,6 +134,15 @@ public partial class MainWindow : Window
         var now = DateTimeOffset.Now;
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
         _vm.Apply(ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now)), now);
+        SendMachineOrders();
+    }
+
+    // Each mapped machine in OptiPeople gets the order in progress at its station, else none.
+    // CloudSync sends it in the background, only in Scan mode with OptiCloud set up.
+    void SendMachineOrders()
+    {
+        if (_settings.Mode != StationMode.Scan) return;
+        _cloud.SetMachineOrders(MachineOrders.DesiredFrom(_settings.Stations, _vm.Stations.Select(s => s.State)));
     }
 
     void ShowCloudStatus()

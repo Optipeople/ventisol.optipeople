@@ -124,6 +124,44 @@ its `_doc`). Change a rule there and here first.
 - Time per order = the sum over its elements and stations; time in progress counts up to now.
 - An order is packed when it has an `Out` at a `Packing` station and nothing on it is in progress.
 
+## Orders on machines
+
+Each station set up with a machine (`MachineId`) keeps that machine's current order in OptiPeople
+in step with the station, so OptiCloud's order time and reports follow the scans. The
+`VentisolScans` rows are written exactly as before; this comes on top.
+
+- The rule: a machine's order is the order of the element in progress at its station, else none.
+  Scan In sets it, Scan Out clears it, a switch to another element (a different barcode while
+  busy) gives it the new element's order. The order number is the barcode's order as plain
+  digits: `058556050103` gives `58556`.
+- `POST /api/RealtimeDashboard/SetOrderToMachine` `{ "machineId": "<uuid>", "number": "58556", "expectedSpeed": 0 }`
+  makes it the machine's current order and ends the run of the one before; `number: ""` clears it
+  (OptiPeople then runs a hidden default order). An unknown number is created in the factory.
+  The server stamps the time; there is no time field. Always HTTP 200, errors in the envelope.
+- It is not idempotent: the same number again starts a new run. So the app only sends what
+  differs from what the machine has.
+- `GET /api/RealtimeDashboard/GetCurrentOrderActiveByMachineId?machineId=` reads what it has.
+  No order comes two ways: a machine never given one has all-zero ids and `number: null`; a
+  cleared one has `isDefaultPartInfo: true` and `number: ""`. Both count as none.
+- Desired state, not history: since the server stamps the time, scans are never replayed. Per
+  machine only the latest wish counts, and it is sent once it has held for 3 seconds. An Out and
+  In of the same order within that sends nothing; a quick Out and In of another order sends only
+  the new one.
+- On start, once the screen is rebuilt from the journal (and again from OptiCloud), every mapped
+  machine is read and set only if it differs. So a restart leaves a running order alone, and a
+  machine whose station has nothing in progress is cleared, also when the order was set by hand
+  on the dashboard. After a failed call (it may have got in) the machine is read again before
+  anything is sent. A read the server refuses, or answers in a shape we can't use, is skipped
+  and the order set directly.
+- Failures wait 2, 5, 15, 30, then every 60 seconds (a wrong password 15 minutes), and then send
+  whatever is wished by then. Each distinct failure is logged once; each set is logged. Nothing
+  is shown on the screen.
+- Only in Scan mode with OptiCloud set up, and only machines a station is mapped to: a viewer and
+  a station with no machine never send, and other machines are never touched. Two stations on one
+  machine (a setup mistake): the one that started last wins.
+- Code: `MachineOrders` and `MachineOrderSync` (`Cloud/MachineOrders.cs`), driven by `CloudSync`
+  with the same login; `MainWindow.SendMachineOrders` after every scan and every rebuild.
+
 ## Auth
 
 Bearer token from `POST /api/Authentication/login` (`grant_type=password`), refreshed with
@@ -140,5 +178,4 @@ out; other failures back off 2, 5, 15, 30, then every 60 seconds.
   (it would cut the viewers' whole-day reads to one page).
 - What `keyword` searches on, and what the error for a duplicate `ScanId` looks like, so a
   re-send can be told apart without a lookup.
-- Whether a station should also set the machine's current order (`RealtimeDashboard/SetOrderToMachine`).
 - A service user for the station PCs, and how long tokens live.

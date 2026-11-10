@@ -29,6 +29,10 @@ public sealed class FakeOptiCloud : HttpMessageHandler
     public List<Table> Tables { get; } = [];
     public List<(Guid Id, string Name)> Machines { get; } = [(Guid.NewGuid(), "Pakning"), (Guid.NewGuid(), "Station 10"), (Guid.NewGuid(), "montagebord 1")];
     public List<(string Method, string Path, string? Body, string? Auth)> Requests { get; } = [];
+    // Each machine's current order as SetOrderToMachine left it ("" a cleared one), and every set in order.
+    public Dictionary<Guid, string> Orders { get; } = [];
+    public List<(Guid Machine, string Number)> OrderSets { get; } = [];
+    public (Guid Machine, string Number)[] Sets { get { lock (_gate) return [.. OrderSets]; } }
 
     public bool RefreshWorks { get; set; } = true;
     public bool IgnoreOrder { get; set; }
@@ -143,6 +147,21 @@ public sealed class FakeOptiCloud : HttpMessageHandler
                 if (t.Rows.Any(r => (string?)r["ScanId"] == id)) return Json(new { data = (object?)null, errors = new[] { new { title = "Unique", message = "ScanId findes allerede" } } });
                 t.Rows.Add(values.DeepClone().AsObject());
                 return Data(new { id = Guid.NewGuid() });
+            }
+            case ("RealtimeDashboard", "SetOrderToMachine"):
+            {
+                var machine = Guid.Parse((string)b!["machineId"]!);
+                var number = (string?)b["number"] ?? "";
+                Orders[machine] = number;
+                OrderSets.Add((machine, number));
+                return Data(new { partInformationId = Guid.NewGuid(), partOrderNumberId = Guid.NewGuid(), number, startDate = "2026-11-10T08:00:00", endDate = (string?)null });
+            }
+            case ("RealtimeDashboard", "GetCurrentOrderActiveByMachineId"):
+            {
+                // As live: never set has all-zero ids and number null; cleared runs a hidden default order.
+                if (!Orders.TryGetValue(Guid.Parse(query["machineId"]), out var number))
+                    return Data(new { partInformationId = Guid.Empty, partOrderNumberId = Guid.Empty, number = (string?)null, startDate = "0001-01-01T00:00:00", isDefaultPartInfo = false });
+                return Data(new { partInformationId = Guid.NewGuid(), partOrderNumberId = Guid.NewGuid(), number, startDate = "2026-11-10T08:00:00", isDefaultPartInfo = number.Length == 0 });
             }
             case ("MasterData", "GetRowsPaged"):
             {

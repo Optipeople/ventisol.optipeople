@@ -197,10 +197,32 @@ app.MapGet("/api/MasterData/GetRowsPaged/{tableId:guid}", (Guid tableId, HttpReq
     });
 });
 
+// Each machine's current order, held in memory only (a restart forgets it). As the live API:
+// a set always starts a new run, "" (or null) switches to a hidden default order, and a machine
+// never given one answers with all-zero ids and number null.
+var orders = new System.Collections.Concurrent.ConcurrentDictionary<Guid, (Guid PartInformationId, Guid PartOrderNumberId, string Number, DateTime Start)>();
+
+app.MapPost("/api/RealtimeDashboard/SetOrderToMachine", async (HttpContext ctx) =>
+{
+    var b = await JsonBody(ctx.Request);
+    if (!Guid.TryParse((string?)b?["machineId"], out var machine) || !Store.Machines.Any(m => m.Id == machine)) return Error("Machine not found");
+    var number = ((string?)b?["number"])?.Trim() ?? "";
+    var run = (Guid.NewGuid(), number.Length == 0 ? Guid.Empty : Guid.NewGuid(), number, DateTime.Now);
+    orders[machine] = run;
+    ctx.Items["note"] = number.Length == 0 ? "cleared" : $"order {number}";
+    return Data(new { partInformationId = run.Item1, partOrderNumberId = run.Item2, number, startDate = run.Item4, endDate = (DateTime?)null, expectedSpeed = 0 });
+});
+
+app.MapGet("/api/RealtimeDashboard/GetCurrentOrderActiveByMachineId", (Guid machineId) =>
+    orders.TryGetValue(machineId, out var run)
+        ? Data(new { partInformationId = run.PartInformationId, partOrderNumberId = run.PartOrderNumberId, number = run.Number, startDate = run.Start, isDefaultPartInfo = run.Number.Length == 0 })
+        : Data(new { partInformationId = Guid.Empty, partOrderNumberId = Guid.Empty, number = (string?)null, startDate = DateTime.MinValue, isDefaultPartInfo = false }));
+
 app.MapGet("/fake/state", () => Results.Json(store.Read(d => new
 {
     account = Store.Account, accountName = Store.AccountName, user = Store.User,
     machines = Store.Machines.Select(m => new { id = m.Id, name = m.Name }),
+    machineOrders = orders.ToDictionary(o => o.Key, o => o.Value.Number),
     tables = d.Tables.Select(t => new { t.Id, t.Name, columns = t.Columns.Select(c => $"{c.Name}:{c.DataType}"), rowCount = t.Rows.Count, rows = t.Rows }).ToList(),
 }), new JsonSerializerOptions { WriteIndented = true }));
 

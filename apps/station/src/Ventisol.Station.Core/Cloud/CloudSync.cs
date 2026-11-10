@@ -13,6 +13,8 @@ public sealed record CloudStatus(CloudState State, string Text, int Pending, Dat
 // (and at midnight). A viewer records nothing, but still sends what an earlier Scan mode left.
 // Loaded holds the raw scans of the last Window (36 hours), so an element scanned in yesterday
 // evening is still in progress; the app replays them (ScanReplay.Replay, today = Midnight(now)).
+// Scan mode also keeps each station's machine in OptiPeople on the order in progress there
+// (SetMachineOrders, MachineOrders); a viewer never does.
 // Everything retries with backoff and nothing throws to the caller. Events come on any thread
 // (StatusChanged also on the one calling Record or Start, Loaded also on the one calling Start);
 // Status is safe to read from any thread. One per settings: when the setup changes, dispose this
@@ -41,6 +43,8 @@ public sealed class CloudSync : IDisposable
     readonly CancellationTokenSource _stop = new();
     readonly Lock _gate = new();
     readonly List<ScanEvent> _recorded = [];
+    // Scan mode with OptiCloud set up only: the order each mapped machine should have.
+    readonly MachineOrders? _orders;
     Task? _run;
     bool _started, _disposed;
     CloudState _state;
@@ -62,6 +66,7 @@ public sealed class CloudSync : IDisposable
         // A viewer records nothing, so it has nothing of its own to remember.
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
+        if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders();
         _status = Make();
         _outbox.PendingChanged += (_, _) => Publish();
         _outbox.Sent += (_, _) => Synced();
@@ -139,6 +144,15 @@ public sealed class CloudSync : IDisposable
         return true;
     }
 
+    // Per mapped machine, the order it should have now ("" for none), as MachineOrders.DesiredFrom
+    // gives it. Call after every scan and every rebuild of the screen. Sent in the background once
+    // it has held for MachineOrders.DefaultSettle. Ignored in Viewer mode or without OptiCloud.
+    public void SetMachineOrders(IReadOnlyDictionary<Guid, string> desired)
+    {
+        if (_orders is null || desired.Count == 0) return;
+        _orders.Want(desired, _clock());
+    }
+
     async Task RunAsync(CancellationToken ct)
     {
         try
@@ -149,9 +163,10 @@ public sealed class CloudSync : IDisposable
 
             // A PC switched from Scan to Viewer may still have scans to send.
             var sender = _settings.Mode == StationMode.Scan || _outbox.Pending > 0 ? _outbox.RunAsync(table.AddAsync, ct, _delay) : Task.CompletedTask;
+            var orders = _orders is null ? Task.CompletedTask : new MachineOrderSync(_orders, client, _log, _clock, _delay).RunAsync(ct);
             if (_settings.Mode == StationMode.Scan) await RetryAsync(() => LoadOnceAsync(table, ct), ct);
             else await PollAsync(table, ct);
-            await sender;
+            await Task.WhenAll(sender, orders);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x)
