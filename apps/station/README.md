@@ -32,7 +32,15 @@ A Zebra cradle ships in USB keyboard mode, and that works out of the box: plug i
 The app tells a scanner from a person by speed (a fast burst ended by Enter). It is one scanner,
 known as `keyboard`, so it scans for whichever station is set to scanner `keyboard`.
 
-For the real setup, switch each cradle to a COM port: scan the "USB CDC Host" programming barcode
+Adding a scanner on site is meant to be plug and play, with no other scanner settings:
+1. Plug the cradle into a free port on the USB hub.
+2. Scan the "USB CDC Host" barcode in the LI3678 manual.
+3. In the app's setup, press "Identificér" on the station and scan any barcode.
+
+The cradle sends no line end after a barcode, so the app takes a pause of 100 ms as the end of a
+scan (`ComPortScanSource`, `LineFramer.Flush`). Don't rely on a suffix being set up.
+
+In detail: switching each cradle to a COM port: scan the "USB CDC Host" programming barcode
 in the LI3678 Product Reference Guide. The app then knows it by the USB port it is plugged into
 (`usb:` plus the Windows location path, e.g. `usb:PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(7)#USB(4)`),
 not by its serial number: in CDC mode every cradle reports the same one, `USB_CDC_SYMBOL_SCANNER`.
