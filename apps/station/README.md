@@ -15,9 +15,10 @@ Develop: `./dev.ps1` (or `./dev.ps1 -Empty`). It rebuilds and restarts the app o
 Run once: `dotnet run --project src/Ventisol.Station`. Options after `--`: `--kiosk` for full screen,
 `--showcase` to start with sample scans on the screen.
 
-Right now it is UI only. Scans come from `DemoScanner`: tap a tile, or press 1 to 7.
-Shift+number scans a different element (rejected), Ctrl+number unplugs that scanner.
-Nothing is sent to OptiCloud yet.
+Scans come from the cradles (and, for a demo, from `DemoScanner`: tap a tile, or press 1 to 7;
+Shift+number scans a different element, Ctrl+number unplugs that scanner). With OptiCloud set up,
+every scan goes to the `VentisolScans` table and the station's machine gets the order in progress
+(see `docs/opticloud-scans.md`).
 
 In the app: the logo opens the menu (version, connection, scanners, "Tilpas layout").
 The dots at the bottom switch to the report page. In "Tilpas layout", blocks move, swap and resize
