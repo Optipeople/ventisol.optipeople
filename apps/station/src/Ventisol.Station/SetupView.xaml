@@ -573,6 +573,56 @@
                             </Grid>
                         </Border>
                         <ItemsControl ItemsSource="{Binding Stations}" Focusable="False" />
+
+                        <!-- ===== Ordredokumenter ===== -->
+                        <TextBlock Style="{StaticResource Section}" Text="ORDREDOKUMENTER" />
+                        <StackPanel Width="880" HorizontalAlignment="Left" Margin="0,0,0,28">
+                            <Border Style="{StaticResource Row}">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource Left}" Width="220" Text="Mappe med ordredokumenter" TextWrapping="Wrap" />
+                                    <TextBox Text="{Binding DocumentsFolder, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Mappen, hvor 3E lægger ordrernes PDF'er, f.eks. R:\Indkøb\Shares\Ordre. Tom slår ordredokumenterne fra." />
+                                </DockPanel>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="220,16,0,0" VerticalAlignment="Center">
+                                <Ellipse>
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse" BasedOn="{StaticResource StatusDot}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="None">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="Ok">
+                                                    <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="Error">
+                                                    <Setter Property="Fill" Value="{StaticResource Alarm}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <TextBlock Text="{Binding DocumentsText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource Left}">
+                                            <Setter Property="FontSize" Value="16" />
+                                            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="None">
+                                                    <Setter Property="Text" Value="Tom: ordredokumenterne er slået fra" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="Ok">
+                                                    <Setter Property="Foreground" Value="{StaticResource OkText}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding DocumentsStatus}" Value="Error">
+                                                    <Setter Property="Foreground" Value="{StaticResource AlarmText}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </DockPanel>

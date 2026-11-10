@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Ventisol.Station.Core;
+using Ventisol.Station.Core.Documents;
 
 namespace Ventisol.Station.ViewModels;
 
@@ -30,6 +31,8 @@ public sealed partial class SetupViewModel : ObservableObject
     readonly Func<StationSettings, string, CancellationToken, Task<IReadOnlyList<(Guid Id, string Name)>>> _loadMachines;
     readonly Func<IReadOnlyCollection<string>> _connectedScanners;
     readonly Func<string, string?>? _scannerPort;
+    readonly Func<string, CancellationToken, Task<OrderDocumentFolderStatus>> _checkDocumentsFolder;
+    CancellationTokenSource? _documentsCheck;
     readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     readonly int _uiThread = Environment.CurrentManagedThreadId;
     readonly CancellationTokenSource _closing = new();
@@ -44,19 +47,22 @@ public sealed partial class SetupViewModel : ObservableObject
 
     // savedPassword is the one SettingsStore holds now (null if none). It is only used to test and fetch
     // until a new one is typed, and is never handed back. scannerPort gives the COM port a connected
-    // scanner is on, for its label.
+    // scanner is on, for its label. checkDocumentsFolder looks through a documents folder for the
+    // status line under it (OrderDocumentLocator.CheckFolderAsync unless given).
     public SetupViewModel(
         StationSettings settings,
         string? savedPassword,
         Func<StationSettings, string, CancellationToken, Task<string?>> testConnection,
         Func<StationSettings, string, CancellationToken, Task<IReadOnlyList<(Guid Id, string Name)>>> loadMachines,
         Func<IReadOnlyCollection<string>> connectedScanners,
-        Func<string, string?>? scannerPort = null)
+        Func<string, string?>? scannerPort = null,
+        Func<string, CancellationToken, Task<OrderDocumentFolderStatus>>? checkDocumentsFolder = null)
     {
         _testConnection = testConnection;
         _loadMachines = loadMachines;
         _connectedScanners = connectedScanners;
         _scannerPort = scannerPort;
+        _checkDocumentsFolder = checkDocumentsFolder ?? ((folder, ct) => OrderDocumentLocator.CheckFolderAsync(folder, ct: ct));
         _savedPassword = string.IsNullOrEmpty(savedPassword) ? null : savedPassword;
 
         settings = StationSettingsJson.Normalize(settings);
@@ -65,6 +71,7 @@ public sealed partial class SetupViewModel : ObservableObject
         ApiBaseUrl = settings.ApiBaseUrl;
         Username = settings.Username ?? "";
         AccountIdText = settings.AccountId?.ToString() ?? "";
+        DocumentsFolder = settings.DocumentsFolder ?? "";
 
         _ready = true;
         RebuildMachines();
@@ -127,6 +134,18 @@ public sealed partial class SetupViewModel : ObservableObject
     [ObservableProperty] public partial SetupStatus MachinesStatus { get; private set; }
     [ObservableProperty] public partial string MachinesText { get; private set; } = "";
 
+    // ----- Ordredokumenter
+
+    // Where 3E puts the order PDFs. Blank turns the order documents off.
+    [ObservableProperty] public partial string DocumentsFolder { get; set; } = "";
+    [ObservableProperty] public partial SetupStatus DocumentsStatus { get; private set; }
+    [ObservableProperty] public partial string DocumentsText { get; private set; } = "";
+
+    partial void OnDocumentsFolderChanged(string value)
+    {
+        if (_ready) CheckDocumentsFolder(TimeSpan.FromMilliseconds(600));
+    }
+
     // ----- Gem
 
     // The first thing that stops a save, or null.
@@ -142,6 +161,7 @@ public sealed partial class SetupViewModel : ObservableObject
     public void Activate()
     {
         RebuildScanners();
+        CheckDocumentsFolder(TimeSpan.Zero);
         if (MachinesStatus != SetupStatus.Ok && CurrentPassword() is not null && TryBuild(out var s) && s.IsConnected)
             _ = LoadMachinesCore(quiet: true);
     }
@@ -261,6 +281,41 @@ public sealed partial class SetupViewModel : ObservableObject
         MachinesText = machines.Count switch { 0 => "Ingen maskiner på kontoen", 1 => "1 maskine hentet", var n => $"{n} maskiner hentet" };
     }
 
+    // Looks through the folder after a pause in the typing, and says what it found. Only the
+    // latest check answers; a slow share never holds up the screen.
+    async void CheckDocumentsFolder(TimeSpan delay)
+    {
+        _documentsCheck?.Cancel();
+        var folder = StationSettingsJson.NormalizeFolder(DocumentsFolder);
+        if (folder is null || _closed)
+        {
+            (DocumentsStatus, DocumentsText) = (SetupStatus.None, "");
+            return;
+        }
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_closing.Token);
+        _documentsCheck = cts;
+        DocumentsStatus = SetupStatus.Busy;
+        DocumentsText = "Kigger i mappen …";
+        OrderDocumentFolderStatus result;
+        try
+        {
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, cts.Token);
+            result = await _checkDocumentsFolder(folder, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { result = new OrderDocumentFolderStatus(false, 0, 0); }
+        if (_closed || cts.IsCancellationRequested) return;
+
+        (DocumentsStatus, DocumentsText) = result switch
+        {
+            { Available: false } => (SetupStatus.Error, result.Error is { Length: > 0 } why ? why : "Mappen kan ikke læses"),
+            { Orders: 0 } => (SetupStatus.Error, "Ingen ordredokumenter i mappen"),
+            { Orders: 1 } => (SetupStatus.Ok, "Fundet 1 ordre"),
+            _ => (SetupStatus.Ok, $"Fundet {result.Orders} ordrer"),
+        };
+    }
+
     // The form as settings plus the password to use, or false with the reason given to fail.
     bool Ready(out StationSettings settings, out string password, Action<string> fail)
     {
@@ -284,7 +339,8 @@ public sealed partial class SetupViewModel : ObservableObject
             ApiBaseUrl.Trim(),
             account,
             string.IsNullOrWhiteSpace(Username) ? null : Username.Trim(),
-            [.. Stations.Select(s => s.ToSetup())]);
+            [.. Stations.Select(s => s.ToSetup())],
+            StationSettingsJson.NormalizeFolder(DocumentsFolder));
         return ok;
     }
 

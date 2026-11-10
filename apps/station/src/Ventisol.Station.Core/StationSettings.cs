@@ -15,12 +15,15 @@ public sealed record StationSetup(int Number, string Name, StationKind Kind, Gui
 
 // Everything the setup screen sets, kept on this PC. The password is stored encrypted
 // for this Windows user, never as plain text (see SettingsStore in the app).
+// DocumentsFolder is where 3E puts the order PDFs (on site R:\Indkøb\Shares\Ordre); null leaves
+// the order documents off.
 public sealed record StationSettings(
     StationMode Mode,
     string ApiBaseUrl,
     Guid? AccountId,
     string? Username,
-    IReadOnlyList<StationSetup> Stations)
+    IReadOnlyList<StationSetup> Stations,
+    string? DocumentsFolder = null)
 {
     public const string DefaultApiBaseUrl = "https://api.optipeople.dk";
 

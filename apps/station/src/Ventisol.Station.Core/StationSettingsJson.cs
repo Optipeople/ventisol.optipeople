@@ -12,7 +12,7 @@ public static class StationSettingsJson
 
     sealed record FileStation(int Number, string? Name, StationKind Kind, Guid? MachineId, string? ScannerSerial);
 
-    sealed record FileSettings(int Version, StationMode Mode, string? ApiBaseUrl, Guid? AccountId, string? Username, List<FileStation>? Stations);
+    sealed record FileSettings(int Version, StationMode Mode, string? ApiBaseUrl, Guid? AccountId, string? Username, List<FileStation>? Stations, string? DocumentsFolder = null);
 
     static readonly JsonSerializerOptions Options = new()
     {
@@ -23,7 +23,8 @@ public static class StationSettingsJson
 
     public static string Serialize(StationSettings s) => JsonSerializer.Serialize(
         new FileSettings(Version, s.Mode, s.ApiBaseUrl, s.AccountId, s.Username,
-            [.. s.Stations.Select(t => new FileStation(t.Number, t.Name, t.Kind, t.MachineId, t.ScannerSerial))]),
+            [.. s.Stations.Select(t => new FileStation(t.Number, t.Name, t.Kind, t.MachineId, t.ScannerSerial))],
+            s.DocumentsFolder),
         Options);
 
     // Null when the text isn't settings at all; otherwise the settings, made whole (see Normalize).
@@ -38,7 +39,8 @@ public static class StationSettingsJson
                 f.ApiBaseUrl ?? "",
                 f.AccountId,
                 f.Username,
-                [.. (f.Stations ?? []).Where(t => t is not null).Select(t => new StationSetup(t.Number, t.Name ?? "", t.Kind, t.MachineId, t.ScannerSerial))]));
+                [.. (f.Stations ?? []).Where(t => t is not null).Select(t => new StationSetup(t.Number, t.Name ?? "", t.Kind, t.MachineId, t.ScannerSerial))],
+                f.DocumentsFolder));
         }
         catch (JsonException) { return null; }
         catch (NotSupportedException) { return null; }
@@ -64,6 +66,17 @@ public static class StationSettingsJson
         var url = string.IsNullOrWhiteSpace(s.ApiBaseUrl) ? StationSettings.DefaultApiBaseUrl : s.ApiBaseUrl.Trim().TrimEnd('/');
         var user = string.IsNullOrWhiteSpace(s.Username) ? null : s.Username.Trim();
         var account = s.AccountId == Guid.Empty ? null : s.AccountId;
-        return new StationSettings(s.Mode, url, account, user, stations);
+        return new StationSettings(s.Mode, url, account, user, stations, NormalizeFolder(s.DocumentsFolder));
+    }
+
+    // A folder path as typed or pasted: trimmed, without quotes around it ("Copy as path" adds them)
+    // or a slash at the end, except on a drive root like R:\. Blank is null: the documents are off.
+    public static string? NormalizeFolder(string? folder)
+    {
+        var f = folder?.Trim().Trim('"').Trim();
+        if (string.IsNullOrEmpty(f)) return null;
+        var trimmed = f.TrimEnd('\\', '/');
+        if (trimmed.Length == 0) return f[..1];
+        return trimmed.Length == 2 && trimmed[1] == ':' ? trimmed + "\\" : trimmed;
     }
 }
