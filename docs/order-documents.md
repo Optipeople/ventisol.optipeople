@@ -10,8 +10,9 @@ When an operator scans an element in, the station app can show the order's produ
 - On site the folder is the network share `R:\Indkøb\Shares\Ordre`. It may have subfolders, and it may be
   slow or offline.
 - Special orders carry a prefix before the order number: `BE_58721_20261022.pdf`, and any other prefix
-  (`TE_`, `RKK_` ...). The name is parts split by `_`: the last part is the date, the order is the first
-  all-digit part before it, so any prefix of letters is skipped.
+  (`TE_`, `RKK_` ...). The name is parts split by `_`: the last part is the date, the part before it is the
+  order (all digits), and every part before that is a prefix that must hold a letter. A name with two
+  numbers before the date (`2_58721_20261022.pdf`) is not taken as an order document.
 - An order can be printed again, and an older version may be kept beside the new one as history (with or
   without a prefix). The locator takes the newest date in the name, then the newest write time.
 - The folder is a setting on the setup screen, "Mappe med ordredokumenter" (`StationSettings.DocumentsFolder`).
@@ -172,6 +173,9 @@ Lengths and sizes stay as printed (`1491,0`), so nothing is lost in rounding.
   index kept for 30 s. A miss lists again, at most every 3 s. One listing runs at a time.
 - A listing slower than 10 s answers from the last index if it has the order, else `FolderUnavailable`
   ("Mappen svarer ikke"); the listing goes on and fills the index for the next scan.
+- A listing that fails or hangs keeps the last good index and its time, and the share counts as down
+  (`IsDown`) for 45 s (`DownFor`): lookups answer from the last index at once, without asking the share,
+  then it is tried again. A listing that gets through ends it at once.
 - `RefreshAsync()` and `CheckFolderAsync(folder)` give `OrderDocumentFolderStatus(Available, Orders, Files, Error)`,
   which the setup screen shows as "Fundet 26 ordrer" or "Mappen kan ikke læses".
 
@@ -194,6 +198,25 @@ progress at the station, else the last one finished there today, else an empty s
 - `OrderDocuments` finds and parses in the background (read timeout 15 s) and keeps the last 24 parsed
   files by path, write time and size. A scan-in pre-fetches the document and renders the drawing, so the
   tap is instant. Rendered bitmaps are cached too (`PdfRender`).
+
+## When the share is gone
+
+The share is reached over the internet, so it can be gone for a few minutes. Then a copy answers
+(`OrderDocumentLoad.FromCopy`): the parsed document still in memory, else the copy on this PC
+(`OrderDocumentCache`, in the app's data folder). When the share answers, the share wins.
+
+- Every PDF read from the share is saved as a copy, named `c<hash of its folder>_<file name>`, so files of
+  the same name in two subfolders keep a copy each. It is written to disk before it is renamed into place.
+- A copy shown again (even from memory) is touched, so it stays. A copy not saved or touched for 7 days
+  goes, and only the newest 200 are kept.
+- A file read that hangs (15 s), or fails while the folder can't be reached, marks the share down: the
+  next scans go straight to the copy instead of each waiting, until the locator tries the share again
+  (45 s, or sooner when the slow read gets through). The last index is kept. Only a file that fails while
+  the folder is there (moved or deleted) drops the index, so the next scan lists the folder again.
+- The copy is the version the index points to if there is one, else the newest by the date in the name.
+  When it is another file than the one the folder last listed, it is marked `OlderVersion`, and the status
+  line says "Gemt kopi – ældre udgave" instead of "Gemt kopi". `Path` is the file actually read.
+- No copy: "Mappen med ordredokumenter kan ikke læses".
 
 A picture without tapping, with its own data folder so it never meets the running app:
 

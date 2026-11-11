@@ -15,7 +15,8 @@ public enum OrderDocumentLoadStatus
 }
 
 // An element's document: the order's PDF as read, the element's position in it, and the PDF's bytes
-// so a viewer renders the same file that was parsed, without going to the share again.
+// so a viewer renders the same file that was parsed, without going to the share again. Path is the
+// file the bytes came from: the share's file, or the copy on this PC.
 public sealed record OrderDocumentLoad(
     Barcode Barcode,
     OrderDocumentLoadStatus Status,
@@ -30,6 +31,9 @@ public sealed record OrderDocumentLoad(
 
     // Ready from a copy kept earlier (in memory or on this PC), because the folder can't be reached now.
     public bool FromCopy { get; init; }
+
+    // The copy is another file than the one the folder lists for the order now: an older version.
+    public bool OlderVersion { get; init; }
 }
 
 // Finds and reads an element's order document in the background: the locator finds the file, then it is
@@ -38,7 +42,9 @@ public sealed record OrderDocumentLoad(
 // that takes longer than ReadTimeout answers Unreadable; the read goes on and fills the cache.
 // The folder is reached over the internet, so it can be gone for a few minutes. Then a copy answers
 // (FromCopy): the parsed document still in memory, or the copy in Cache, the folder on this PC every
-// PDF read from the share is saved to. When the share answers, the share wins.
+// PDF read from the share is saved to. When the share answers, the share wins. A read that hangs or
+// finds the share gone marks the locator down, so the next scans go straight to the copy instead of
+// each waiting ReadTimeout, until the locator tries the share again.
 public sealed class OrderDocuments
 {
     public const int MaxCached = 24;
@@ -46,7 +52,8 @@ public sealed class OrderDocuments
     // How long a failed read waits to learn whether the folder is still there.
     static readonly TimeSpan ReachTimeout = TimeSpan.FromSeconds(3);
 
-    sealed record Read(OrderDocument Document, byte[] Pdf, string Key, string Path, int Order, DateOnly? Date);
+    // Path is the file read; IsCopy when that is a copy in Cache, not the share's file.
+    sealed record Read(OrderDocument Document, byte[] Pdf, string Key, string Path, bool IsCopy, int Order, DateOnly? Date);
 
     readonly OrderDocumentLocator _locator;
     readonly Func<string, byte[]> _readFile;
@@ -90,14 +97,23 @@ public sealed class OrderDocuments
         }
 
         var path = lookup.Path!;
+        // The share hung or was gone a moment ago: don't make every scan wait for it again.
+        if (_locator.IsDown)
+            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+                ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Path: path, Error: _locator.LastError ?? "Mappen svarer ikke");
+
+        // Even the file's write time is a trip to the share, so all of it runs in the background.
+        var reading = ReadAndKeep(path, isCopy: false);
         Read read;
         try
         {
-            // Even the file's write time is a trip to the share, so all of it runs in the background.
-            read = await Task.Run(() => ReadCached(path, save: true), CancellationToken.None).WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
+            read = await reading.WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
+            // The share hangs: copies answer for a while, or until this read gets through after all.
+            _locator.ShareDown("Mappen svarer ikke");
+            _ = reading.ContinueWith(t => { if (t.IsCompletedSuccessfully) _locator.ShareAnswered(); }, TaskScheduler.Default);
             return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
                 ?? new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: "Filen svarer ikke");
         }
@@ -107,53 +123,56 @@ public sealed class OrderDocuments
         }
         catch (Exception ex)
         {
-            // The share is gone, not the file: answer from a copy and keep the index for when it is back.
-            if (!await ReachableAsync().ConfigureAwait(false)
-                && await FromCopyAsync(barcode, path, ct).ConfigureAwait(false) is { } copy)
-                return copy;
-            // Moved or deleted since the folder was listed: look again next time.
-            _locator.Forget();
-            return new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: Describe(ex));
+            if (await ReachableAsync().ConfigureAwait(false))
+            {
+                // The folder is there, the file isn't (moved or deleted since it was listed): look again next time.
+                _locator.Forget();
+                return new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: Describe(ex));
+            }
+            // The share is gone, not the file: keep the index for when it is back, and answer from a copy meanwhile.
+            _locator.ShareDown("Mappen kan ikke nås");
+            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+                ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Path: path, Error: "Mappen kan ikke nås");
         }
 
-        return Loaded(barcode, read, path, fromCopy: false);
+        return Loaded(barcode, read, fromCopy: false);
     }
 
-    static OrderDocumentLoad Loaded(Barcode barcode, Read read, string path, bool fromCopy)
+    static OrderDocumentLoad Loaded(Barcode barcode, Read read, bool fromCopy)
     {
         var doc = read.Document;
         // Nothing read at all (not a PDF, or every page failed): the file is there but useless.
         if (doc.PageCount == 0)
-            return new(barcode, OrderDocumentLoadStatus.Unreadable, doc, Path: path, Error: "Filen kan ikke læses som PDF") { FileKey = read.Key, FromCopy = fromCopy };
-        return new(barcode, OrderDocumentLoadStatus.Ready, doc, doc.PositionFor(barcode), read.Pdf, path) { FileKey = read.Key, FromCopy = fromCopy };
+            return new(barcode, OrderDocumentLoadStatus.Unreadable, doc, Path: read.Path, Error: "Filen kan ikke læses som PDF") { FileKey = read.Key, FromCopy = fromCopy };
+        return new(barcode, OrderDocumentLoadStatus.Ready, doc, doc.PositionFor(barcode), read.Pdf, read.Path) { FileKey = read.Key, FromCopy = fromCopy };
     }
 
-    // The order's document as kept: in memory first, then on this PC. The same file the index pointed
-    // to if there is one, else the newest by the date in the name. Null when there's none.
+    // The order's document as kept: in memory first, then on this PC. The version the index points to
+    // (path) if there is one, else the newest by the date in the name, marked OlderVersion when the index
+    // points to another file. Null when there's none.
     async Task<OrderDocumentLoad?> FromCopyAsync(Barcode barcode, string? path, CancellationToken ct)
     {
-        var name = path is null ? null : System.IO.Path.GetFileName(path);
         Read? best = null;
         lock (_gate)
         {
             foreach (var (_, task) in _cache)
             {
                 if (!task.IsCompletedSuccessfully || task.Result is not { } r || r.Order != barcode.Order || r.Document.PageCount == 0) continue;
-                if (best is null || Better(r, best, name)) best = r;
+                if (best is null || Better(r, best, path)) best = r;
             }
         }
-        if (best is not null && (name is null || SameName(best.Path, name)))
-            return Loaded(barcode, best, path ?? best.Path, fromCopy: true);
+        if (best is not null && (path is null || IsVersion(best, path)))
+            return Copy(barcode, best, path);
 
         if (Cache is { } cache)
         {
             try
             {
-                var copy = await Task.Run(() => cache.Find(barcode.Order, name), CancellationToken.None).WaitAsync(ReachTimeout, ct).ConfigureAwait(false);
+                var copy = await Task.Run(() => cache.Find(barcode.Order, path), CancellationToken.None).WaitAsync(ReachTimeout, ct).ConfigureAwait(false);
                 if (copy is not null)
                 {
-                    var read = await Task.Run(() => ReadCached(copy, save: false), CancellationToken.None).WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
-                    if (read.Document.PageCount > 0) return Loaded(barcode, read, path ?? copy, fromCopy: true);
+                    var read = await ReadAndKeep(copy, isCopy: true).WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
+                    if (read.Document.PageCount > 0) return Copy(barcode, read, path);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -165,15 +184,23 @@ public sealed class OrderDocuments
                 // No usable copy on this PC.
             }
         }
-        return best is null ? null : Loaded(barcode, best, path ?? best.Path, fromCopy: true);
+        return best is null ? null : Copy(barcode, best, path);
     }
 
-    static bool SameName(string path, string name) =>
-        string.Equals(System.IO.Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase);
-
-    static bool Better(Read a, Read b, string? name)
+    OrderDocumentLoad Copy(Barcode barcode, Read read, string? path)
     {
-        if (name is not null && SameName(a.Path, name) != SameName(b.Path, name)) return SameName(a.Path, name);
+        // Shown again, maybe from memory: the copy on this PC is in use, so prune keeps it.
+        _ = Task.Run(() => Keep(read));
+        return Loaded(barcode, read, fromCopy: true) with { OlderVersion = path is not null && !IsVersion(read, path) };
+    }
+
+    // Whether the read is the share's file at path, or its copy on this PC.
+    bool IsVersion(Read read, string path) =>
+        read.IsCopy ? Cache?.IsCopyOf(read.Path, path) == true : string.Equals(read.Path, path, StringComparison.OrdinalIgnoreCase);
+
+    bool Better(Read a, Read b, string? path)
+    {
+        if (path is not null && IsVersion(a, path) != IsVersion(b, path)) return IsVersion(a, path);
         return (a.Date ?? DateOnly.MinValue) > (b.Date ?? DateOnly.MinValue);
     }
 
@@ -185,7 +212,28 @@ public sealed class OrderDocuments
         catch (Exception) { return false; }
     }
 
-    Task<Read> ReadCached(string path, bool save)
+    // Reads (or finds in memory) the file in the background, then keeps its copy on this PC fresh.
+    Task<Read> ReadAndKeep(string path, bool isCopy) => Task.Run(async () =>
+    {
+        var read = await ReadCached(path, isCopy).ConfigureAwait(false);
+        Keep(read);
+        return read;
+    }, CancellationToken.None);
+
+    // A document shown keeps its copy on this PC: touched, or saved again if it went, so a copy read
+    // daily from memory isn't pruned after MaxAge. A failed copy only means no copy.
+    void Keep(Read read)
+    {
+        if (Cache is not { } cache || read.Document.PageCount == 0) return;
+        try
+        {
+            if (read.IsCopy) cache.Touch(read.Path);
+            else cache.Keep(read.Path, read.Pdf);
+        }
+        catch (Exception) { }
+    }
+
+    Task<Read> ReadCached(string path, bool isCopy)
     {
         // The write time and size say whether the cached copy is still this file.
         var info = new FileInfo(path);
@@ -202,7 +250,7 @@ public sealed class OrderDocuments
                 _cache.Add(hit);
                 return hit.Task;
             }
-            var cache = save ? Cache : null;
+            var cache = isCopy ? null : Cache;
             var task = Task.Run(() =>
             {
                 var bytes = _readFile(path);
@@ -214,7 +262,7 @@ public sealed class OrderDocuments
                     try { cache.Save(path, bytes); }
                     catch (Exception) { }
                 }
-                return new Read(doc, bytes, key, path, order, date);
+                return new Read(doc, bytes, key, path, isCopy, order, date);
             });
             _cache.Add((key, task));
             if (_cache.Count > MaxCached) _cache.RemoveAt(0);
@@ -234,14 +282,17 @@ public sealed class OrderDocuments
     };
 }
 
-// Copies of the order PDFs on this PC, by their file name, for when the share can't be reached. A PDF
-// is saved here each time it is read from the share. A copy not saved again for MaxAge (7 days) goes,
-// and only the newest MaxFiles (200) are kept.
+// Copies of the order PDFs on this PC, for when the share can't be reached. A PDF is saved here each
+// time it is read from the share, named by NameFor: its file name behind a short hash of its folder, so
+// files of the same name in two subfolders keep a copy each, and the name still gives order and date.
+// A copy not saved or touched for MaxAge (7 days) goes, and only the newest MaxFiles (200) are kept.
 public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
 {
     public const int MaxFiles = 200;
     public static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
     static readonly TimeSpan PruneEvery = TimeSpan.FromHours(1);
+    // A copy in use is touched at most this often.
+    static readonly TimeSpan TouchEvery = TimeSpan.FromHours(1);
 
     readonly TimeProvider _time = time ?? TimeProvider.System;
     readonly object _gate = new();
@@ -249,12 +300,30 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
 
     public string Folder { get; } = folder;
 
+    // The copy's file name for a file on the share: "c<hash of its folder>_<its name>". The prefix holds
+    // a letter, so TryParseFileName skips it like BE_.
+    public static string NameFor(string sourcePath)
+    {
+        var dir = (Path.GetDirectoryName(sourcePath) ?? "").TrimEnd('\\', '/').ToUpperInvariant();
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(dir));
+        return $"c{Convert.ToHexStringLower(hash, 0, 4)}_{Path.GetFileName(sourcePath)}";
+    }
+
+    // Whether the copy is of that file on the share.
+    public bool IsCopyOf(string copyPath, string sourcePath) =>
+        string.Equals(Path.GetFileName(copyPath), NameFor(sourcePath), StringComparison.OrdinalIgnoreCase);
+
     public void Save(string sourcePath, byte[] bytes)
     {
         Directory.CreateDirectory(Folder);
-        var target = Path.Combine(Folder, Path.GetFileName(sourcePath));
+        var target = Path.Combine(Folder, NameFor(sourcePath));
         var temp = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllBytes(temp, bytes);
+        // On the disk (not only in Windows' cache) before the move, so a power cut leaves the old copy or the new one.
+        using (var f = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            f.Write(bytes);
+            f.Flush(flushToDisk: true);
+        }
         File.Move(temp, target, overwrite: true);
         var now = _time.GetUtcNow();
         File.SetLastWriteTimeUtc(target, now.UtcDateTime);
@@ -267,13 +336,28 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
         Prune();
     }
 
-    // The copy for an order: the file of that name if there is one, else the newest date in the name.
-    public string? Find(int order, string? fileName = null)
+    // The share's file was shown: its copy is touched, or saved if there is none.
+    public void Keep(string sourcePath, byte[] bytes)
+    {
+        var target = Path.Combine(Folder, NameFor(sourcePath));
+        if (File.Exists(target)) Touch(target);
+        else Save(sourcePath, bytes);
+    }
+
+    // A copy in use: a new write time, so Prune keeps it.
+    public void Touch(string copyPath)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        if (now - File.GetLastWriteTimeUtc(copyPath) > TouchEvery) File.SetLastWriteTimeUtc(copyPath, now);
+    }
+
+    // The copy for an order: the copy of that file on the share if there is one, else the newest date in the name.
+    public string? Find(int order, string? sourcePath = null)
     {
         if (!Directory.Exists(Folder)) return null;
-        if (fileName is not null)
+        if (sourcePath is not null)
         {
-            var named = Path.Combine(Folder, Path.GetFileName(fileName));
+            var named = Path.Combine(Folder, NameFor(sourcePath));
             if (File.Exists(named)) return named;
         }
         string? best = null;

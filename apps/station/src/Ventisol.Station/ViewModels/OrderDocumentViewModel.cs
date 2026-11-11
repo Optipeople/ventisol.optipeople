@@ -33,6 +33,8 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 {
     // Shown after the status line when the document is a copy kept on this PC.
     public const string CopyNote = "Gemt kopi · mappen kan ikke nås lige nu";
+    // The same when the copy is an older version than the file the folder last listed for the order.
+    public const string OlderCopyNote = "Gemt kopi – ældre udgave · mappen kan ikke nås lige nu";
 
     readonly OrderDocuments documents;
 
@@ -53,6 +55,8 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 
     // The document on screen is a copy, because the folder can't be reached right now.
     [ObservableProperty] public partial bool FromCopy { get; private set; }
+    // ... and an older version than the folder lists now.
+    bool _olderCopy;
 
     [ObservableProperty] public partial DocumentState State { get; private set; } = DocumentState.Empty;
     [ObservableProperty] public partial string StationName { get; private set; } = "";
@@ -86,6 +90,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         Target = target;
         _load = null;
         FromCopy = false;
+        _olderCopy = false;
         StationName = target.StationName;
         InProgress = target.InProgress;
         HasElement = target.Barcode is not null;
@@ -147,7 +152,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
             { InProgress: true } => $"I gang på {t.StationName}",
             { At: { } done } => $"Sidst på {t.StationName} · scannet ud {done.ToLocalTime():HH:mm}",
             _ => $"Sidst på {t.StationName}",
-        } + (FromCopy ? " · " + CopyNote : "");
+        } + (FromCopy ? " · " + (_olderCopy ? OlderCopyNote : CopyNote) : "");
     }
 
     public void Close()
@@ -213,9 +218,10 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         var doc = load.Document!;
         if (load.FromCopy)
         {
+            _olderCopy = load.OlderVersion;
             FromCopy = true;
             UpdateStatus(DateTimeOffset.Now);
-            Log.Write($"Order document {load.Path}: shown from a copy, the folder can't be reached");
+            Log.Write($"Order document {load.Path}: shown from a{(load.OlderVersion ? "n older" : "")} copy, the folder can't be reached");
         }
         Sheet = ElementSheet.For(barcode, doc, load.Position);
         HasPdf = load.Pdf is not null;

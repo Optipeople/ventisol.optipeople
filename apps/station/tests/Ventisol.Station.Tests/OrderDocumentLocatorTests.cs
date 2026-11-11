@@ -52,6 +52,10 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     [InlineData("BE_20261022.pdf")]
     [InlineData("BE_X_20261022.pdf")]
     [InlineData("58721_20261022.txt")]
+    // Two numbers before the date: which is the order? Not a guess at the first one.
+    [InlineData("2_58721_20261022.pdf")]
+    [InlineData("BE_2_58721_20261022.pdf")]
+    [InlineData("58721_2_20261022.pdf")]
     public void Other_files_are_not_order_documents(string name) =>
         Assert.False(OrderDocumentLocator.TryParseFileName(name, out _, out _));
 
@@ -157,7 +161,14 @@ public sealed class OrderDocumentLocatorTests : IDisposable
         Assert.Equal("Mappen svarer ikke", first[0].Error);
         Assert.Equal(1, listings);
 
+        // The hung listing took the share down: lookups answer at once, without listing again.
+        Assert.True(locator.IsDown);
+        Assert.Equal(OrderDocumentStatus.FolderUnavailable, (await locator.FindAsync(58721)).Status);
+
         gate.Set();
+        // The listing gets through after all: the share is up again and the index filled.
+        for (var i = 0; i < 100 && locator.IndexedOrders is null; i++) await Task.Delay(50);
+        Assert.False(locator.IsDown);
         var found = await locator.FindAsync(58721);
         Assert.Equal(OrderDocumentStatus.Found, found.Status);
         Assert.Equal(1, listings);
@@ -208,14 +219,17 @@ public sealed class OrderDocumentLocatorTests : IDisposable
         Assert.Equal("Mappen kan ikke læses", locator.LastError);
         Assert.Equal(2, listings);
 
-        // Right after a failed listing the share isn't asked again.
+        // For DownFor after a failed listing the share isn't asked again.
+        Assert.True(locator.IsDown);
+        time.Now += locator.DownFor - TimeSpan.FromSeconds(1);
         Assert.Equal(OrderDocumentStatus.Found, (await locator.FindAsync(58721)).Status);
         Assert.Equal(OrderDocumentStatus.FolderUnavailable, (await locator.FindAsync(1)).Status);
         Assert.Equal(2, listings);
 
-        // Back again: a new listing replaces the index.
+        // Then it is tried again, and back again a new listing replaces the index.
         down = false;
-        time.Now += TimeSpan.FromSeconds(5);
+        time.Now += TimeSpan.FromSeconds(2);
+        Assert.False(locator.IsDown);
         Assert.Equal(OrderDocumentStatus.Found, (await locator.FindAsync(58721)).Status);
         Assert.Equal(3, listings);
         Assert.Null(locator.LastError);

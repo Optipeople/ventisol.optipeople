@@ -147,17 +147,20 @@ public sealed class OrderDocumentsTests : IDisposable
     [Fact]
     public async Task A_copy_on_this_pc_answers_when_the_share_is_gone_even_after_a_restart()
     {
-        Share("BE_58721_20261022.pdf");
+        var shared = Share("BE_58721_20261022.pdf");
         var cache = new OrderDocumentCache(Path.Combine(_root, "cache"));
         var before = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: cache);
         Assert.Equal(OrderDocumentLoadStatus.Ready, (await before.LoadAsync(Code("058721010101"))).Status);
-        Assert.True(File.Exists(Path.Combine(_root, "cache", "BE_58721_20261022.pdf")));
+        var kept = Path.Combine(_root, "cache", OrderDocumentCache.NameFor(shared));
+        Assert.True(File.Exists(kept));
 
         Directory.Delete(Path.Combine(_root, "share"), recursive: true);
         var after = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: cache);
         var load = await after.LoadAsync(Code("058721010101"));
         Assert.Equal(OrderDocumentLoadStatus.Ready, load.Status);
         Assert.True(load.FromCopy);
+        Assert.False(load.OlderVersion);
+        Assert.Equal(kept, load.Path);
         Assert.Equal(1, load.Document!.PageCount);
 
         // An order never read before has no copy: the folder is still unavailable.
@@ -178,7 +181,7 @@ public sealed class OrderDocumentsTests : IDisposable
         Assert.False(load.FromCopy);
         Assert.Equal(newest, load.Path);
         // And the copy on this PC is the newest one now.
-        Assert.Equal(Path.Combine(cacheDir, "TE_58721_20261105.pdf"), new OrderDocumentCache(cacheDir).Find(58721));
+        Assert.Equal(Path.Combine(cacheDir, OrderDocumentCache.NameFor(newest)), new OrderDocumentCache(cacheDir).Find(58721));
     }
 
     [Fact]
@@ -206,18 +209,128 @@ public sealed class OrderDocumentsTests : IDisposable
     }
 
     [Fact]
-    public void The_copy_for_an_order_is_the_named_file_else_the_newest_date()
+    public void The_copy_for_an_order_is_the_copy_of_that_file_else_the_newest_date()
     {
         var dir = Path.Combine(_root, "cache");
-        Directory.CreateDirectory(dir);
-        foreach (var name in new[] { "58721_20261001.pdf", "BE_58721_20261105.pdf", "58800_20261201.pdf" })
-            File.WriteAllBytes(Path.Combine(dir, name), [1]);
         var cache = new OrderDocumentCache(dir);
+        foreach (var source in new[] { @"R:\x\58721_20261001.pdf", @"R:\BE_58721_20261105.pdf", @"R:\58800_20261201.pdf" })
+            cache.Save(source, [1]);
+        // An older copy saved by its plain name still counts.
+        File.WriteAllBytes(Path.Combine(dir, "58721_20260901.pdf"), [1]);
 
-        Assert.Equal(Path.Combine(dir, "BE_58721_20261105.pdf"), cache.Find(58721));
-        Assert.Equal(Path.Combine(dir, "58721_20261001.pdf"), cache.Find(58721, @"R:\x\58721_20261001.pdf"));
+        Assert.Equal(Path.Combine(dir, OrderDocumentCache.NameFor(@"R:\BE_58721_20261105.pdf")), cache.Find(58721));
+        Assert.Equal(Path.Combine(dir, OrderDocumentCache.NameFor(@"R:\x\58721_20261001.pdf")), cache.Find(58721, @"R:\x\58721_20261001.pdf"));
         Assert.Null(cache.Find(12345));
         Assert.Null(new OrderDocumentCache(Path.Combine(_root, "nope")).Find(58721));
+    }
+
+    [Fact]
+    public void Files_of_the_same_name_in_two_subfolders_keep_a_copy_each()
+    {
+        var cache = new OrderDocumentCache(Path.Combine(_root, "cache"));
+        cache.Save(@"R:\a\58800_20261022.pdf", [1]);
+        cache.Save(@"R:\b\58800_20261022.pdf", [2]);
+
+        var a = cache.Find(58800, @"R:\a\58800_20261022.pdf")!;
+        Assert.Equal([1], File.ReadAllBytes(a));
+        Assert.Equal([2], File.ReadAllBytes(cache.Find(58800, @"R:\b\58800_20261022.pdf")!));
+        Assert.True(cache.IsCopyOf(a, @"R:\a\58800_20261022.pdf"));
+        Assert.False(cache.IsCopyOf(a, @"R:\b\58800_20261022.pdf"));
+    }
+
+    sealed class ManualTime(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    [Fact]
+    public async Task While_the_share_hangs_scans_go_straight_to_the_copy_then_the_share_is_tried_again()
+    {
+        var slow = Share("58721_20261022.pdf");
+        Share("58800_20261022.pdf");
+        var time = new ManualTime(new DateTimeOffset(2026, 11, 10, 8, 0, 0, TimeSpan.Zero));
+        var locator = new OrderDocumentLocator(Path.Combine(_root, "share"), time);
+        using var gate = new ManualResetEventSlim();
+        var reads = new List<string>();
+        var docs = new OrderDocuments(locator, p =>
+        {
+            lock (reads) reads.Add(Path.GetFileName(p));
+            if (p == slow) gate.Wait(TimeSpan.FromSeconds(10));
+            return File.ReadAllBytes(p);
+        }) { ReadTimeout = TimeSpan.FromMilliseconds(200) };
+
+        // 58721's file hangs: that scan waits ReadTimeout once and takes the share as down.
+        Assert.Equal(OrderDocumentLoadStatus.Unreadable, (await docs.LoadAsync(Code("058721010101"))).Status);
+        Assert.True(locator.IsDown);
+
+        // The next scan doesn't ask the share at all: no copy, so the folder is unavailable, at once.
+        var down = await docs.LoadAsync(Code("058800010101"));
+        Assert.Equal(OrderDocumentLoadStatus.FolderUnavailable, down.Status);
+        lock (reads) Assert.DoesNotContain("58800_20261022.pdf", reads);
+
+        // After DownFor the share is tried again and answers.
+        time.Now += locator.DownFor + TimeSpan.FromSeconds(1);
+        var back = await docs.LoadAsync(Code("058800010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, back.Status);
+        Assert.False(back.FromCopy);
+        lock (reads) Assert.Contains("58800_20261022.pdf", reads);
+        gate.Set();
+    }
+
+    [Fact]
+    public async Task A_gone_share_keeps_the_index_but_a_gone_file_is_looked_for_again()
+    {
+        var entry = new OrderDocumentLocator.Entry(Path.Combine(_root, "share", "58721_20261022.pdf"), 58721, new DateOnly(2026, 10, 22), default);
+
+        // The share itself can't be reached and there is no copy: unavailable, and the index stays.
+        var gone = new OrderDocumentLocator(Path.Combine(_root, "share"), list: (_, _) => [entry]);
+        var load = await new OrderDocuments(gone).LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.FolderUnavailable, load.Status);
+        Assert.True(gone.Has(58721));
+        Assert.True(gone.IsDown);
+
+        // The folder is there, the file isn't: unreadable, and the index is dropped to look again.
+        Directory.CreateDirectory(Path.Combine(_root, "share"));
+        var moved = new OrderDocumentLocator(Path.Combine(_root, "share"), list: (_, _) => [entry]);
+        load = await new OrderDocuments(moved).LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Unreadable, load.Status);
+        Assert.Equal("Filen findes ikke længere", load.Error);
+        Assert.False(moved.Has(58721));
+        Assert.False(moved.IsDown);
+    }
+
+    [Fact]
+    public async Task An_older_copy_says_so_and_names_the_file_it_read()
+    {
+        var cache = new OrderDocumentCache(Path.Combine(_root, "cache"));
+        var old = Path.Combine(_root, "share", "58721_20261001.pdf");
+        cache.Save(old, BlankPdf());
+        // The folder lists a newer version, never read on this PC, then the share goes.
+        Share("TE_58721_20261105.pdf");
+        var locator = new OrderDocumentLocator(Path.Combine(_root, "share"));
+        await locator.RefreshAsync();
+        Directory.Delete(Path.Combine(_root, "share"), recursive: true);
+
+        var load = await new OrderDocuments(locator, cache: cache).LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, load.Status);
+        Assert.True(load.FromCopy);
+        Assert.True(load.OlderVersion);
+        Assert.Equal(cache.Find(58721, old), load.Path);
+    }
+
+    [Fact]
+    public async Task A_copy_shown_again_from_memory_is_touched_so_prune_keeps_it()
+    {
+        var shared = Share("58721_20261022.pdf");
+        var cache = new OrderDocumentCache(Path.Combine(_root, "cache"));
+        var docs = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: cache);
+        await docs.LoadAsync(Code("058721010101"));
+        var kept = cache.Find(58721, shared)!;
+        File.SetLastWriteTimeUtc(kept, DateTime.UtcNow.AddDays(-6));
+
+        await docs.LoadAsync(Code("058721010102"));
+        Assert.True(DateTime.UtcNow - File.GetLastWriteTimeUtc(kept) < TimeSpan.FromHours(1));
     }
 
     [Fact]

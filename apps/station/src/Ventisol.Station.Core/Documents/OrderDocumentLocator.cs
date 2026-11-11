@@ -26,15 +26,17 @@ public sealed record OrderDocumentFolderStatus(bool Available, int Orders, int F
 // (30 s), and listed again when that is up or when an order isn't in the index (at most every
 // MissRefreshAfter, 3 s). A listing that takes longer than Timeout (10 s) answers FolderUnavailable,
 // or from the last index if there is one, and goes on in the background to fill the index.
-// A listing that fails (the share is gone for a while, say the internet is down) keeps the last good
-// index with its time, so lookups and Has go on answering from it; while a listing is still under way,
-// or one failed less than MissRefreshAfter ago, a lookup the last index knows answers from it at once.
-// One listing runs at a time; callers share it.
+// A listing that fails or hangs (the share is gone for a while, say the internet is down) keeps the last
+// good index with its time, and the share counts as down for DownFor (45 s): lookups answer from the
+// last index at once (else FolderUnavailable) without asking the share, then it is tried again.
+// OrderDocuments marks it down too when a file read hangs or the share can't be reached. While a listing
+// is under way, a lookup the last index knows answers from it at once. One listing runs at a time.
 public sealed partial class OrderDocumentLocator
 {
     public static readonly TimeSpan DefaultRefreshAfter = TimeSpan.FromSeconds(30);
     public static readonly TimeSpan DefaultMissRefreshAfter = TimeSpan.FromSeconds(3);
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan DefaultDownFor = TimeSpan.FromSeconds(45);
 
     // A file found in the folder.
     public sealed record Entry(string Path, int Order, DateOnly? Date, DateTime WriteTimeUtc);
@@ -47,7 +49,8 @@ public sealed partial class OrderDocumentLocator
     Index? _index;
     Task<Index>? _listing;
     string? _lastError;
-    DateTimeOffset? _failedAt;
+    // Until then the share counts as down: lookups answer from the last index without asking it.
+    DateTimeOffset? _downUntil;
 
     public OrderDocumentLocator(string? folder, TimeProvider? time = null, Func<string, CancellationToken, IReadOnlyList<Entry>>? list = null)
     {
@@ -60,6 +63,7 @@ public sealed partial class OrderDocumentLocator
     public TimeSpan RefreshAfter { get; init; } = DefaultRefreshAfter;
     public TimeSpan MissRefreshAfter { get; init; } = DefaultMissRefreshAfter;
     public TimeSpan Timeout { get; init; } = DefaultTimeout;
+    public TimeSpan DownFor { get; init; } = DefaultDownFor;
 
     // The orders in the last index, or null before the first listing has finished.
     public int? IndexedOrders { get { lock (_gate) return _index?.Best.Count; } }
@@ -77,12 +81,11 @@ public sealed partial class OrderDocumentLocator
     {
         if (Folder is null) return new(order, OrderDocumentStatus.Off);
 
-        Index? index;
-        bool listing;
-        DateTimeOffset? failedAt;
-        string? lastError;
-        lock (_gate) (index, listing, failedAt, lastError) = (_index, _listing is not null, _failedAt, _lastError);
         var now = _time.GetUtcNow();
+        Index? index;
+        bool down, listing;
+        string? lastError;
+        lock (_gate) (index, down, listing, lastError) = (_index, Down(now), _listing is { IsCompleted: false }, _lastError);
 
         if (index is not null && now - index.At < RefreshAfter)
         {
@@ -90,19 +93,18 @@ public sealed partial class OrderDocumentLocator
             if (now - index.At < MissRefreshAfter) return new(order, OrderDocumentStatus.NotFound);
         }
 
-        // The share is slow or just failed: don't wait for it again, the last index still knows.
-        if (index is not null && index.Best.TryGetValue(order, out var known) && (listing || failedAt is { } f && now - f < MissRefreshAfter))
-            return Found(order, known);
-        if (failedAt is { } failed && now - failed < MissRefreshAfter)
-            return new(order, OrderDocumentStatus.FolderUnavailable, Error: lastError);
+        var known = index?.Best.GetValueOrDefault(order);
+        // The share failed or hung a moment ago: don't wait for it again, the last index answers until DownFor is up.
+        if (down) return known is not null ? Found(order, known) : new(order, OrderDocumentStatus.FolderUnavailable, Error: lastError);
+        // A listing is under way and the last index knows the order: no need to wait for it.
+        if (known is not null && listing) return Found(order, known);
 
         var (fresh, error) = await ListAsync(ct).ConfigureAwait(false);
         if (fresh is not null)
             return fresh.Best.TryGetValue(order, out var e) ? Found(order, e) : new(order, OrderDocumentStatus.NotFound);
 
         // No new listing in time: the last one still says where the file was, if it knew.
-        if (index is not null && index.Best.TryGetValue(order, out var old)) return Found(order, old);
-        return new(order, OrderDocumentStatus.FolderUnavailable, Error: error);
+        return known is not null ? Found(order, known) : new(order, OrderDocumentStatus.FolderUnavailable, Error: error);
     }
 
     // Lists the folder now (sharing a listing already under way), for the setup screen's status line.
@@ -123,16 +125,39 @@ public sealed partial class OrderDocumentLocator
         lock (_gate) _index = null;
     }
 
+    // Whether the share failed or hung less than DownFor ago, so the folder isn't asked now.
+    public bool IsDown { get { lock (_gate) return Down(_time.GetUtcNow()); } }
+
+    // The share failed or hung elsewhere (a file read): don't ask it again for DownFor.
+    public void ShareDown(string error)
+    {
+        lock (_gate) MarkDown(error);
+    }
+
+    // The share answered after all (a slow read got through): ask it again from the next lookup.
+    public void ShareAnswered()
+    {
+        lock (_gate) _downUntil = null;
+    }
+
+    bool Down(DateTimeOffset now) => _downUntil is { } until && now < until;
+
+    // Under the lock.
+    void MarkDown(string error)
+    {
+        _lastError = error;
+        _downUntil = _time.GetUtcNow() + DownFor;
+    }
+
     async Task<(Index? Index, string? Error)> ListAsync(CancellationToken ct)
     {
         Task<Index> listing;
         lock (_gate)
         {
-            if (_listing is null)
+            if (_listing is not { IsCompleted: false })
             {
                 var folder = Folder!;
                 _listing = Task.Run(() => Build(folder), CancellationToken.None);
-                _ = _listing.ContinueWith(Done, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             }
             listing = _listing;
         }
@@ -143,7 +168,10 @@ public sealed partial class OrderDocumentLocator
         }
         catch (TimeoutException)
         {
-            return (null, "Mappen svarer ikke");
+            // The listing hangs: the share is down until it gets through or DownFor is up.
+            const string error = "Mappen svarer ikke";
+            lock (_gate) if (!listing.IsCompleted) MarkDown(error);
+            return (null, error);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -155,28 +183,26 @@ public sealed partial class OrderDocumentLocator
         }
     }
 
+    // The index, the error and the down time are set here, before the listing task completes, so a
+    // caller that awaited it sees them at once.
     Index Build(string folder)
     {
-        var files = _list(folder, CancellationToken.None);
-        var best = new Dictionary<int, Entry>();
-        foreach (var f in files)
-            if (!best.TryGetValue(f.Order, out var have) || Newer(f, have)) best[f.Order] = f;
-        return new Index(best, files.Count, _time.GetUtcNow());
-    }
-
-    void Done(Task<Index> t)
-    {
-        lock (_gate)
+        try
         {
-            if (t.IsCompletedSuccessfully) { _index = t.Result; _lastError = null; _failedAt = null; }
-            else
-            {
-                // An unreadable folder keeps the last good index (and its time): the share is often only
-                // gone for a few minutes, and the documents read from it are kept as copies.
-                _lastError = t.Exception is { } ex ? Describe(ex.GetBaseException()) : "Mappen kan ikke læses";
-                _failedAt = _time.GetUtcNow();
-            }
-            if (_listing == t) _listing = null;
+            var files = _list(folder, CancellationToken.None);
+            var best = new Dictionary<int, Entry>();
+            foreach (var f in files)
+                if (!best.TryGetValue(f.Order, out var have) || Newer(f, have)) best[f.Order] = f;
+            var index = new Index(best, files.Count, _time.GetUtcNow());
+            lock (_gate) (_index, _lastError, _downUntil) = (index, null, null);
+            return index;
+        }
+        catch (Exception ex)
+        {
+            // An unreadable folder keeps the last good index (and its time): the share is often only
+            // gone for a few minutes, and the documents read from it are kept as copies.
+            lock (_gate) MarkDown(Describe(ex));
+            throw;
         }
     }
 
@@ -199,9 +225,10 @@ public sealed partial class OrderDocumentLocator
         _ => "Mappen kan ikke læses",
     };
 
-    // The name is parts split by "_". The last part is the print date, the order is the first part
-    // before it that is all digits, so a prefix of letters is skipped: "58721_20261022.pdf" and
-    // "BE_58721_20261022.pdf" (or TE_, RKK_ ...) both give order 58721 and 22 October 2026.
+    // The name is parts split by "_". The last part is the print date, the part before it the order
+    // (all digits), and any parts before that a prefix that must hold a letter: "58721_20261022.pdf" and
+    // "BE_58721_20261022.pdf" (or TE_, RKK_ ...) both give order 58721 and 22 October 2026, while
+    // "2_58721_20261022.pdf" is no order document (which number would be the order?).
     // A last part that isn't a date still counts, with no date.
     public static bool TryParseFileName(string fileName, out int order, out DateOnly? date)
     {
@@ -211,8 +238,9 @@ public sealed partial class OrderDocumentLocator
         if (!m.Success) return false;
         var parts = m.Groups[1].Value.Split('_');
         if (parts.Length < 2) return false;
-        var orderPart = parts[..^1].FirstOrDefault(OrderPartRegex().IsMatch);
-        if (orderPart is null || !int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out order)) return false;
+        var orderPart = parts[^2];
+        if (!OrderPartRegex().IsMatch(orderPart) || !parts[..^2].All(p => p.Any(char.IsLetter))) return false;
+        if (!int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out order)) return false;
         if (DateOnly.TryParseExact(parts[^1], "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) date = d;
         return true;
     }
