@@ -45,13 +45,33 @@ on the screen and not stored.
 No column is required. `DurationSec` is left out of the row on `In`, not sent as null.
 `MachineId` is an empty string when the station has no machine.
 
-`MasterDataColumnType` in the swagger has nine values (0 to 8); only 0 to 6 are known here
-(String, Decimal, Int, DateTime, Bool, Long, Lookup). `GetColumns` may return `dataType` as the
+`MasterDataColumnType` in the swagger has nine values (0 to 8): String, Decimal, Int, DateTime,
+Bool, Long, Lookup, Link (7, value `{ name, url }`) and Blob (8, a file, see Files in a list). `GetColumns` may return `dataType` as the
 number or as the name; the app accepts both. `GetTables` takes `includeHidden` (default false);
 the app does not set it, so a table hidden in OptiCloud would not be found and a second one made.
 
 Row values come back keyed by column name; match names case-insensitively (the API may
 camelCase them).
+
+## Files in a list
+
+Tried on 2026-11-11 in the Ventisol account with two order PDFs (7 and 67 KB) in a throwaway list.
+Nothing in the apps uses it yet.
+
+- `POST /api/MasterDataBlob/Upload/{tableId}` (multipart, field `file`) stores the file and answers
+  `data: { name, contentType, reference }`. `reference` is
+  `masterdata/<accountId>/<tableId>/<new uuid>.pdf`. The same file sent twice gives two references.
+- The upload alone makes no row. Put the answer in a Blob column (`dataType` 8) of a row:
+  `values: { File: { name, contentType, reference } }`. A plain string is taken as the reference
+  with `name` and `contentType` null. Rows read back as `{ contentType, name, reference }`.
+- `GET /api/MasterDataBlob/GetTempUrl?path=<reference>&fileName=&contentType=&disposition=inline`
+  answers `data` as a read-only Azure Blob link, valid about 30 minutes, that opens without a
+  login (served as `application/pdf`, inline). `GET /api/MasterDataBlob/Get?path=...` returns the
+  bytes and needs the bearer token (401 without). Both gave back the exact bytes.
+- Permanently deleting the list deleted the files its rows pointed to (also behind a temp link
+  already handed out). A file uploaded but never put in a row stayed, and there is no endpoint to
+  delete a file: always write the row, and never upload what may not be kept.
+- Not tried: a size limit, other file types, what deleting or updating a single row does to its file.
 
 ## Writing
 
