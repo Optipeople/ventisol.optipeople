@@ -6,12 +6,22 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
+    <!-- For the tray icon (TrayIcon.cs): WPF has no NotifyIcon of its own. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- That analyzer is for WinForms apps; this is a WPF app, which takes its DPI mode from app.manifest. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <AssemblyName>VentisolStation</AssemblyName>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Program.Main, so Velopack runs before WPF starts. -->
     <StartupObject>Ventisol.Station.Program</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms is only for the tray icon: keep its names out of every WPF file. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Fonts\*.ttf" />

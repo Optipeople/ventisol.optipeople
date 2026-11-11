@@ -50,7 +50,17 @@ public partial class App : Application
         var kiosk = e.Args.Contains("--kiosk", StringComparer.OrdinalIgnoreCase);
         // --showcase starts with sample scans on the screen.
         var showcase = e.Args.Contains("--showcase", StringComparer.OrdinalIgnoreCase);
-        new MainWindow(kiosk, showcase).Show();
+        var window = new MainWindow(kiosk, showcase);
+        window.Show();
+        _tray = new TrayIcon(window, (ViewModels.MainViewModel)window.DataContext);
+    }
+
+    TrayIcon? _tray;
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _tray?.Dispose();
+        base.OnExit(e);
     }
 
     // A new instance takes over once this one has closed (Program waits for the single-instance lock).
