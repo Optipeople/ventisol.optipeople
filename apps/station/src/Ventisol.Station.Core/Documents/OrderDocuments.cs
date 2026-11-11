@@ -54,6 +54,15 @@ public sealed class OrderDocuments
 
     public bool IsOn => _locator.Folder is not null;
     public string? Folder => _locator.Folder;
+
+    // Whether the order has a PDF in the folder as last listed; false when unknown. Never waits.
+    public bool Has(int order) => _locator.Has(order);
+
+    // Lists the folder in the background, so Has knows the orders before the first scan.
+    public void Warm()
+    {
+        if (IsOn) _ = _locator.RefreshAsync();
+    }
     public TimeSpan ReadTimeout { get; init; } = DefaultReadTimeout;
 
     public async Task<OrderDocumentLoad> LoadAsync(Barcode barcode, CancellationToken ct = default)

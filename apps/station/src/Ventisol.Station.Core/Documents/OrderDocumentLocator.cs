@@ -59,6 +59,12 @@ public sealed partial class OrderDocumentLocator
     // The orders in the last index, or null before the first listing has finished.
     public int? IndexedOrders { get { lock (_gate) return _index?.Best.Count; } }
 
+    // Whether the last index has a PDF for the order, without listing the folder. False when unknown.
+    public bool Has(int order)
+    {
+        lock (_gate) return _index?.Best.ContainsKey(order) == true;
+    }
+
     public async Task<OrderDocumentLookup> FindAsync(int order, CancellationToken ct = default)
     {
         if (Folder is null) return new(order, OrderDocumentStatus.Off);

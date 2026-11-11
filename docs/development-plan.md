@@ -112,7 +112,7 @@ From the physical sample (`context/IMG_4723.jpg`, `context/IMG_4724.jpg`), a pal
 - The Schirmer XML `Barcode` field is 14 digits (e.g. `05866002010301`), not 12. Profile labels from the saw come in two 14-digit layouts, both seen in production scans on 2026-11-11:
   - `0 58830 03 01 01 14`: 0, order, position, sub-position, piece, profile number.
   - `03 0 58830 01 01 05`: position, 0, order, sub-position, piece, profile number.
-  The station reads both as the 12-digit element (`058830030101`), telling them apart by the third digit (0 only in the second layout; this fails for orders 50000-50999 and 60000-60999 in the first). A scanner can read one label twice within 0.3 s, so a repeat of the same element at the same station within 2 s is ignored.
+  The station reads both as the 12-digit element (`058830030101`). Many labels fit only one layout. Some fit both: a position below 10 in the second layout (`03058830…` also reads as order 30588), and from order 60000 on, every first-layout label for orders X0xxx. Then, in turn (`Barcode.Element`): a reading with an order below 58000 loses (orders only grow); an order with a PDF in the 3E folder beats one without; the order nearer the last order scanned wins (kept in `last-order.txt` across restarts); else the lower order wins. A scanner can read one label twice within 0.3 s, so a repeat of the same element at the same station within 2 s is ignored.
 
 ## Advice: scanners on one PC
 

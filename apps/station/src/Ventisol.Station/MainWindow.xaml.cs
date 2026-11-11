@@ -57,7 +57,15 @@ public partial class MainWindow : Window
     public MainWindow(bool kiosk, bool showcase)
     {
         InitializeComponent();
-        _vm = new MainViewModel(_settings.Stations.Select(s => s.Config)) { IsViewer = _settings.Mode == StationMode.Viewer };
+        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder));
+        _documents.Warm();
+        _vm = new MainViewModel(_settings.Stations.Select(s => s.Config))
+        {
+            IsViewer = _settings.Mode == StationMode.Viewer,
+            OrderExists = _documents.Has,
+            LastOrder = ReadLastOrder(),
+        };
+        _vm.LastOrderChanged += (_, order) => SaveLastOrder(order);
         DataContext = _vm;
         _demo = new DemoScanner(_vm);
         _kiosk = kiosk;
@@ -65,7 +73,6 @@ public partial class MainWindow : Window
         var (layout, widgets) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
         _layout = layout;
         foreach (var spec in widgets) _vm.AddWidget(spec);
-        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder));
         _document = new OrderDocumentViewModel(_documents);
         foreach (var s in _vm.Stations)
         {
@@ -272,6 +279,22 @@ public partial class MainWindow : Window
         if (_settings.Mode == StationMode.Viewer) { Log.Write($"Scan on a viewer, ignored: {scan.Raw}"); return; }
         if (StationFor(scan.ScannerId) is { } n) _vm.Scan(n, scan.Raw, scan.At);
         else Log.Write($"Scan from scanner {scan.ScannerId}, which no station has: {scan.Raw}");
+    }
+
+    // The order of the last element scanned, kept so a label that fits both barcode layouts is read
+    // right from the first scan after a restart too.
+    static readonly string LastOrderFile = System.IO.Path.Combine(AppPaths.Data, "last-order.txt");
+
+    static int? ReadLastOrder()
+    {
+        try { return int.TryParse(System.IO.File.ReadAllText(LastOrderFile).Trim(), out var o) ? o : null; }
+        catch { return null; }
+    }
+
+    static void SaveLastOrder(int order)
+    {
+        try { System.IO.File.WriteAllText(LastOrderFile, order.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        catch (Exception e) { Log.Write($"Last order not saved: {e.Message}"); }
     }
 
     static string Visible(string raw) =>

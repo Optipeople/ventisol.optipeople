@@ -58,6 +58,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     readonly RepeatScans _repeats = new();
 
+    // Whether an order is known to exist (an order PDF), to read a label that fits both barcode layouts.
+    public Func<int, bool>? OrderExists { get; init; }
+
+    // The order of the last element read here (kept across restarts by the window), or else of the last
+    // one done today: the work going on now.
+    int? _lastOrder;
+    public int? LastOrder { get => _lastOrder; init => _lastOrder = value; }
+    OrderHints Hints => new(OrderExists, _lastOrder ?? History.MaxBy(r => r.End)?.Barcode.Order);
+
+    // Raised when a scan reads an order other than the last one, so the window can keep it.
+    public event EventHandler<int>? LastOrderChanged;
+
     // A scan from scanner n. The raw text is exactly what the scanner sent.
     public void Scan(int scannerNumber, string raw, DateTimeOffset now)
     {
@@ -65,8 +77,13 @@ public sealed partial class MainViewModel : ObservableObject
         if (station is null) return;
         LastScanAt = now;
 
-        if (Barcode.TryParse(raw, out var barcode))
+        if (Barcode.TryParse(raw, out var barcode, Hints))
         {
+            if (_lastOrder != barcode.Order)
+            {
+                _lastOrder = barcode.Order;
+                LastOrderChanged?.Invoke(this, barcode.Order);
+            }
             // The scanner read the label twice: the second read would scan it straight out again.
             if (_repeats.IsRepeat(station.Number, barcode, now)) return;
             var result = station.Scan(barcode, now);
