@@ -57,6 +57,20 @@ public sealed class ScanJournalTests : IDisposable
     }
 
     [Fact]
+    public void An_old_day_with_a_scan_still_waiting_is_kept()
+    {
+        var journal = new ScanJournal(_folder);
+        var waiting = In("058556050103", 1, Noon.AddDays(-5));
+        journal.Append(waiting);
+        journal.Append(In("058556050102", 2, Noon.AddDays(-4)));
+
+        journal.Prune(Noon, [waiting.ScanId]);
+
+        Assert.Equal([$"{Noon.AddDays(-5):yyyy-MM-dd}.jsonl"], Directory.GetFiles(_folder).Select(Path.GetFileName));
+        Assert.Equal(waiting, journal.Find(waiting.ScanId));
+    }
+
+    [Fact]
     public void A_scan_is_found_by_its_ScanId_on_any_day_kept()
     {
         var journal = new ScanJournal(_folder);

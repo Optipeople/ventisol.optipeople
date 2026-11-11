@@ -2,7 +2,8 @@ namespace Ventisol.Station.Core.Cloud;
 
 // Every scan this station recorded, one JSON line each, a file per local day (yyyy-MM-dd.jsonl).
 // The outbox forgets a scan once it is sent; this keeps it, so a restart shows the day at once,
-// before OptiCloud answers or when it can't be reached. Only the last KeepDays days are kept.
+// before OptiCloud answers or when it can't be reached. Only the last KeepDays days are kept
+// (and a day with a scan still waiting in the outbox).
 public sealed class ScanJournal(string folder, Action<string>? log = null)
 {
     public const int KeepDays = 3;
@@ -67,20 +68,29 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
         return null;
     }
 
-    // Days before the last KeepDays (counting today) go.
-    public void Prune(DateTimeOffset now)
+    // Days before the last KeepDays (counting today) go, except a day holding a scan in waiting:
+    // the outbox may still need it to rebuild a file (an outage longer than KeepDays).
+    public void Prune(DateTimeOffset now, IReadOnlyCollection<Guid>? waiting = null)
     {
         var keepFrom = LocalDate(now).AddDays(1 - KeepDays);
+        HashSet<Guid>? keep = waiting is { Count: > 0 } ? [.. waiting] : null;
         lock (_gate)
         {
             foreach (var path in Files())
             {
                 if (!DateOnly.TryParseExact(Path.GetFileNameWithoutExtension(path), "yyyy-MM-dd", out var day) || day >= DateOnly.FromDateTime(keepFrom)) continue;
-                try { File.Delete(path); }
+                try
+                {
+                    if (keep is not null && Holds(path, keep)) continue;
+                    File.Delete(path);
+                }
                 catch (Exception x) when (x is IOException or UnauthorizedAccessException) { log?.Invoke($"Journal: {Path.GetFileName(path)} kunne ikke slettes: {x.Message}"); }
             }
         }
     }
+
+    static bool Holds(string path, HashSet<Guid> ids) =>
+        File.ReadLines(path).Any(line => line.Length > 0 && ScanJson.Read(line) is { } e && ids.Contains(e.ScanId));
 
     string PathFor(DateTime day) => Path.Combine(folder, $"{day:yyyy-MM-dd}.jsonl");
 

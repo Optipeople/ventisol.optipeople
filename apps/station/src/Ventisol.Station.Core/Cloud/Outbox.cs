@@ -26,12 +26,14 @@ public sealed class Outbox
     readonly string _folder, _failed;
     readonly Action<string> _log;
     readonly Lock _gate = new();
+    // Counting the files and setting Pending go together, or two threads can leave a stale count.
+    readonly Lock _countGate = new();
     readonly SemaphoreSlim _wake = new(0);
     // Cancelled (and replaced) by Nudge: ends a backoff wait at once.
     CancellationTokenSource _nudge = new();
     // Sent, but the file would not go (a virus scanner holding it...): never sent again from here.
     readonly HashSet<Guid> _sent = [];
-    long _lastTicks;
+    long _lastTicks, _version;
     int _pending, _failedCount;
 
     public Outbox(string folder, Action<string>? log = null)
@@ -79,9 +81,9 @@ public sealed class Outbox
         Changed();
     }
 
-    // Try the oldest waiting scan now: ends a backoff wait (not the one after a wrong password,
-    // which protects the OptiCloud user from being locked out) and wakes an idle sender.
-    // Called on every Add and when the network comes back. Safe from any thread.
+    // Try the oldest waiting scan now: wakes an idle sender and ends a backoff wait after
+    // OptiCloud could not be reached (see NudgeEnds). Called on every Add and when the network
+    // comes back. Safe from any thread; the sender never runs on the caller's thread.
     public void Nudge()
     {
         CancellationTokenSource old;
@@ -90,9 +92,16 @@ public sealed class Outbox
             old = _nudge;
             _nudge = new CancellationTokenSource();
         }
-        old.Cancel();
-        _wake.Release();
+        _ = old.CancelAsync();
+        // One wake-up is enough however many nudges come before the sender looks.
+        if (_wake.CurrentCount == 0) _wake.Release();
     }
+
+    // Only a failure to reach OptiCloud is cut short by a nudge. An answer (a refusal, a 500, no
+    // access) would just come again, so a scan every few seconds must not use up the refusals
+    // before a scan is moved aside; and a wrong password tried often can lock the user out.
+    public static bool NudgeEnds(Exception x) =>
+        x is not OptiCloudException o || o.Status is null && o.Message.StartsWith(OptiCloudException.Unreachable, StringComparison.Ordinal);
 
     CancellationToken NudgeToken()
     {
@@ -100,15 +109,30 @@ public sealed class Outbox
     }
 
     // Waits span unless nudged (the token taken before the try, so a Nudge during it counts).
+    // CancellationToken.None for nudged: the whole span, whatever comes.
     static async Task Pause(Func<TimeSpan, CancellationToken, Task> delay, TimeSpan span, CancellationToken nudged, CancellationToken ct)
     {
+        if (!nudged.CanBeCanceled)
+        {
+            await delay(span, ct);
+            return;
+        }
         using var both = CancellationTokenSource.CreateLinkedTokenSource(ct, nudged);
         try { await delay(span, both.Token); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     // Waiting now, oldest first. A file that can't be read is left for RunAsync to move aside.
-    public IReadOnlyList<ScanEvent> Peek() => [.. Files().Where(f => !IsSent(f)).Select(Read).OfType<ScanEvent>()];
+    public IReadOnlyList<ScanEvent> Peek() => [.. Waiting().Select(Read).OfType<ScanEvent>()];
+
+    // The oldest scan waiting, by the same rule as Peek; null when none.
+    public ScanEvent? Oldest() => Waiting().Select(Read).OfType<ScanEvent>().FirstOrDefault();
+
+    // The ScanIds of the files waiting, also those that can't be read (from the file names).
+    public IReadOnlyList<Guid> WaitingIds() => [.. Waiting().Select(IdOf).OfType<Guid>()];
+
+    // Files not sent yet, oldest first.
+    IEnumerable<string> Waiting() => Files().Where(f => !IsSent(f));
 
     // Moves everything in failed\ back in line, in its old place (the names keep the order).
     // A scan that did get in is recognised by its ScanId when sent again. Returns how many.
@@ -193,13 +217,13 @@ public sealed class Outbox
                         continue;
                     }
                     SendFailed?.Invoke(this, x);
-                    await Pause(delay, Wait(x, failures++), x.IsBadLogin ? CancellationToken.None : nudged, ct);
+                    await Pause(delay, Wait(x, failures++), CancellationToken.None, ct);
                     continue;
                 }
                 catch (OptiCloudException x)
                 {
                     SendFailed?.Invoke(this, x);
-                    await Pause(delay, Wait(x, failures++), x.IsBadLogin ? CancellationToken.None : nudged, ct);
+                    await Pause(delay, Wait(x, failures++), NudgeEnds(x) ? nudged : CancellationToken.None, ct);
                     continue;
                 }
 
@@ -314,9 +338,19 @@ public sealed class Outbox
         }
     }
 
+    // Counted and set under one lock, so the last count wins. Raised outside it; a count a newer
+    // one has overtaken meanwhile is not told, the newer one is.
     void Changed()
     {
-        var n = Files().Count(f => !IsSent(f));
-        if (Interlocked.Exchange(ref _pending, n) != n) PendingChanged?.Invoke(this, n);
+        int n;
+        long version;
+        lock (_countGate)
+        {
+            n = Waiting().Count();
+            if (_pending == n) return;
+            Volatile.Write(ref _pending, n);
+            version = Interlocked.Increment(ref _version);
+        }
+        if (Interlocked.Read(ref _version) == version) PendingChanged?.Invoke(this, n);
     }
 }

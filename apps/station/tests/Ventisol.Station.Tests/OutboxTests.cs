@@ -218,6 +218,7 @@ public sealed class OutboxTests : IDisposable
             Assert.Equal([a], sent);
             Assert.Equal(0, box.Pending);
             Assert.Empty(box.Peek());
+            Assert.Null(box.Oldest());
             Assert.True(File.Exists(file));
         }
 
@@ -330,6 +331,63 @@ public sealed class OutboxTests : IDisposable
 
         Assert.Empty(sent);
         Assert.Equal(2, box.Pending);
+    }
+
+    [Theory]
+    [InlineData(null, false, OptiCloudException.Unreachable, true)]
+    [InlineData(null, false, OptiCloudException.Unreachable + " (intet svar)", true)]
+    [InlineData(400, true, "OptiCloud svarede: nej", false)]
+    [InlineData(500, false, "OptiCloud har en fejl (500)", false)]
+    [InlineData(403, false, OptiCloudException.Forbidden, false)]
+    [InlineData(400, false, OptiCloudException.BadLogin, false)]
+    public void Only_not_reaching_opticloud_is_cut_short_by_a_nudge(int? status, bool rejected, string message, bool ends)
+    {
+        var auth = message is OptiCloudException.Forbidden or OptiCloudException.BadLogin;
+        Assert.Equal(ends, Outbox.NudgeEnds(new OptiCloudException(message, status, rejected, auth)));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Neither_a_nudge_nor_a_new_scan_ends_the_wait_after_a_refusal()
+    {
+        // Else scans every few seconds would use up the refusals before one is moved aside in seconds.
+        var box = new Outbox(_folder);
+        box.Add(In("058556050103", 1, T0));
+        var tokens = new List<CancellationToken>();
+        using var stop = new CancellationTokenSource();
+        var run = box.RunAsync((_, _) => throw new OptiCloudException("OptiCloud svarede: nej", 400, rejected: true), stop.Token, (_, ct) =>
+        {
+            lock (tokens) tokens.Add(ct);
+            return Task.Delay(Timeout.Infinite, ct);
+        });
+        await Until(() => { lock (tokens) return tokens.Count == 1; });
+
+        box.Nudge();
+        box.Add(In("058556050102", 2, T0));
+
+        // The wait hangs on the stop token alone, so nothing but stopping ends it.
+        lock (tokens) Assert.Equal(stop.Token, tokens[0]);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, box.Failed);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Pending_ends_right_with_scans_added_while_others_are_sent()
+    {
+        var box = new Outbox(_folder);
+        using var stop = new CancellationTokenSource();
+        var run = box.RunAsync((_, _) => Task.CompletedTask, stop.Token);
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(t => Task.Run(() =>
+        {
+            for (var i = 0; i < 25; i++) box.Add(In("058556050103", t * 25 + i + 1, T0));
+        })));
+        await Until(() => box.Peek().Count == 0 && box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, box.Pending);
+        Assert.Empty(Directory.GetFiles(_folder, "*.json"));
     }
 
     [Fact(Timeout = 10000)]
