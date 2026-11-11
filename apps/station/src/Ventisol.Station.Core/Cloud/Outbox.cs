@@ -2,7 +2,9 @@ namespace Ventisol.Station.Core.Cloud;
 
 // Scans waiting to be sent, one JSON file each in a folder, so a restart or a network outage
 // never loses one. Files are named by when they were added, so the name order is the send order.
-// A file is written to .tmp and then moved, so a crash never leaves half a scan behind.
+// A file is written to .tmp, flushed to the disk and then moved, so a crash or a power cut never
+// leaves half a scan behind. The name order is kept even if the PC clock goes back (see Add).
+// A file that still can't be read is rebuilt from the journal (Rebuild) or moved to failed\.
 // A scan the server refuses the same way RefusalsBeforeAside times in a row is moved to failed\
 // and logged, not retried forever; RetryFailed puts those back (after the setup is fixed).
 public sealed class Outbox
@@ -39,11 +41,17 @@ public sealed class Outbox
         _log = log ?? (_ => { });
         Directory.CreateDirectory(_folder);
         Recover();
+        // A clock set back (by hand, by a sync) must not put new scans before older ones waiting.
+        _lastTicks = Files().Concat(FailedFiles()).Select(TicksOf).DefaultIfEmpty(0).Max();
         _pending = Files().Count;
         _failedCount = FailedFiles().Count;
     }
 
     public string Folder => _folder;
+
+    // Finds a scan by its ScanId elsewhere (the journal), to rebuild a file that can't be read,
+    // as a power cut can leave one empty. Null, or null back: the file goes to failed\.
+    public Func<Guid, ScanEvent?>? Rebuild { get; set; }
 
     public int Pending => Volatile.Read(ref _pending);
 
@@ -65,9 +73,7 @@ public sealed class Outbox
             var ticks = Math.Max(DateTime.UtcNow.Ticks, _lastTicks + 1);
             _lastTicks = ticks;
             var path = Path.Combine(_folder, $"{ticks:D19}-{e.ScanId:N}.json");
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, ScanJson.Write(e));
-            File.Move(tmp, path, overwrite: true);
+            WriteDurably(path, ScanJson.Write(e));
         }
         Nudge();
         Changed();
@@ -162,7 +168,12 @@ public sealed class Outbox
 
                 if (Read(next) is not { } e)
                 {
-                    MoveAside(next, "kunne ikke læses");
+                    if (IdOf(next) is { } id && Rebuild?.Invoke(id) is { } found && found.ScanId == id)
+                    {
+                        WriteDurably(next, ScanJson.Write(found));
+                        _log($"Outbox: {Path.GetFileName(next)} kunne ikke læses, genskabt fra journalen");
+                    }
+                    else MoveAside(next, "kunne ikke læses og findes ikke i journalen");
                     continue;
                 }
 
@@ -225,6 +236,27 @@ public sealed class Outbox
     {
         if (IdOf(path) is not { } id) return false;
         lock (_gate) return _sent.Contains(id);
+    }
+
+    // Through .tmp, on the disk (not only in Windows' cache) before the move, so a power cut
+    // leaves either the old file, a .tmp Recover sorts out, or the whole new file.
+    static void WriteDurably(string path, string text)
+    {
+        var tmp = path + ".tmp";
+        using (var f = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            f.Write(bytes);
+            f.Flush(flushToDisk: true);
+        }
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    static long TicksOf(string path)
+    {
+        var name = Path.GetFileName(path);
+        var dash = name.IndexOf('-');
+        return dash > 0 && long.TryParse(name.AsSpan(0, dash), out var t) ? t : 0;
     }
 
     // Names are <ticks>-<ScanId>.json.

@@ -20,7 +20,11 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
             var path = PathFor(LocalDate(e.At));
             // A crash mid-line leaves no newline: start a fresh line so only that one scan is lost.
             var broken = File.Exists(path) && !EndsWithNewline(path);
-            File.AppendAllText(path, (broken ? "\n" : "") + ScanJson.Write(e) + "\n");
+            var bytes = System.Text.Encoding.UTF8.GetBytes((broken ? "\n" : "") + ScanJson.Write(e) + "\n");
+            // On the disk before it returns, not only in Windows' cache: a power cut keeps the line.
+            using var f = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            f.Write(bytes);
+            f.Flush(flushToDisk: true);
         }
     }
 
@@ -41,6 +45,26 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
             }
         }
         return [.. found.DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction)];
+    }
+
+    // The scan with this ScanId, newest day first; null if no day kept has it.
+    // Used by the outbox to rebuild a file a power cut left empty.
+    public ScanEvent? Find(Guid scanId)
+    {
+        var key = scanId.ToString();
+        lock (_gate)
+        {
+            foreach (var path in Enumerable.Reverse(Files()))
+            {
+                try
+                {
+                    foreach (var line in File.ReadLines(path))
+                        if (line.Contains(key, StringComparison.OrdinalIgnoreCase) && ScanJson.Read(line) is { } e && e.ScanId == scanId) return e;
+                }
+                catch (Exception x) when (x is IOException or UnauthorizedAccessException) { log?.Invoke($"Journal: {Path.GetFileName(path)}: {x.Message}"); }
+            }
+        }
+        return null;
     }
 
     // Days before the last KeepDays (counting today) go.

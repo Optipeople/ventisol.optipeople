@@ -72,6 +72,8 @@ public sealed class CloudSync : IDisposable
         _outbox = new Outbox(Path.Combine(dataFolder, "outbox"), log);
         // A viewer records nothing, so it has nothing of its own to remember.
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
+        // A file a power cut left empty is rebuilt from the journal, not given up.
+        if (_journal is not null) _outbox.Rebuild = _journal.Find;
         _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
         // Held until the screen has been rebuilt from OptiCloud (SetMachineOrders with rebuilt).
         if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true, verify: MachineOrders.DefaultVerify);
