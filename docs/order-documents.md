@@ -20,6 +20,24 @@ When an operator scans an element in, the station app can show the order's produ
 - The samples are customer data. They live in the untracked `orderdocs/` folder at the repo root on the
   developer's PC and are never committed. Tests that read them skip when the folder is missing.
 
+## The copy in OptiCloud
+
+The list `VentisolOrderDocuments` ("Ventisol ordredokumenter") in the Ventisol account holds one row
+per PDF, so the web and tablets can show them later. It was made by hand on 2026-11-11 with the 26
+samples. Nothing uploads to it or reads it yet: the station app still reads the share.
+
+| Column | Type (`dataType`) | What |
+|---|---|---|
+| `FileName` | String (0), key, unique, required | `58721_20261022.pdf` |
+| `OrderNo` | Int (2) | `58721` |
+| `Prefix` | String (0) | `BE`, empty for an ordinary order |
+| `PrintDate` | DateTime (3) | the date in the name, `2026-10-22T00:00:00Z` |
+| `File` | Blob (8) | `{ name, contentType, reference }` from the upload |
+| `SizeBytes` | Int (2) | size of the file |
+| `Sha256` | String (0) | hex hash of the file, to tell a changed file under the same name |
+
+How upload, the temp link and deleting behave is in [`opticloud-scans.md`](opticloud-scans.md), "Files in a list".
+
 ## What a file looks like
 
 Landscape pages, 839 x 592 pt. Real text (Arial, Arial Bold, Arial Narrow) and vector lines, no form
