@@ -22,13 +22,27 @@ public class BarcodeTests
         Assert.Equal("058556050103", b.Raw);
     }
 
+    [Fact]
+    public void Accepts_11_digit_barcode_without_leading_zero()
+    {
+        Assert.True(Barcode.TryParse("58556050103", out var b));
+        Assert.Equal("058556050103", b.Raw);
+        Assert.Equal(58556, b.Order);
+        Assert.Equal(5, b.Position);
+        Assert.Equal(1, b.SubPosition);
+        Assert.Equal(3, b.Piece);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("05855605010")]
+    [InlineData("0585560501")]
+    [InlineData("05855605010")] // 12 digits with the last one lost, not a missing leading 0
+    [InlineData("05856050103")] // 12 digits with a middle one lost
+    [InlineData("0585560501034")]
     [InlineData("05866002010301")]
     [InlineData("05855605010A")]
-    public void Rejects_anything_but_12_digits(string? text)
+    public void Rejects_invalid_barcodes(string? text)
     {
         Assert.False(Barcode.TryParse(text, out _));
     }

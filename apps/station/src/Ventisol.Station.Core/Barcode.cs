@@ -10,7 +10,13 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     {
         barcode = null;
         var raw = text?.Trim();
-        if (raw is not { Length: 12 } || !raw.All(char.IsAsciiDigit)) return false;
+        if (raw is null || !raw.All(char.IsAsciiDigit)) return false;
+
+        // Some scans arrive without the leading 0. Put it back, but only when the 11 digits start with
+        // the order number (never 0): 11 digits starting with 0 lost a digit elsewhere and would read as
+        // the wrong order, position or piece.
+        if (raw.Length == 11 && raw[0] != '0') raw = "0" + raw;
+        if (raw.Length != 12) return false;
 
         barcode = new Barcode(
             raw,
