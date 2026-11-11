@@ -1,4 +1,5 @@
 using System.Net.NetworkInformation;
+using Ventisol.Station.Core.Documents;
 
 namespace Ventisol.Station.Core.Cloud;
 
@@ -52,6 +53,7 @@ public sealed class CloudSync : IDisposable
     readonly HttpMessageHandler? _handler;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
     readonly Outbox _outbox;
+    readonly string _uploadState;
     readonly ScanJournal? _journal;
     readonly CancellationTokenSource _stop = new();
     readonly Lock _gate = new();
@@ -61,6 +63,7 @@ public sealed class CloudSync : IDisposable
     Task? _run;
     bool _started, _disposed;
     string _account = "";
+    Guid _accountId;
     string? _logged;
     // What CloudHealth judges by, under _gate. The *Mono times are on _mono, the others only shown.
     DateTimeOffset _startedMono;
@@ -93,6 +96,7 @@ public sealed class CloudSync : IDisposable
         _handler = handler;
         _delay = delay ?? Task.Delay;
         _outbox = new Outbox(Path.Combine(dataFolder, "outbox"), log);
+        _uploadState = Path.Combine(dataFolder, "document-uploads.json");
         // A viewer records nothing, so it has nothing of its own to remember.
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         // A file a power cut left empty is rebuilt from the journal, not given up.
@@ -112,6 +116,10 @@ public sealed class CloudSync : IDisposable
         // The server answered, it just won't take that scan: counted (Failed), so it shows red.
         _outbox.Refused += (_, e) => SentOk(e, sent: false);
     }
+
+    // The documents folder, when its order PDFs are to be put in OptiCloud too (OrderDocumentUpload).
+    // In both modes: any PC that sees the folder and is connected helps, and the list sorts out who uploads.
+    public OrderDocumentLocator? Documents { get; init; }
 
     public event EventHandler<CloudStatus>? StatusChanged;
     public event EventHandler<LoadedScans>? Loaded;
@@ -262,10 +270,11 @@ public sealed class CloudSync : IDisposable
             // The sender and the machine orders use the client too: whatever ends this, they are
             // stopped and awaited before it is disposed.
             using var inner = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            Task sender = Task.CompletedTask, orders = Task.CompletedTask;
+            Task sender = Task.CompletedTask, orders = Task.CompletedTask, uploads = Task.CompletedTask;
             try
             {
                 await RetryAsync(() => ConnectAsync(client, table, ct), ct);
+                if (Documents?.Folder is not null) uploads = RunUploadsAsync(client, Documents, inner.Token);
 
                 // A PC switched from Scan to Viewer may still have scans to send.
                 if (_settings.Mode == StationMode.Scan || _outbox.Pending > 0) sender = _outbox.RunAsync(table.AddAsync, inner.Token, _delay);
@@ -282,9 +291,9 @@ public sealed class CloudSync : IDisposable
             }
             finally
             {
-                // Neither throws: both end quietly when cancelled.
+                // None throws: they end quietly when cancelled.
                 inner.Cancel();
-                await Task.WhenAll(sender, orders);
+                await Task.WhenAll(sender, orders, uploads);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -303,6 +312,16 @@ public sealed class CloudSync : IDisposable
         try { await new MachineOrderSync(_orders!, client, _log, _mono, _delay, Changed).RunAsync(ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x) { _log($"OptiCloud: maskinernes ordrer stoppede: {x}"); }
+    }
+
+    // Its own loop too: the order PDFs going to OptiCloud never hold up the scans.
+    async Task RunUploadsAsync(OptiCloudClient client, OrderDocumentLocator documents, CancellationToken ct)
+    {
+        Guid account;
+        lock (_gate) account = _accountId;
+        try { await new OrderDocumentUpload(client, documents, account, _log, delay: _delay, statePath: _uploadState).RunAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception x) { _log($"OptiCloud: ordredokumenterne stoppede: {x}"); }
     }
 
     void Changed(MachineOrderChange change)
@@ -325,7 +344,7 @@ public sealed class CloudSync : IDisposable
         await client.LoginAsync(ct);
         var (account, name) = await AccountAsync(client, _settings, ct);
         await table.EnsureAsync(account, ct);
-        lock (_gate) _account = name;
+        lock (_gate) (_account, _accountId) = (name, account);
         _log($"OptiCloud: forbundet til {(name.Length > 0 ? name : account.ToString())}");
         ReadOk();
     }

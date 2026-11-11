@@ -20,6 +20,8 @@ public sealed class FakeOptiCloud : HttpMessageHandler
         public string Name { get; } = name;
         public List<(string Name, int Type)> Columns { get; } = [];
         public List<JsonObject> Rows { get; } = [];
+        // The ids of the rows made through CreateRow.
+        public Dictionary<JsonObject, Guid> Ids { get; } = new(ReferenceEqualityComparer.Instance);
     }
 
     readonly Lock _gate = new();
@@ -37,6 +39,10 @@ public sealed class FakeOptiCloud : HttpMessageHandler
     public Guid Factory { get; } = Guid.NewGuid();
     public Dictionary<string, Dictionary<string, string>> OrderFields { get; } = [];
     public Dictionary<string, string>? FieldsOf(string number) { lock (_gate) return OrderFields.TryGetValue(number, out var f) ? new(f) : null; }
+
+    // Every file stored through MasterDataBlob/Upload, in order.
+    public List<(Guid Table, string Name, byte[] Bytes, string Reference)> Uploads { get; } = [];
+    public (Guid Table, string Name, byte[] Bytes, string Reference)[] Stored { get { lock (_gate) return [.. Uploads]; } }
 
     public bool RefreshWorks { get; set; } = true;
     public bool IgnoreOrder { get; set; }
@@ -77,7 +83,10 @@ public sealed class FakeOptiCloud : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
+        // A file upload is multipart, not JSON: its parts are read, and the log gets no body.
+        var file = request.Content is MultipartFormDataContent form ? form.First() : null;
+        var bytes = file is null ? null : await file.ReadAsByteArrayAsync(ct);
+        var body = request.Content is null || file is not null ? null : await request.Content.ReadAsStringAsync(ct);
         var path = request.RequestUri!.PathAndQuery.TrimStart('/');
         var auth = request.Headers.Authorization?.ToString();
         lock (_gate) Requests.Add((request.Method.Method, path, body, auth));
@@ -94,6 +103,15 @@ public sealed class FakeOptiCloud : HttpMessageHandler
         lock (_gate)
         {
             if (auth != $"Bearer {_token}" || _token is null) return new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            if (file is not null && path.StartsWith("api/MasterDataBlob/Upload/"))
+            {
+                var table = Guid.Parse(path.Split('?')[0].Split('/')[^1]);
+                if (!Tables.Any(t => t.Id == table)) return new HttpResponseMessage(HttpStatusCode.NotFound);
+                var name = file.Headers.ContentDisposition?.FileName?.Trim('"') ?? "";
+                var reference = $"masterdata/{Account}/{table}/{Guid.NewGuid()}.pdf";
+                Uploads.Add((table, name, bytes!, reference));
+                return Data(new { name, contentType = file.Headers.ContentType?.MediaType, reference });
+            }
             try { return Route(request.Method.Method, path, body is null ? null : JsonNode.Parse(body)); }
             catch (InvalidOperationException) { return new HttpResponseMessage(HttpStatusCode.NotFound); } // no such table
         }
@@ -148,10 +166,25 @@ public sealed class FakeOptiCloud : HttpMessageHandler
             {
                 var t = Find(last);
                 var values = b!["values"]!.AsObject();
-                var id = (string?)values["ScanId"];
-                if (t.Rows.Any(r => (string?)r["ScanId"] == id)) return Json(new { data = (object?)null, errors = new[] { new { title = "Unique", message = "ScanId findes allerede" } } });
-                t.Rows.Add(values.DeepClone().AsObject());
-                return Data(new { id = Guid.NewGuid() });
+                // The unique column: ScanId in the scans, FileName in the order documents.
+                var key = values.ContainsKey("FileName") ? "FileName" : "ScanId";
+                var id = (string?)values[key];
+                if (t.Rows.Any(r => (string?)r[key] == id)) return Json(new { data = (object?)null, errors = new[] { new { title = "Unique", message = $"{key} findes allerede" } } });
+                var row = values.DeepClone().AsObject();
+                t.Rows.Add(row);
+                t.Ids[row] = Guid.NewGuid();
+                return Data(new { id = t.Ids[row] });
+            }
+            case ("MasterData", "UpdateRow"):
+            {
+                var (_, row) = FindRow(last);
+                foreach (var p in b!["values"]!.AsObject()) row[p.Key] = p.Value?.DeepClone();
+                return Data(new { });
+            }
+            case ("MasterData", "GetRow"):
+            {
+                var (t, row) = FindRow(last);
+                return Data(new { id = t.Ids[row], createdDate = Created(row), values = Values(t, row) });
             }
             case ("RealtimeDashboard", "SetOrderToMachine"):
             {
@@ -187,14 +220,14 @@ public sealed class FakeOptiCloud : HttpMessageHandler
                 var t = Find(last);
                 var page = int.Parse(query["page"]);
                 var size = Math.Min(int.Parse(query["pageSize"]), MaxPageSize);
-                var rows = IgnoreOrder ? t.Rows.ToList() : [.. t.Rows.OrderByDescending(r => DateTimeOffset.Parse((string)r["ScanTime"]!))];
+                var rows = IgnoreOrder || t.Rows.Any(r => !r.ContainsKey("ScanTime")) ? t.Rows.ToList() : [.. t.Rows.OrderByDescending(r => DateTimeOffset.Parse((string)r["ScanTime"]!))];
                 if (query.TryGetValue("keyword", out var keyword) && Keyword != Search.Ignored)
                     rows = Keyword == Search.FindsNothing ? [] : [.. rows.Where(r => r.Any(p => p.Value?.ToString().Contains(Uri.UnescapeDataString(keyword)) == true))];
                 var slice = rows.Skip((page - 1) * size).Take(size).Select(r => new
                 {
-                    id = Guid.NewGuid(),
-                    createdDate = DateTimeOffset.UtcNow,
-                    values = r.ToDictionary(p => char.ToLowerInvariant(p.Key[0]) + p.Key[1..], p => p.Value?.DeepClone()),
+                    id = t.Ids.TryGetValue(r, out var rowId) ? rowId : Guid.NewGuid(),
+                    createdDate = Created(r),
+                    values = Values(t, r),
                 });
                 return Data(new { rows = slice, count = rows.Count, totalPage = (rows.Count + size - 1) / size, page });
             }
@@ -203,6 +236,28 @@ public sealed class FakeOptiCloud : HttpMessageHandler
     }
 
     Table Find(string id) => Tables.Single(t => t.Id == Guid.Parse(id));
+
+    // Throws InvalidOperationException (a 404) when no table has a row with that id.
+    (Table Table, JsonObject Row) FindRow(string id)
+    {
+        var rowId = Guid.Parse(id);
+        var t = Tables.First(t => t.Ids.ContainsValue(rowId));
+        return (t, t.Ids.First(p => p.Value == rowId).Key);
+    }
+
+    // When a row was made, for a test to set: rows made here are new unless given a time.
+    public Dictionary<JsonObject, DateTimeOffset> CreatedAt { get; } = new(ReferenceEqualityComparer.Instance);
+
+    DateTimeOffset Created(JsonObject row) => CreatedAt.TryGetValue(row, out var at) ? at : DateTimeOffset.UtcNow;
+
+    // Keys camelCased as the real API does, and a Blob column the row has no file in comes back as an object of nulls.
+    static Dictionary<string, JsonNode?> Values(Table t, JsonObject row)
+    {
+        var values = row.ToDictionary(p => char.ToLowerInvariant(p.Key[0]) + p.Key[1..], p => p.Value?.DeepClone());
+        foreach (var c in t.Columns.Where(c => c.Type == (int)ColumnType.Blob && !row.ContainsKey(c.Name)))
+            values[char.ToLowerInvariant(c.Name[0]) + c.Name[1..]] = JsonSerializer.SerializeToNode(new { contentType = (string?)null, name = (string?)null, reference = (string?)null });
+        return values;
+    }
 
     static HttpResponseMessage Data(object data) => Json(new { data, errors = Array.Empty<object>(), meta = (object?)null });
 

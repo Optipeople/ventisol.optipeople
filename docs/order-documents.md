@@ -24,7 +24,9 @@ When an operator scans an element in, the station app can show the order's produ
 
 The list `VentisolOrderDocuments` ("Ventisol ordredokumenter") in the Ventisol account holds one row
 per PDF, so the web and tablets can show them later. It was made by hand on 2026-11-11 with the 26
-samples. Nothing uploads to it or reads it yet: the station app still reads the share.
+samples; the station app now makes it (and any missing column) and uploads new PDFs to it
+(`OrderDocumentUpload`, run by `CloudSync`). Nothing reads it yet: the station app still shows the
+PDFs from the share.
 
 | Column | Type (`dataType`) | What |
 |---|---|---|
@@ -35,6 +37,40 @@ samples. Nothing uploads to it or reads it yet: the station app still reads the 
 | `File` | Blob (8) | `{ name, contentType, reference }` from the upload |
 | `SizeBytes` | Int (2) | size of the file |
 | `Sha256` | String (0) | hex hash of the file, to tell a changed file under the same name |
+| `Device` | String (0) | the PC that made or took the row (Windows machine name); empty on the 26 first rows |
+| `ClaimedAt` | DateTime (3) | when that PC made or took the row, UTC by OptiCloud's clock |
+
+### Uploading
+
+- Every PC with the documents folder set and OptiCloud set up takes part, in Scan and Viewer mode.
+  It starts once the app is connected, in a loop of its own: a failure there never holds up the scans.
+- Every 5 minutes (plus up to a minute, so the PCs don't all come at once) the folder is listed
+  (a listing the scans made in the last 5 minutes is used as it is) and
+  every order document not in the list goes up, newest print first, a second apart. Only files
+  printed in the last 60 days (the date in the name, else the write time), so a first run doesn't
+  push years of history through, and only files written at least 2 minutes ago that start with
+  `%PDF-` and end with `%%EOF`: a file 3E is still writing waits for the next round.
+- While every such file is known to be in the list, nothing is asked of OptiCloud.
+- The same file name in two subfolders is one row: the file written last.
+- Several PCs see the same folder, and a file stored without a row can't be deleted. So the row is
+  made first, without the file but with everything else: the unique `FileName` lets one PC in, and
+  only that PC uploads and then puts the file in its row. A PC that is refused because another PC's
+  row is there ends its round and looks again next time.
+- A row left without a file (the PC stopped, the upload failed) is finished by the PC in its
+  `Device` column. Once its `ClaimedAt` is an hour old any PC takes it over: it reads the row
+  again, writes its own name and the time, waits a few seconds, and goes on only if the row still
+  names it. The new time keeps the other PCs off the row for another hour.
+- A file stored whose row could not be updated is remembered, also over a restart
+  (`document-uploads.json` in the app's data folder), and used on the next try, not stored again.
+- A file OptiCloud refuses (too big, a value it won't take) is tried again on the next two rounds
+  and then left alone until it is written again; the other files go up meanwhile. So is a file that
+  isn't a whole PDF. One that can't be read (locked, no access) is tried again about once an hour.
+- Other failures (no network, the share gone) are logged once
+  (`Ordredokumenter: kan ikke lægges op til OptiCloud: ...`) and tried again next round; after a
+  wrong password this loop waits an hour, as every try counts towards locking the user out. Each upload is logged
+  (`Ordredokumenter: 58721_20261022.pdf er lagt i OptiCloud`). Nothing is shown on the screen.
+- Not handled: a file that changes under the same name keeps its first upload (a reprint normally
+  gets a new date and so a new name), and a file deleted from the share stays in the list.
 
 How upload, the temp link and deleting behave is in [`opticloud-scans.md`](opticloud-scans.md), "Files in a list".
 

@@ -133,7 +133,7 @@ public partial class MainWindow : Window
         _scans.Start();
         OnScannersChanged();
 
-        _cloud = new CloudSync(_settings, SettingsStore.LoadPassword(), DataFolder, Log.Write);
+        _cloud = new CloudSync(_settings, SettingsStore.LoadPassword(), DataFolder, Log.Write) { Documents = _documents.Locator };
         _cloud.StatusChanged += (_, _) => Dispatcher.BeginInvoke(ShowCloudStatus);
         _cloud.Loaded += (_, loaded) => Dispatcher.BeginInvoke(() => ApplyLoaded(loaded));
         _vm.Recorded += (_, r) =>

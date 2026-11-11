@@ -12,7 +12,8 @@ public sealed record CloudMachine(Guid Id, string Name);
 public sealed record CloudTable(Guid Id, string Name, string? FriendlyName);
 
 // The numbers are OptiCloud's MasterDataColumnType.
-public enum ColumnType { String = 0, Decimal = 1, Int = 2, DateTime = 3, Bool = 4, Long = 5, Lookup = 6 }
+// Link holds { name, url }, Blob a file: { name, contentType, reference } as UploadFileAsync gives it.
+public enum ColumnType { String = 0, Decimal = 1, Int = 2, DateTime = 3, Bool = 4, Long = 5, Lookup = 6, Link = 7, Blob = 8 }
 
 public sealed record CloudColumn(Guid Id, string Name, ColumnType? Type);
 
@@ -20,6 +21,9 @@ public sealed record ColumnSpec(string Name, string FriendlyName, ColumnType Typ
 
 // Values keyed by column name, case-insensitively (the API may camelCase them), as text.
 public sealed record CloudRow(Guid? Id, DateTimeOffset? Created, IReadOnlyDictionary<string, string?> Values);
+
+// A file kept in OptiCloud's storage for a list. Reference is its path there.
+public sealed record CloudFile(string Name, string ContentType, string Reference);
 
 public sealed record RowsPage(IReadOnlyList<CloudRow> Rows, int? Count, int? TotalPages, int Page);
 
@@ -30,6 +34,7 @@ public sealed record RowsPage(IReadOnlyList<CloudRow> Rows, int? Count, int? Tot
 public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
+    public static readonly TimeSpan UploadTimeout = TimeSpan.FromSeconds(60);
 
     readonly HttpClient _http;
     readonly bool _ownsHttp;
@@ -111,8 +116,33 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         SendAsync(HttpMethod.Post, $"api/MasterData/AddColumn/{tableId}",
             new { name = c.Name, friendlyName = c.FriendlyName, dataType = (int)c.Type, isRequired = c.IsRequired, isUnique = c.IsUnique, isKey = c.IsKey }, ct);
 
-    public Task CreateRowAsync(Guid tableId, IReadOnlyDictionary<string, object?> values, CancellationToken ct = default) =>
-        SendAsync(HttpMethod.Post, $"api/MasterData/CreateRow/{tableId}", new { values }, ct);
+    // The new row's id, when the answer has one.
+    public async Task<Guid?> CreateRowAsync(Guid tableId, IReadOnlyDictionary<string, object?> values, CancellationToken ct = default)
+    {
+        var d = await SendAsync(HttpMethod.Post, $"api/MasterData/CreateRow/{tableId}", new { values }, ct);
+        return d.ValueKind == JsonValueKind.Object ? d.Guid("id") : null;
+    }
+
+    // Changes the values given and leaves the row's other values as they are.
+    public Task UpdateRowAsync(Guid rowId, IReadOnlyDictionary<string, object?> values, CancellationToken ct = default) =>
+        SendAsync(HttpMethod.Put, $"api/MasterData/UpdateRow/{rowId}", new { values }, ct);
+
+    public async Task<CloudRow> GetRowAsync(Guid rowId, CancellationToken ct = default) =>
+        Row(await GetAsync($"api/MasterData/GetRow/{rowId}", ct));
+
+    // Stores a file for the list. It makes no row: put the answer in a Blob column of one, at once.
+    // A file no row points to stays in OptiCloud's storage and can't be deleted from here.
+    public async Task<CloudFile> UploadFileAsync(Guid tableId, string fileName, byte[] bytes, string contentType, CancellationToken ct = default)
+    {
+        var d = await SendAsync(HttpMethod.Post, $"api/MasterDataBlob/Upload/{tableId}", () =>
+        {
+            var part = new ByteArrayContent(bytes);
+            part.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            return new MultipartFormDataContent { { part, "file", fileName } };
+        }, UploadTimeout, ct);
+        if (d.ValueKind != JsonValueKind.Object || d.Str("reference") is not { Length: > 0 } reference) throw new OptiCloudException(OptiCloudException.Unexpected);
+        return new CloudFile(d.Str("name") is { Length: > 0 } n ? n : fileName, d.Str("contentType") is { Length: > 0 } c ? c : contentType, reference);
+    }
 
     // The machine's current order ("" for none). None comes two ways: a machine never given an
     // order has all-zero ids and number null; a cleared one runs a hidden default order
@@ -192,15 +222,19 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 
     Task<JsonElement> GetAsync(string path, CancellationToken ct) => SendAsync(HttpMethod.Get, path, null, ct);
 
-    async Task<JsonElement> SendAsync(HttpMethod method, string path, object? body, CancellationToken ct)
+    Task<JsonElement> SendAsync(HttpMethod method, string path, object? body, CancellationToken ct) =>
+        SendAsync(method, path, body is null ? null : () => new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"), Timeout, ct);
+
+    // content makes the body anew for each try: a request's content is sent once.
+    async Task<JsonElement> SendAsync(HttpMethod method, string path, Func<HttpContent>? content, TimeSpan wait, CancellationToken ct)
     {
         await EnsureTokenAsync(ct);
         var used = _token;
-        var (status, text) = await RawAsync(method, path, body, used, ct);
+        var (status, text) = await RawAsync(method, path, content, used, wait, ct);
         if (status == 401)
         {
             await RenewAsync(used, ct);
-            (status, text) = await RawAsync(method, path, body, _token, ct);
+            (status, text) = await RawAsync(method, path, content, _token, wait, ct);
             if (status == 401) throw StatusError(401);
         }
         return Envelope(status, text);
@@ -241,13 +275,13 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         _ => new($"OptiCloud svarede {status}", status, rejected: OptiCloudException.IsRejectedStatus(status)),
     };
 
-    async Task<(int Status, string Text)> RawAsync(HttpMethod method, string path, object? body, string? token, CancellationToken ct)
+    async Task<(int Status, string Text)> RawAsync(HttpMethod method, string path, Func<HttpContent>? content, string? token, TimeSpan wait, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(Timeout);
+        timeout.CancelAfter(wait);
         using var request = new HttpRequestMessage(method, path);
         if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        if (body is not null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        if (content is not null) request.Content = content();
         try
         {
             using var response = await _http.SendAsync(request, timeout.Token);
@@ -311,7 +345,7 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
     // with errors and no token: it only worked if there is a token.
     async Task TokenAsync(object body, CancellationToken ct)
     {
-        var (status, text) = await RawAsync(HttpMethod.Post, "api/Authentication/login", body, null, ct);
+        var (status, text) = await RawAsync(HttpMethod.Post, "api/Authentication/login", () => new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"), null, Timeout, ct);
         JsonElement root = default;
         try { if (!string.IsNullOrWhiteSpace(text)) root = JsonDocument.Parse(text).RootElement.Clone(); }
         catch (JsonException) { }

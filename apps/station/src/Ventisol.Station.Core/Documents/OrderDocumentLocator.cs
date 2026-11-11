@@ -41,7 +41,10 @@ public sealed partial class OrderDocumentLocator
     // A file found in the folder.
     public sealed record Entry(string Path, int Order, DateOnly? Date, DateTime WriteTimeUtc);
 
-    sealed record Index(IReadOnlyDictionary<int, Entry> Best, int Files, DateTimeOffset At);
+    sealed record Index(IReadOnlyDictionary<int, Entry> Best, IReadOnlyList<Entry> All, DateTimeOffset At)
+    {
+        public int Files => All.Count;
+    }
 
     readonly Func<string, CancellationToken, IReadOnlyList<Entry>> _list;
     readonly TimeProvider _time;
@@ -70,6 +73,9 @@ public sealed partial class OrderDocumentLocator
 
     // When the last good index was listed, or null before the first listing has finished.
     public DateTimeOffset? IndexedAt { get { lock (_gate) return _index?.At; } }
+
+    // Every order document in the last index, older versions and all; null before the first listing has finished.
+    public IReadOnlyList<Entry>? IndexedFiles { get { lock (_gate) return _index?.All; } }
 
     // Whether the last index has a PDF for the order, without listing the folder. False when unknown.
     public bool Has(int order)
@@ -193,7 +199,7 @@ public sealed partial class OrderDocumentLocator
             var best = new Dictionary<int, Entry>();
             foreach (var f in files)
                 if (!best.TryGetValue(f.Order, out var have) || Newer(f, have)) best[f.Order] = f;
-            var index = new Index(best, files.Count, _time.GetUtcNow());
+            var index = new Index(best, files, _time.GetUtcNow());
             lock (_gate) (_index, _lastError, _downUntil) = (index, null, null);
             return index;
         }

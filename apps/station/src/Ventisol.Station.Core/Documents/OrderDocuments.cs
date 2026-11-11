@@ -70,6 +70,7 @@ public sealed class OrderDocuments
 
     public bool IsOn => _locator.Folder is not null;
     public string? Folder => _locator.Folder;
+    public OrderDocumentLocator Locator => _locator;
 
     // Where the PDFs read from the share are kept on this PC; null keeps them in memory only.
     public OrderDocumentCache? Cache { get; set; }
