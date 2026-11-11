@@ -25,6 +25,8 @@ public sealed class Outbox
     readonly Action<string> _log;
     readonly Lock _gate = new();
     readonly SemaphoreSlim _wake = new(0);
+    // Cancelled (and replaced) by Nudge: ends a backoff wait at once.
+    CancellationTokenSource _nudge = new();
     // Sent, but the file would not go (a virus scanner holding it...): never sent again from here.
     readonly HashSet<Guid> _sent = [];
     long _lastTicks;
@@ -67,8 +69,36 @@ public sealed class Outbox
             File.WriteAllText(tmp, ScanJson.Write(e));
             File.Move(tmp, path, overwrite: true);
         }
-        _wake.Release();
+        Nudge();
         Changed();
+    }
+
+    // Try the oldest waiting scan now: ends a backoff wait (not the one after a wrong password,
+    // which protects the OptiCloud user from being locked out) and wakes an idle sender.
+    // Called on every Add and when the network comes back. Safe from any thread.
+    public void Nudge()
+    {
+        CancellationTokenSource old;
+        lock (_gate)
+        {
+            old = _nudge;
+            _nudge = new CancellationTokenSource();
+        }
+        old.Cancel();
+        _wake.Release();
+    }
+
+    CancellationToken NudgeToken()
+    {
+        lock (_gate) return _nudge.Token;
+    }
+
+    // Waits span unless nudged (the token taken before the try, so a Nudge during it counts).
+    static async Task Pause(Func<TimeSpan, CancellationToken, Task> delay, TimeSpan span, CancellationToken nudged, CancellationToken ct)
+    {
+        using var both = CancellationTokenSource.CreateLinkedTokenSource(ct, nudged);
+        try { await delay(span, both.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     // Waiting now, oldest first. A file that can't be read is left for RunAsync to move aside.
@@ -92,7 +122,7 @@ public sealed class Outbox
         if (moved > 0)
         {
             _log($"Outbox: {moved} afviste scanninger sendes igen");
-            _wake.Release();
+            Nudge();
             Changed();
         }
         return moved;
@@ -110,6 +140,7 @@ public sealed class Outbox
         (Guid Id, string Why, int Times) refusal = default;
         while (!ct.IsCancellationRequested)
         {
+            var nudged = NudgeToken();
             try
             {
                 var files = Files();
@@ -120,7 +151,7 @@ public sealed class Outbox
                 if (next is null)
                 {
                     // Waiting for a file that won't go must not spin.
-                    if (leftover) await delay(Backoff[Math.Min(stuck++, Backoff.Count - 1)], ct);
+                    if (leftover) await Pause(delay, Backoff[Math.Min(stuck++, Backoff.Count - 1)], nudged, ct);
                     else
                     {
                         stuck = 0;
@@ -151,13 +182,13 @@ public sealed class Outbox
                         continue;
                     }
                     SendFailed?.Invoke(this, x);
-                    await delay(Wait(x, failures++), ct);
+                    await Pause(delay, Wait(x, failures++), x.IsBadLogin ? CancellationToken.None : nudged, ct);
                     continue;
                 }
                 catch (OptiCloudException x)
                 {
                     SendFailed?.Invoke(this, x);
-                    await delay(Wait(x, failures++), ct);
+                    await Pause(delay, Wait(x, failures++), x.IsBadLogin ? CancellationToken.None : nudged, ct);
                     continue;
                 }
 
@@ -172,7 +203,7 @@ public sealed class Outbox
             {
                 // Anything else (the disk, a bug in send) must not end sending for good.
                 _log($"Outbox: {x.GetType().Name}: {x.Message}");
-                try { await delay(Wait(x, failures++), ct); }
+                try { await Pause(delay, Wait(x, failures++), nudged, ct); }
                 catch (OperationCanceledException) { break; }
             }
         }
