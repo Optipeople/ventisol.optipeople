@@ -27,8 +27,17 @@ public sealed class CloudSyncTests : IDisposable
         return Task.Delay(5, ct);
     }
 
-    CloudSync Sync(FakeOptiCloud api, StationMode mode = StationMode.Scan, string? password = FakeOptiCloud.Password, StationSettings? settings = null) =>
-        new(settings ?? FakeOptiCloud.Settings(mode), password, _folder, m => { lock (_log) _log.Add(m); }, () => Now, api, Fast);
+    CloudSync Sync(FakeOptiCloud api, StationMode mode = StationMode.Scan, string? password = FakeOptiCloud.Password, StationSettings? settings = null,
+        Ticking? monotonic = null) =>
+        new(settings ?? FakeOptiCloud.Settings(mode), password, _folder, m => { lock (_log) _log.Add(m); }, () => Now, api, Fast, monotonic is null ? null : () => monotonic.Now);
+
+    // A monotonic clock the test moves on; the PC's clock stands still at Now.
+    public sealed class Ticking
+    {
+        long _ticks = CloudSyncTests.Now.UtcTicks;
+        public DateTimeOffset Now => new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+        public void Add(TimeSpan t) => Interlocked.Add(ref _ticks, t.Ticks);
+    }
 
     // What the app does with Loaded: replays it for today.
     static ReplayResult Today(LoadedScans l) => ScanReplay.Replay(l.Events, StationConfig.Defaults, Midnight);
@@ -69,12 +78,17 @@ public sealed class CloudSyncTests : IDisposable
         api.AddRow(In(B, 2, Now.AddDays(-2)));
         new Outbox(Path.Combine(_folder, "outbox")).Add(In(B, 3, Now.AddMinutes(-5)));
         api.Down = true;
-        using var sync = Sync(api);
+        var mono = new Ticking();
+        using var sync = Sync(api, monotonic: mono);
         var loaded = Watch(sync);
 
         sync.Start();
         // Before any network.
         Assert.Equal([3], Today(Assert.Single(loaded)).InProgress.Keys);
+        // A scan from before the start waits from the start: the first tries get their minute.
+        await Until(() => api.Count("login") > 1);
+        Assert.Equal(CloudState.Connecting, sync.Status.State);
+        mono.Add(TimeSpan.FromSeconds(61));
         await Until(() => sync.Status.State == CloudState.Offline);
         Assert.Equal("Offline · 1 scanning venter", sync.Status.Text);
         api.Down = false;
@@ -310,14 +324,18 @@ public sealed class CloudSyncTests : IDisposable
     public async Task Reads_working_while_scans_fail_to_send_is_amber_not_green()
     {
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("CreateRow") ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : null };
-        using var sync = Sync(api);
+        var mono = new Ticking();
+        using var sync = Sync(api, monotonic: mono);
         sync.Start();
         await Until(() => sync.Status.State == CloudState.Online);
 
-        // Scanned two minutes ago (the clock stands still here), not sent since.
-        sync.Record(In(A, 1, Now.AddMinutes(-2)));
+        // Not sent for two minutes.
+        sync.Record(In(A, 1, Now));
+        await Until(() => api.Count("CreateRow") > 2);
+        Assert.Equal(CloudState.Online, sync.Status.State);
+        mono.Add(TimeSpan.FromMinutes(2));
         var polls = api.Count("GetRowsPaged");
-        await Until(() => api.Count("CreateRow") > 2 && api.Count("GetRowsPaged") > polls + 1);
+        await Until(() => api.Count("GetRowsPaged") > polls + 1);
 
         Assert.Equal(CloudState.Offline, sync.Status.State);
         Assert.StartsWith("Sender ikke · 1 scanning venter", sync.Status.Text);
@@ -343,6 +361,88 @@ public sealed class CloudSyncTests : IDisposable
         sync.Wake();
 
         await Until(() => sync.Status.State == CloudState.Online);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task How_long_a_scan_waited_is_measured_not_read_off_the_pc_clock()
+    {
+        var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("CreateRow") ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : null };
+        var mono = new Ticking();
+        using var sync = Sync(api, monotonic: mono);
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Online);
+
+        // Its scan time says two hours ago (the PC's clock was set back since): it has just come.
+        sync.Record(In(A, 1, Now.AddHours(-2)));
+        await Until(() => api.Count("CreateRow") > 2);
+        var polls = api.Count("GetRowsPaged");
+        await Until(() => api.Count("GetRowsPaged") > polls + 1);
+        Assert.Equal(CloudState.Online, sync.Status.State);
+
+        // A minute on by the monotonic clock alone (the PC's clock stands still): now it says so.
+        mono.Add(TimeSpan.FromSeconds(61));
+        await Until(() => sync.Status.State == CloudState.Offline);
+        Assert.StartsWith("Sender ikke", sync.Status.Text);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Reads_that_work_do_not_cut_short_the_wait_after_a_refusal()
+    {
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => path.Contains("CreateRow")
+                ? FakeOptiCloud.Json(new { errors = new[] { new { title = "Bad", message = "Ugyldig værdi" } } })
+                : null,
+        };
+        // Polls wait 5 ms; every other wait (the sender's backoff) lasts until stopped.
+        using var sync = new CloudSync(FakeOptiCloud.Settings(), FakeOptiCloud.Password, _folder, _ => { }, () => Now, api,
+            (t, ct) => Task.Delay(t == CloudSync.PollInterval ? TimeSpan.FromMilliseconds(5) : Timeout.InfiniteTimeSpan, ct));
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Online);
+
+        sync.Record(In(A, 1, Now));
+        await Until(() => api.Count("CreateRow") == 1);
+        var polls = api.Count("GetRowsPaged");
+        await Until(() => api.Count("GetRowsPaged") > polls + 20);
+
+        Assert.Equal(1, api.Count("CreateRow"));
+        Assert.Equal((1, 0), (sync.Pending, sync.Status.Failed));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_wrong_password_while_polling_is_not_tried_again_when_the_network_changes()
+    {
+        var wrong = false;
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => Volatile.Read(ref wrong) && path.Contains("login")
+                ? FakeOptiCloud.Json(new { errors = new[] { new { title = "Login", message = "Invalid credentials" } } })
+                : null,
+        };
+        var loginWaits = 0;
+        // The quarter of an hour after a wrong password lasts until stopped, every other wait 5 ms.
+        using var sync = new CloudSync(FakeOptiCloud.Settings(StationMode.Viewer), FakeOptiCloud.Password, _folder, _ => { }, () => Now, api, (t, ct) =>
+        {
+            if (t != Outbox.LoginBackoff) return Task.Delay(5, ct);
+            Interlocked.Increment(ref loginWaits);
+            return Task.Delay(Timeout.Infinite, ct);
+        });
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Online);
+
+        // The password was changed in OptiCloud: the token runs out and logging in again fails.
+        Volatile.Write(ref wrong, true);
+        api.ExpireToken();
+        await Until(() => Volatile.Read(ref loginWaits) == 1);
+        var logins = api.Count("login");
+
+        sync.Wake();
+        // Nothing to wait for when it works: a short look, which can miss a fault but never invent one.
+        await Task.Delay(300);
+
+        Assert.Equal(logins, api.Count("login"));
+        Assert.Equal(1, Volatile.Read(ref loginWaits));
+        Assert.Equal("Fejl: " + OptiCloudException.BadLogin, sync.Status.Text);
     }
 
     [Fact]

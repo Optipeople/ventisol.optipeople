@@ -8,13 +8,14 @@ public class CloudHealthTests
 {
     static readonly DateTimeOffset Now = new(DateTime.Today.AddHours(12));
 
-    // A scan station that has been connected for a while, nothing wrong.
+    // A scan station that has been connected for a while, nothing wrong. Read 3 s ago, sent 5 min ago.
     static CloudFacts Station(int pending = 0, TimeSpan? oldest = null) => new(
-        StationMode.Scan, IsSetUp: true, StartedAt: Now.AddHours(-1), Account: "Ventisol",
-        Pending: pending, OldestWaiting: oldest is { } o ? Now - o : null,
+        StationMode.Scan, IsSetUp: true, Account: "Ventisol",
+        Pending: pending, OldestWaited: oldest,
+        SinceContact: TimeSpan.FromSeconds(3), SinceSent: TimeSpan.FromMinutes(5),
         LastRead: Now.AddSeconds(-3), LastSent: Now.AddMinutes(-5));
 
-    static CloudStatus Judge(CloudFacts f) => CloudHealth.Evaluate(f, Now);
+    static CloudStatus Judge(CloudFacts f) => CloudHealth.Evaluate(f);
 
     [Fact]
     public void All_well_is_green_and_names_the_account()
@@ -61,7 +62,7 @@ public class CloudHealthTests
     [Fact]
     public void A_short_outage_with_nothing_waiting_stays_green()
     {
-        var s = Judge(Station() with { ReadFailing = true, ReadProblem = CloudProblem.Network, LastRead = Now.AddSeconds(-40) });
+        var s = Judge(Station() with { ReadFailing = true, ReadProblem = CloudProblem.Network, SinceContact = TimeSpan.FromSeconds(40) });
 
         Assert.Equal(CloudState.Online, s.State);
     }
@@ -69,10 +70,32 @@ public class CloudHealthTests
     [Fact]
     public void An_outage_longer_than_a_minute_is_amber_even_with_nothing_waiting()
     {
-        var s = Judge(Station() with { ReadFailing = true, ReadProblem = CloudProblem.Network, LastRead = Now.AddSeconds(-90), LastSent = null });
+        var s = Judge(Station() with { ReadFailing = true, ReadProblem = CloudProblem.Network, SinceContact = TimeSpan.FromSeconds(90), LastSent = null, SinceSent = null });
 
         Assert.Equal(CloudState.Offline, s.State);
         Assert.Equal("Offline", s.Text);
+    }
+
+    [Fact]
+    public void A_backlog_draining_after_an_outage_is_not_offline_while_scans_go()
+    {
+        // The oldest of 40 has waited ten minutes, but one got in two seconds ago.
+        var draining = Judge(Station(pending: 40, oldest: TimeSpan.FromMinutes(10)) with { SinceSent = TimeSpan.FromSeconds(2) });
+        var stuck = Judge(Station(pending: 40, oldest: TimeSpan.FromMinutes(10)) with { SinceSent = TimeSpan.FromSeconds(61) });
+
+        Assert.Equal(CloudState.Online, draining.State);
+        Assert.Null(draining.Banner);
+        Assert.Equal(CloudState.Offline, stuck.State);
+        Assert.NotNull(stuck.Banner);
+    }
+
+    [Fact]
+    public void Only_how_long_it_waited_counts_not_the_pc_clock()
+    {
+        // The PC's clock is days off what was last shown: the ages alone decide.
+        var s = Judge(Station(pending: 1, oldest: TimeSpan.FromSeconds(10)) with { LastRead = Now.AddDays(-2), LastSent = Now.AddDays(2) });
+
+        Assert.Equal(CloudState.Online, s.State);
     }
 
     [Fact]
@@ -118,7 +141,7 @@ public class CloudHealthTests
     [Fact]
     public void A_viewer_is_amber_as_soon_as_a_read_fails_and_stale_after_half_a_minute()
     {
-        var viewer = new CloudFacts(StationMode.Viewer, true, Now.AddHours(-1), "Ventisol", LastRead: Now.AddSeconds(-20), ReadFailing: true, ReadProblem: CloudProblem.Network);
+        var viewer = new CloudFacts(StationMode.Viewer, true, "Ventisol", SinceContact: TimeSpan.FromSeconds(20), LastRead: Now.AddSeconds(-20), ReadFailing: true, ReadProblem: CloudProblem.Network);
         var fresh = Judge(viewer);
         var stale = Judge(viewer with { LastRead = Now.AddSeconds(-45) });
 
@@ -140,7 +163,7 @@ public class CloudHealthTests
     [Fact]
     public void An_offline_scan_station_says_its_report_holds_only_its_own_scans_since_the_last_read()
     {
-        var s = Judge(Station(pending: 1, oldest: TimeSpan.FromMinutes(3)) with { ReadFailing = true, ReadProblem = CloudProblem.Network, LastRead = Now.AddMinutes(-3) });
+        var s = Judge(Station(pending: 1, oldest: TimeSpan.FromMinutes(3)) with { ReadFailing = true, ReadProblem = CloudProblem.Network, SinceContact = TimeSpan.FromMinutes(3), LastRead = Now.AddMinutes(-3) });
 
         Assert.Equal($"Kun denne PC's scanninger siden {Now.AddMinutes(-3):HH':'mm}", CloudHealth.ReportNote(StationMode.Scan, s, Now));
         Assert.Null(CloudHealth.ReportNote(StationMode.Scan, Judge(Station()), Now));

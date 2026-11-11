@@ -4,17 +4,22 @@ namespace Ventisol.Station.Core.Cloud;
 // the user's access, a person must fix the setup. Unexpected: a bug or an answer not understood.
 public enum CloudProblem { None, Network, Auth, Unexpected }
 
-// What CloudSync knows, for CloudHealth to judge. Times are the PC's clock (now in Evaluate),
-// except OrdersFailingFor, a duration. LastRead: OptiCloud last read (or logged in to) without fault.
-// LastSent: a scan last got in. OldestWaiting: scan time of the oldest scan not sent yet.
-// ReadFailing: the last read or login failed. Fatal: the link stopped for good (a bug).
+// What CloudSync knows, for CloudHealth to judge. It judges by durations measured on a monotonic
+// clock, so a PC clock set back or forward can't hide an outage or raise a false one; LastRead and
+// LastSent (the PC's clock) are only shown. OldestWaited: how long the oldest scan not sent yet has
+// waited (in this run: one from before the start counts from the start). SinceContact: since
+// OptiCloud last answered (a read or a scan sent), or since the start. SinceSent: since a scan last
+// got in, null if none in this run. LastRead: OptiCloud last read (or logged in to) without fault.
+// LastSent: a scan last got in. ReadFailing: the last read or login failed. Fatal: the link
+// stopped for good (a bug).
 public sealed record CloudFacts(
     StationMode Mode,
     bool IsSetUp,
-    DateTimeOffset StartedAt,
     string Account = "",
     int Pending = 0,
-    DateTimeOffset? OldestWaiting = null,
+    TimeSpan? OldestWaited = null,
+    TimeSpan SinceContact = default,
+    TimeSpan? SinceSent = null,
     int Refused = 0,
     DateTimeOffset? LastRead = null,
     DateTimeOffset? LastSent = null,
@@ -30,7 +35,7 @@ public sealed record CloudFacts(
 // The rules for the OptiCloud dot and text. Outages are expected to be minutes long and scans
 // wait safely on disk meanwhile, so a scan station judges by how long its oldest scan has waited,
 // not by the last call: green while nothing has waited longer than Patience (and nothing was
-// refused), amber when a scan has, red only for what needs a person (the login or the user's
+// refused), amber when a scan has and none got in lately, red only for what needs a person (the login or the user's
 // access, refused scans, a fault not expected). A viewer is amber as soon as a read fails: it is
 // there to show what OptiCloud holds.
 public static class CloudHealth
@@ -44,7 +49,7 @@ public static class CloudHealth
     // A PC clock this far off OptiCloud's is said, scan times come from it.
     public static readonly TimeSpan ClockTolerance = TimeSpan.FromSeconds(60);
 
-    public static CloudStatus Evaluate(CloudFacts f, DateTimeOffset now)
+    public static CloudStatus Evaluate(CloudFacts f)
     {
         var n = f.Pending;
         var waiting = n == 0 ? null : n == 1 ? "1 scanning venter" : $"{n} scanninger venter";
@@ -67,9 +72,11 @@ public static class CloudHealth
         }
         else
         {
-            var waitedLong = f.OldestWaiting is { } oldest && now - oldest > Patience;
+            // A backlog draining after an outage is no outage: scans are going.
+            var sentLately = f.SinceSent is { } since && since <= Patience;
+            var waitedLong = f.OldestWaited > Patience && !sentLately;
             // Gone for longer than the patience: no answer at all since then (or since the start).
-            var goneLong = f.ReadFailing && now - (lastContact ?? f.StartedAt) > Patience;
+            var goneLong = f.ReadFailing && f.SinceContact > Patience;
             var offline = f.Mode == StationMode.Viewer ? f.ReadFailing : waitedLong || goneLong;
             if (offline)
             {

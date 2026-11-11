@@ -46,9 +46,9 @@ public sealed class CloudSync : IDisposable
     readonly string? _password;
     readonly Action<string> _log;
     readonly Func<DateTimeOffset> _clock;
-    // Settle and backoff of the machine orders: monotonic, so a change of the PC's clock can't
-    // stall or rush them. The injected clock in tests.
-    readonly Func<DateTimeOffset> _ordersClock;
+    // Ages the status judges by, and settle and backoff of the machine orders: monotonic, so a
+    // change of the PC's clock can't stall or rush them, or hide an outage. Injected in tests.
+    readonly Func<DateTimeOffset> _mono;
     readonly HttpMessageHandler? _handler;
     readonly Func<TimeSpan, CancellationToken, Task> _delay;
     readonly Outbox _outbox;
@@ -62,9 +62,13 @@ public sealed class CloudSync : IDisposable
     bool _started, _disposed;
     string _account = "";
     string? _logged;
-    // What CloudHealth judges by, under _gate.
-    DateTimeOffset _startedAt;
-    DateTimeOffset? _lastRead, _lastSent, _oldest;
+    // What CloudHealth judges by, under _gate. The *Mono times are on _mono, the others only shown.
+    DateTimeOffset _startedMono;
+    DateTimeOffset? _lastRead, _lastSent, _readMono, _sentMono;
+    // The oldest scan waiting, and when each scan recorded in this run began to wait.
+    Guid? _oldest;
+    readonly Dictionary<Guid, DateTimeOffset> _queuedAt = [];
+    readonly Lock _oldestGate = new();
     bool _readFailing;
     CloudProblem _readProblem, _writeProblem;
     string _readError = "", _writeError = "";
@@ -77,14 +81,15 @@ public sealed class CloudSync : IDisposable
     Timer? _tick;
     CloudStatus _status;
 
+    // monotonic: a test's, else clock (also a test's), else the Stopwatch.
     public CloudSync(StationSettings settings, string? password, string dataFolder, Action<string> log, Func<DateTimeOffset>? clock = null,
-        HttpMessageHandler? handler = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+        HttpMessageHandler? handler = null, Func<TimeSpan, CancellationToken, Task>? delay = null, Func<DateTimeOffset>? monotonic = null)
     {
         _settings = settings;
         _password = password;
         _log = log;
         _clock = clock ?? (() => DateTimeOffset.Now);
-        _ordersClock = clock ?? Monotonic();
+        _mono = monotonic ?? clock ?? Monotonic();
         _handler = handler;
         _delay = delay ?? Task.Delay;
         _outbox = new Outbox(Path.Combine(dataFolder, "outbox"), log);
@@ -92,21 +97,20 @@ public sealed class CloudSync : IDisposable
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         // A file a power cut left empty is rebuilt from the journal, not given up.
         if (_journal is not null) _outbox.Rebuild = _journal.Find;
-        _startedAt = _clock();
+        _startedMono = _mono();
         // Held until the screen has been rebuilt from OptiCloud (SetMachineOrders with rebuilt).
         if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true, verify: MachineOrders.DefaultVerify);
-        _oldest = OldestWaiting();
+        NoteOldest();
         _status = Make();
         _outbox.PendingChanged += (_, _) =>
         {
-            var oldest = OldestWaiting();
-            lock (_gate) _oldest = oldest;
+            NoteOldest();
             Publish();
         };
-        _outbox.Sent += (_, _) => SentOk();
+        _outbox.Sent += (_, e) => SentOk(e);
         _outbox.SendFailed += (_, x) => WriteFailed(x);
         // The server answered, it just won't take that scan: counted (Failed), so it shows red.
-        _outbox.Refused += (_, _) => SentOk(sent: false);
+        _outbox.Refused += (_, e) => SentOk(e, sent: false);
     }
 
     public event EventHandler<CloudStatus>? StatusChanged;
@@ -133,16 +137,22 @@ public sealed class CloudSync : IDisposable
         // Once per start, so a fixed setup sends again what was refused; a scan that did get in
         // is recognised by its ScanId.
         _outbox.RetryFailed();
-        lock (_gate) _startedAt = _clock();
+        lock (_gate)
+        {
+            // Scans waiting from before count from now: the first tries get their chance first.
+            _startedMono = _mono();
+            // Under the lock with _disposed, so a Dispose meanwhile can't miss it.
+            if (!_disposed) _tick = new Timer(_ => Publish(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        }
         Publish();
-        _tick = new Timer(_ => Publish(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
         if (_journal is not null)
         {
             // Before any network: the screen is back at once, also when OptiCloud can't be reached.
             var now = _clock();
             var since = WindowStart(now);
-            _journal.Prune(now);
+            // A scan still waiting keeps its day, so an outbox file a power cut emptied can be rebuilt.
+            _journal.Prune(now, _outbox.WaitingIds());
             Raise(Local(since), since);
         }
 
@@ -168,8 +178,9 @@ public sealed class CloudSync : IDisposable
 
     void OnNetworkAddress(object? sender, EventArgs e) => Wake();
 
-    // Cuts every backoff short: the waiting scans are tried and OptiCloud read at once. Called when
-    // the network changes; safe from any thread.
+    // Cuts the backoffs short: the waiting scans are tried and OptiCloud read at once (not after a
+    // wrong password, nor a send OptiCloud answered with an error). Called when the network
+    // changes; safe from any thread.
     public void Wake()
     {
         if (_disposed) return;
@@ -180,8 +191,15 @@ public sealed class CloudSync : IDisposable
             old = _wake;
             _wake = new CancellationTokenSource();
         }
-        old.Cancel();
+        // Async: the woken loops go on on the thread pool, not on the caller's (the UI) thread.
+        _ = old.CancelAsync();
     }
+
+    // The wait after a failed read or login. A wrong password waits its quarter of an hour even
+    // when the network changes: tried more often it can get the OptiCloud user locked out.
+    Task BackoffAsync(Exception x, int failures, CancellationToken ct) => x is OptiCloudException { IsBadLogin: true }
+        ? _delay(Outbox.Wait(x, failures), ct)
+        : WaitAsync(Outbox.Wait(x, failures), ct);
 
     // A retry wait that Wake ends early. Only ct cancelling throws.
     async Task WaitAsync(TimeSpan span, CancellationToken ct)
@@ -201,9 +219,12 @@ public sealed class CloudSync : IDisposable
             _log("OptiCloud: en skærm i visningstilstand gemmer ikke scanninger");
             return false;
         }
+        // Before Add, which tells PendingChanged: the scan's wait counts from now.
+        lock (_gate) _queuedAt[e.ScanId] = _mono();
         try { _outbox.Add(e); }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException)
         {
+            lock (_gate) _queuedAt.Remove(e.ScanId);
             _log($"OptiCloud: scanningen {e.Barcode.Raw} kunne ikke gemmes: {x.Message}");
             return false;
         }
@@ -227,7 +248,7 @@ public sealed class CloudSync : IDisposable
     public void SetMachineOrders(IReadOnlyDictionary<Guid, MachineOrder> desired, bool fromCloud = false)
     {
         if (_orders is null) return;
-        _orders.Want(desired, _ordersClock());
+        _orders.Want(desired, _mono());
         if (fromCloud) _orders.Release();
     }
 
@@ -238,21 +259,33 @@ public sealed class CloudSync : IDisposable
             using var client = new OptiCloudClient(_settings.ApiBaseUrl, _settings.Username!, _password!, _handler);
             lock (_gate) _client = client;
             var table = new ScanTable(client, _log);
-            await RetryAsync(() => ConnectAsync(client, table, ct), ct);
-
-            // A PC switched from Scan to Viewer may still have scans to send.
-            var sender = _settings.Mode == StationMode.Scan || _outbox.Pending > 0 ? _outbox.RunAsync(table.AddAsync, ct, _delay) : Task.CompletedTask;
-            if (_settings.Mode == StationMode.Scan)
+            // The sender and the machine orders use the client too: whatever ends this, they are
+            // stopped and awaited before it is disposed.
+            using var inner = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            Task sender = Task.CompletedTask, orders = Task.CompletedTask;
+            try
             {
-                await RetryAsync(() => LoadOnceAsync(table, ct), ct);
-                // After the load, so it acts on the screen as OptiCloud has it (it also waits for Release).
-                if (_orders is not null) _ = RunOrdersAsync(client, ct);
-                // It has just read the whole window, so the first poll waits its turn.
-                await _delay(PollInterval, ct);
-                await PollAsync(table, ct, refresh: true);
+                await RetryAsync(() => ConnectAsync(client, table, ct), ct);
+
+                // A PC switched from Scan to Viewer may still have scans to send.
+                if (_settings.Mode == StationMode.Scan || _outbox.Pending > 0) sender = _outbox.RunAsync(table.AddAsync, inner.Token, _delay);
+                if (_settings.Mode == StationMode.Scan)
+                {
+                    await RetryAsync(() => LoadOnceAsync(table, ct), ct);
+                    // After the load, so it acts on the screen as OptiCloud has it (it also waits for Release).
+                    if (_orders is not null) orders = RunOrdersAsync(client, inner.Token);
+                    // It has just read the whole window, so the first poll waits its turn.
+                    await _delay(PollInterval, ct);
+                    await PollAsync(table, ct, refresh: true);
+                }
+                else await PollAsync(table, ct);
             }
-            else await PollAsync(table, ct);
-            await sender;
+            finally
+            {
+                // Neither throws: both end quietly when cancelled.
+                inner.Cancel();
+                await Task.WhenAll(sender, orders);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x)
@@ -267,7 +300,7 @@ public sealed class CloudSync : IDisposable
     // Its own loop, its own failures: it never stops the scans, and they never stop it.
     async Task RunOrdersAsync(OptiCloudClient client, CancellationToken ct)
     {
-        try { await new MachineOrderSync(_orders!, client, _log, _ordersClock, _delay, Changed).RunAsync(ct); }
+        try { await new MachineOrderSync(_orders!, client, _log, _mono, _delay, Changed).RunAsync(ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x) { _log($"OptiCloud: maskinernes ordrer stoppede: {x}"); }
     }
@@ -358,7 +391,7 @@ public sealed class CloudSync : IDisposable
             catch (Exception x)
             {
                 ReadFailed(x);
-                await WaitAsync(Outbox.Wait(x, failures++), ct);
+                await BackoffAsync(x, failures++, ct);
             }
         }
     }
@@ -380,9 +413,7 @@ public sealed class CloudSync : IDisposable
                 ReadFailed(x);
                 error = x;
             }
-            // A wrong password waits its quarter of an hour even when the network changes.
-            if (error is OptiCloudException { IsBadLogin: true }) await _delay(Outbox.Wait(error, failures), ct);
-            else await WaitAsync(Outbox.Wait(error, failures), ct);
+            await BackoffAsync(error, failures, ct);
         }
     }
 
@@ -393,27 +424,36 @@ public sealed class CloudSync : IDisposable
         if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud, refresh));
     }
 
-    // OptiCloud was read (or logged in to). Scans waiting are tried now: reads working means
-    // the network is back, the sender may still be in its backoff.
+    // OptiCloud was read (or logged in to). When reads come back after failing, scans waiting are
+    // tried now: the network is back, the sender may still be in its backoff. Not on every poll,
+    // which would make every wait of the sender a 5 second one.
     void ReadOk()
     {
+        bool back;
         lock (_gate)
         {
+            back = _readFailing;
             _lastRead = _clock();
+            _readMono = _mono();
             _readFailing = false;
             _readProblem = CloudProblem.None;
             _logged = null;
         }
-        if (_outbox.Pending > 0) _outbox.Nudge();
+        if (back && _outbox.Pending > 0) _outbox.Nudge();
         Publish();
     }
 
     // A scan got in (or, sent false, was given up on: the server answered all the same).
-    void SentOk(bool sent = true)
+    void SentOk(ScanEvent e, bool sent = true)
     {
         lock (_gate)
         {
-            if (sent) _lastSent = _clock();
+            _queuedAt.Remove(e.ScanId);
+            if (sent)
+            {
+                _lastSent = _clock();
+                _sentMono = _mono();
+            }
             _writeProblem = CloudProblem.None;
             _logged = null;
         }
@@ -486,32 +526,42 @@ public sealed class CloudSync : IDisposable
     }
 
     // Under _gate.
-    CloudStatus Make() => CloudHealth.Evaluate(new CloudFacts(
-        _settings.Mode, IsSetUp, _startedAt, _account,
-        Pending: _outbox.Pending,
-        OldestWaiting: _outbox.Pending > 0 ? _oldest : null,
-        Refused: _outbox.Failed,
-        LastRead: _lastRead,
-        LastSent: _lastSent,
-        ReadFailing: _readFailing,
-        ReadProblem: _readProblem,
-        ReadError: _readError,
-        WriteProblem: _writeProblem,
-        WriteError: _writeError,
-        Fatal: _fatal,
-        OrdersFailingFor: _orders?.FailingFor(_ordersClock()),
-        ClockSkew: _client?.ClockSkew), _clock());
-
-    // The scan time of the oldest scan in the outbox: the file names keep the order.
-    DateTimeOffset? OldestWaiting()
+    CloudStatus Make()
     {
-        try
-        {
-            var first = Directory.EnumerateFiles(_outbox.Folder, "*.json").Order(StringComparer.Ordinal).FirstOrDefault();
-            return first is null ? null : ScanJson.Read(File.ReadAllText(first))?.At;
-        }
-        catch (Exception x) when (x is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return null; }
+        var now = _mono();
+        // A scan from before the start (or not recorded here) waits from the start.
+        DateTimeOffset? waitingSince = _outbox.Pending > 0 && _oldest is { } id ? _queuedAt.GetValueOrDefault(id, _startedMono) : null;
+        return CloudHealth.Evaluate(new CloudFacts(
+            _settings.Mode, IsSetUp, _account,
+            Pending: _outbox.Pending,
+            OldestWaited: now - waitingSince,
+            SinceContact: now - (Latest(_readMono, _sentMono) ?? _startedMono),
+            SinceSent: now - _sentMono,
+            Refused: _outbox.Failed,
+            LastRead: _lastRead,
+            LastSent: _lastSent,
+            ReadFailing: _readFailing,
+            ReadProblem: _readProblem,
+            ReadError: _readError,
+            WriteProblem: _writeProblem,
+            WriteError: _writeError,
+            Fatal: _fatal,
+            OrdersFailingFor: _orders?.FailingFor(now),
+            ClockSkew: _client?.ClockSkew));
     }
+
+    // Which scan is the oldest waiting, as the outbox has it now. Read and set under one lock, so
+    // two threads can't leave the older answer last.
+    void NoteOldest()
+    {
+        lock (_oldestGate)
+        {
+            var oldest = _outbox.Oldest()?.ScanId;
+            lock (_gate) _oldest = oldest;
+        }
+    }
+
+    static DateTimeOffset? Latest(DateTimeOffset? a, DateTimeOffset? b) => a is null ? b : b is null ? a : a > b ? a : b;
 
     // The start of the scans read: Window back from now.
     public static DateTimeOffset WindowStart(DateTimeOffset now) => now - Window;
@@ -576,7 +626,9 @@ public sealed class CloudSync : IDisposable
         }
         NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailability;
         NetworkChange.NetworkAddressChanged -= OnNetworkAddress;
-        _tick?.Dispose();
+        Timer? tick;
+        lock (_gate) tick = _tick;
+        tick?.Dispose();
         _stop.Cancel();
         try { run?.Wait(TimeSpan.FromSeconds(3)); }
         catch (AggregateException) { }

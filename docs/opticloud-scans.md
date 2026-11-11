@@ -76,11 +76,21 @@ camelCase them).
   records scans of its own.
 - A 404 on `CreateRow` means the table is gone: the app makes it again (with its columns) and
   sends once more. If it is still 404, it is treated like no network: wait and try again.
+- A new scan, a change of the network, or reads working again after failing make the app try the
+  oldest scan at once, but only when the last try could not reach OptiCloud. After an answer (a
+  refusal, a 500, no access, a wrong password) the backoff runs its course, so scans every few
+  seconds can't use up the 3 refusals in seconds.
+- The status (green, `Sender ikke`, `Offline` and the banner) judges by how long the oldest scan
+  has waited and how long since OptiCloud last answered, measured on a monotonic clock: a PC
+  clock set back or forward changes nothing. A scan that waited from before the start counts
+  from the start, so the first tries get their minute. While scans are getting in (one in the
+  last minute), a backlog draining after an outage is not shown as an outage.
 
 ## The journal on the PC
 
 In Scan mode the app also appends every scan it records to `journal\yyyy-MM-dd.jsonl` (one JSON
-line per scan, by the scan's local date, kept 3 days) in its data folder. The outbox forgets a
+line per scan, by the scan's local date, kept 3 days, longer for a day holding a scan that still
+waits in the outbox) in its data folder. The outbox forgets a
 scan once it is sent; the journal keeps it. On start the screen is rebuilt at once from the
 journal and the outbox, before any network, and again when OptiCloud has been read, with all of
 it together (each `ScanId` once). So a restart never waits for the network, and works without
@@ -218,8 +228,8 @@ Bearer token from `POST /api/Authentication/login` (`grant_type=password`), refr
 `grant_type=refresh_token` (username required) on a 401. The login response is not wrapped in
 `{data, errors, meta}`; every other response is, and errors may come with HTTP 200.
 The account id comes from `GET /api/User/GetCurrentUser` (`data.accountId`).
-A wrong password is tried again only every 15 minutes, so the station can't get the user locked
-out; other failures back off 2, 5, 15, 30, then every 60 seconds.
+A wrong password is tried again only every 15 minutes, also when the network changes, so the
+station can't get the user locked out; other failures back off 2, 5, 15, 30, then every 60 seconds.
 
 ## Open with the backend owner
 
