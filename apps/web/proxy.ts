@@ -8,7 +8,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIES } from "@/lib/auth-cookies";
 import { fixturesEnabled } from "@/lib/fixtures-flag";
 
-const PUBLIC_PATHS = ["/login", "/auth/refresh", "/forgot-password", "/reset-password"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth/refresh",
+  "/auth/unavailable",
+  "/forgot-password",
+  "/reset-password",
+];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

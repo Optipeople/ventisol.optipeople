@@ -1,6 +1,6 @@
-import type { TimelineDay, WorkInterval } from "@/lib/report";
+import { stationKey, type TimelineDay, type WorkInterval } from "@/lib/report";
 import { positionLabel } from "@/lib/scans";
-import { formatClock, formatDuration, formatLongDay } from "@/lib/time";
+import { dayKey, formatClock, formatDuration, formatLongDay, formatScanTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 // The order as a timeline: one block per day it was worked, one lane per
@@ -12,7 +12,8 @@ const HOUR = 3_600_000;
 function barTitle(iv: WorkInterval): string {
   const lines = [
     `${positionLabel(iv.position, iv.subPosition)}, stk. ${iv.piece ?? "–"} (${iv.barcode})`,
-    `${iv.station}: ${formatClock(iv.start)}–${iv.inProgress ? "nu" : formatClock(iv.end)}, ${formatDuration(iv.durationMs)}`,
+    // A pass that began on an earlier day says which.
+    `${iv.station}: ${formatScanTime(iv.start, dayKey(iv.end))} til ${iv.inProgress ? "nu" : formatClock(iv.end)}, ${formatDuration(iv.durationMs)}`,
   ];
   if (iv.visit > 1) lines.push(`Omarbejde (gang nr. ${iv.visit} på stationen)`);
   if (iv.inProgress) lines.push("I gang");
@@ -21,8 +22,10 @@ function barTitle(iv: WorkInterval): string {
 }
 
 function Bar({ iv, axisStart, span }: { iv: WorkInterval; axisStart: number; span: number }) {
-  const left = ((iv.start - axisStart) / span) * 100;
-  const width = Math.max(((iv.end - iv.start) / span) * 100, 0);
+  // A pass that began before the axis (on an earlier day) is drawn from the axis start.
+  const start = Math.max(iv.start, axisStart);
+  const left = ((start - axisStart) / span) * 100;
+  const width = Math.max(((iv.end - start) / span) * 100, 0);
   return (
     <div
       title={barTitle(iv)}
@@ -52,8 +55,8 @@ function DayBlock({ day }: { day: TimelineDay }) {
           {formatLongDay(day.day)}
         </h3>
         <p className="text-[13px] leading-[18px] tabular-nums text-[var(--ds-grey-medium-05)]">
-          {formatClock(day.lanes.flatMap((l) => l.bars).reduce((m, b) => Math.min(m, b.start), Infinity))}
-          {"–"}
+          {formatScanTime(day.lanes.flatMap((l) => l.bars).reduce((m, b) => Math.min(m, b.start), Infinity), day.day)}
+          {" til "}
           {formatClock(day.lanes.flatMap((l) => l.bars).reduce((m, b) => Math.max(m, b.end), 0))}
           {" · "}
           <span className="font-bold text-[var(--ds-grey-dark-09)]">{formatDuration(day.totalMs)}</span>
@@ -79,7 +82,7 @@ function DayBlock({ day }: { day: TimelineDay }) {
         <div />
 
         {day.lanes.map((lane) => (
-          <div key={lane.station} className="contents">
+          <div key={stationKey(lane)} className="contents">
             <div className="flex items-center truncate border-t border-[var(--ds-grey-light-02)] text-[13px] leading-[18px] font-bold text-[var(--ds-grey-dark-09)]">
               {lane.station}
             </div>

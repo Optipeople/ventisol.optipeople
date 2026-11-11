@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   clearSessionCookies,
@@ -8,22 +9,37 @@ import {
   optipeopleLogin,
   setSessionCookies,
 } from "@/lib/auth";
+import {
+  allowAttempt,
+  attemptKey,
+  clientIp,
+  loginLimits,
+  TOO_MANY_ATTEMPTS,
+} from "@/lib/rate-limit";
 import { safeNextPath } from "@/lib/site";
 
-/** The e-mail comes back so the field keeps it: React resets the form after an action. */
+/** The user name comes back so the field keeps it: React resets the form after an action. */
 export type LoginState = { error: string; email: string } | undefined;
 
 export async function login(
   _prev: LoginState,
   formData: FormData
 ): Promise<LoginState> {
+  // The field is called "email" but takes an OptiCloud user name as well.
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const remember = formData.get("remember") === "on";
   // Where to go after signing in; only a path on this site.
   const next = safeNextPath(String(formData.get("next") ?? ""));
   if (!email || !password) {
-    return { error: "Indtast din e-mail og adgangskode.", email };
+    return { error: "Indtast brugernavn og adgangskode.", email };
+  }
+
+  // Before anything goes upstream. The same answer for every account, known
+  // or not, so it says nothing about which ones exist.
+  const ip = clientIp(await headers());
+  if (!allowAttempt(loginLimits, ip, email)) {
+    return { error: TOO_MANY_ATTEMPTS, email };
   }
 
   const result = await optipeopleLogin({
@@ -35,11 +51,14 @@ export async function login(
     return {
       error:
         result.reason === "invalid"
-          ? "Forkert e-mail eller adgangskode."
+          ? "Forkert brugernavn eller adgangskode."
           : "Login-tjenesten er ikke tilgængelig lige nu. Prøv igen om lidt.",
       email,
     };
   }
+
+  // The password was right: this client's earlier typos at the account no longer count.
+  loginLimits.account.reset(attemptKey(ip, email));
 
   // Authorization happens before any cookie is set: only super admins and
   // Ventisol-account users get a session at all.
@@ -60,6 +79,7 @@ export async function login(
 }
 
 export async function logout(): Promise<void> {
+  // The Optipeople API has no logout or token revoke endpoint (checked in docs/api/optipeople.swagger.json), so the tokens are only dropped here.
   await clearSessionCookies();
   redirect("/login");
 }

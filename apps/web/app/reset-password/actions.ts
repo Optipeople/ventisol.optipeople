@@ -1,6 +1,13 @@
 "use server";
 
+import { headers } from "next/headers";
 import { setNewForgottenPassword } from "@/lib/auth";
+import {
+  allowAttempt,
+  clientIp,
+  resetLimits,
+  TOO_MANY_ATTEMPTS,
+} from "@/lib/rate-limit";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -23,6 +30,12 @@ export async function resetPassword(
   }
   if (password !== confirm) {
     return { error: "De to adgangskoder er ikke ens." };
+  }
+
+  // Only tries that go upstream are counted, so a typo in the form above
+  // costs nothing. Stops guessing at reset tokens for an e-mail.
+  if (!allowAttempt(resetLimits, clientIp(await headers()), email)) {
+    return { error: TOO_MANY_ATTEMPTS };
   }
 
   const ok = await setNewForgottenPassword({ token, email, newPassword: password });

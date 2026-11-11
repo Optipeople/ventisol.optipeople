@@ -18,7 +18,7 @@ Three views (Danish UI):
 
 ## Stack
 
-- Next.js 16.3 (App Router, server components, `proxy.ts`) + React 19.2 +
+- Next.js 16.4 (App Router, server components, `proxy.ts`) + React 19.2 +
   TypeScript + Tailwind CSS 4, as in vola. No i18n library: Danish only.
 - Vitest for the unit tests of the computation.
 - No database. OptiCloud is the single source of truth; everything is read
@@ -81,7 +81,11 @@ Copied from vola:
    user back. A 401 on a data read takes the same route, once: the refresh
    sets a one-minute `ventisol_refreshed` cookie, and a 401 while it is set
    goes to `/auth/refresh?retry=1`, which ends the session and shows the
-   login with a message instead of looping.
+   login with a message instead of looping. `retry=1` only counts while that
+   cookie is set. The session ends only when the refresh token is refused:
+   if OptiCloud cannot be reached the cookies stay and the user lands on
+   `/auth/unavailable` with "Prøv igen". When two tabs refresh at once, the
+   one that loses does not end the session the other just renewed.
 6. A 403 on a data read is not an expired token, so there is no refresh: the
    user lands on `/ingen-adgang` ("Ingen adgang til Ventisols data").
 7. `next` (after a refresh, or after logging in) is only followed when it
@@ -89,6 +93,12 @@ Copied from vola:
    else goes to `/`.
 
 Forgot / reset password use the same endpoints as vola.
+
+Login, forgot and reset are rate limited per IP and per IP plus account
+(`lib/rate-limit.ts`). The limiter lives in process memory, so it is per
+server instance: a Vercel WAF rate rule on those three paths is the real
+guard. `next.config.ts` sets the security headers; the full
+Content-Security-Policy is report-only until it has been checked in a browser.
 
 ### Reading the scans (`lib/opticloud.ts`, `lib/paging.ts`)
 
@@ -100,14 +110,22 @@ Unlike vola (External API with an access key), the scans are read with the
    reads `VENTISOL_ACCOUNT_ID`.
 2. `GET /api/MasterData/GetRowsPaged/{tableId}?page=N&pageSize=500&Orderby=ScanTime&IsAscending=false`.
    There is no date filter, so pages are read newest first until a row is
-   older than the period. If a page comes back out of order, every page is
-   read and the period is filtered in memory (and the page says so).
+   older than the period, six pages at a time after the first. A few rows
+   out of order are tolerated; if the order is ignored, every page is read
+   and the period is filtered in memory (and the page says so). A read stops
+   at 600 pages; one that stops before reaching the period shows a message
+   instead of an empty report.
 3. `errors[]` is checked on every response, since errors can come with HTTP 200.
 4. Row values are matched to column names case-insensitively; order and
    position fall back to the barcode (`0 58556 05 01 03`) when empty.
 
-Reads are cached in process memory (`lib/api-cache.ts`, from vola): 30 s when
-the period includes today, 300 s for past days, 300 s for the table list.
+The scans are kept in one row store per account in process memory
+(`lib/api-cache.ts`), shared by all users and topped up with the newest rows:
+30 s when the period includes today, 300 s for past days. Before any rows are
+served, each user's own token must list the table and read a row (cached
+300 s per user). Days, periods and orders reach at most 62 days back
+(`MAX_LOOKBACK_DAYS` in `lib/views.ts`). Every call to OptiCloud times out
+after 20 s.
 
 ### The computation (`lib/report.ts`, unit tested)
 
@@ -131,8 +149,10 @@ the station app:
   element count the scans can't tell that.
 - A pass belongs to the (Copenhagen) day it ended, as in the station app; one in progress shows on today. Day and period reads start 36 hours early so a pass begun the day before has its In.
 - Station utilisation: time worked / time from the day's first scan to now
-  (today) or to the last scan (past days). Same rules as `DayReport` in the
-  station app.
+  (today) or to the last scan (past days). Only the part of a pass inside
+  that span counts, so a pass begun the day before adds its time from the
+  day's first scan on. "Tid i alt" still counts the whole pass. Same rules
+  as `DayReport` in the station app.
 
 ## Files
 

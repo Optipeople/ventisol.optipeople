@@ -19,7 +19,7 @@
 // These mirror DayReport in the station app (apps/station), so the reports
 // site and the operators' screen agree on the numbers.
 
-import { dayKey } from "@/lib/time";
+import { dayKey, dayStart } from "@/lib/time";
 import { isPacking, positionLabel, type Scan } from "@/lib/scans";
 
 /**
@@ -50,7 +50,11 @@ export interface WorkInterval {
    * back from the Out's DurationSec.
    */
   startEstimated: boolean;
-  /** 1 for the element's first pass at this station, 2+ for rework passes. */
+  /**
+   * 1 for the element's first pass at this station, 2+ for rework passes.
+   * Counted over the scans that were read: a first pass that fell before the
+   * period read is not seen, so the rework after it reads as 1.
+   */
   visit: number;
 }
 
@@ -203,7 +207,11 @@ export type OrderStatus = "active" | "idle";
 
 export interface OrderSummary {
   orderNo: number;
-  /** Distinct elements (barcodes) worked on. */
+  /**
+   * Distinct elements (barcodes) with a timed pass, done or in progress: the
+   * same count as the KPI and the station app. A barcode that was only
+   * scanned (no pass could be timed) is not an element worked on.
+   */
   elements: number;
   totalMs: number;
   /** Stations the order passed through, in floor order. */
@@ -216,7 +224,7 @@ export interface OrderSummary {
   lastScan: number;
   /** Passes after the first at the same station (rework re-scans). */
   reworkPasses: number;
-  /** Copenhagen days the order was worked on, ascending. */
+  /** Copenhagen days the order had a pass ending (work counts on the day it ends), ascending. */
   days: string[];
 }
 
@@ -246,7 +254,7 @@ export function summarizeOrders(intervals: WorkInterval[], scans: Scan[]): Order
     const active = ivs.filter((iv) => iv.inProgress);
     lines.push({
       orderNo,
-      elements: new Set([...ivs.map((iv) => iv.barcode), ...sc.map((s) => s.barcode)]).size,
+      elements: new Set(ivs.map((iv) => iv.barcode)).size,
       totalMs: sum(ivs.map((iv) => iv.durationMs)),
       stations: stationNames(ivs.length > 0 ? ivs : sc.map(scanAsStationRef)),
       activeAt: stationNames(active),
@@ -255,7 +263,7 @@ export function summarizeOrders(intervals: WorkInterval[], scans: Scan[]): Order
       // An interval in progress ends at now, so an active order sorts to the top.
       lastScan: Math.max(...times),
       reworkPasses: ivs.filter((iv) => iv.visit > 1).length,
-      days: [...new Set(ivs.map((iv) => dayKey(iv.start)))].sort(),
+      days: [...new Set(ivs.map((iv) => dayKey(iv.end)))].sort(),
     });
   }
   return lines.sort((a, b) => b.lastScan - a.lastScan || b.orderNo - a.orderNo);
@@ -273,24 +281,49 @@ export interface StationSummary {
   done: number;
   /** Mean time of a finished pass. */
   averageMs: number | null;
-  /** Time worked, including what is in progress. */
+  /**
+   * Time worked, including what is in progress. Whole passes, also the part
+   * before the day: a pass counts whole on the day it ended, so this can be
+   * more than the day holds while utilisation (cut to the span) stays under 1.
+   */
   busyMs: number;
-  /** busy / the working span (first scan anywhere to `until`), 0 to 1. */
+  /** Time worked inside the working span / the working span, 0 to 1. */
   utilisation: number;
   /** Elements in progress here now. */
   active: number;
 }
 
+export interface StationSpan {
+  /**
+   * Start of the day shown. The working span starts at the first scan on or
+   * after it, and only the part of a pass inside the span counts as worked, so
+   * an element left overnight (it counts for the day it ends) cannot stretch
+   * the day back to midnight or fill it with the night's hours.
+   */
+  from?: number;
+  /** End of the span: now, for today. Left out: the last end (a finished day). */
+  until?: number;
+}
+
 /**
- * Per station: passes done, average time per pass, and utilisation. The span
- * runs from the first start anywhere to `until` (now, for today), or to the
- * last end when `until` is not given (a finished day).
+ * Per station: passes done, average time per pass, and utilisation. With
+ * `from`, the span starts at the first scan inside the day: a pass counts
+ * from its start when that is in the day, otherwise from its end (a pass left
+ * overnight is first seen today at its Out; one still in progress has no scan
+ * today, so it ends "now" and does not open the day). Without `from` it starts
+ * at the first start anywhere. It ends at `until` or the last end. Utilisation
+ * is the time worked inside the span over the span, so one overnight pass
+ * neither stretches the day back to midnight for every station nor gets the
+ * night as work. The station app (DayReport.Stations) follows the same rule.
  */
-export function summarizeStations(intervals: WorkInterval[], until?: number): StationSummary[] {
+export function summarizeStations(intervals: WorkInterval[], { from, until }: StationSpan = {}): StationSummary[] {
   if (intervals.length === 0) return [];
-  const spanStart = Math.min(...intervals.map((iv) => iv.start));
+  const firstScan = (iv: WorkInterval) => (from == null || iv.start >= from ? iv.start : iv.end);
+  const first = Math.min(...intervals.map(firstScan));
+  const spanStart = from != null ? Math.max(from, first) : first;
   const spanEnd = until ?? Math.max(...intervals.map((iv) => iv.end));
   const span = Math.max(0, spanEnd - spanStart);
+  const inSpan = (iv: WorkInterval) => Math.max(0, Math.min(iv.end, spanEnd) - Math.max(iv.start, spanStart));
 
   return [...groupBy(intervals, stationKey).values()]
     .map((ivs) => {
@@ -303,7 +336,7 @@ export function summarizeStations(intervals: WorkInterval[], until?: number): St
         done: done.length,
         averageMs: done.length > 0 ? sum(done.map((iv) => iv.durationMs)) / done.length : null,
         busyMs: busy,
-        utilisation: span > 0 ? Math.min(1, Math.max(0, busy / span)) : 0,
+        utilisation: span > 0 ? Math.min(1, Math.max(0, sum(ivs.map(inSpan)) / span)) : 0,
         active: ivs.length - done.length,
       };
     })
@@ -391,7 +424,10 @@ export interface TimelineLane {
 export interface TimelineDay {
   /** Copenhagen day, yyyy-MM-dd. */
   day: string;
-  /** Axis start and end, rounded out to whole hours. */
+  /**
+   * Axis start and end, rounded out to whole hours. Never before the start of
+   * the day: a bar that began earlier is drawn from the axis start.
+   */
   axisStart: number;
   axisEnd: number;
   lanes: TimelineLane[];
@@ -401,15 +437,19 @@ export interface TimelineDay {
 const HOUR = 3_600_000;
 
 /**
- * The order as a timeline: one block per day it was worked, one lane per
- * station, a bar per pass from In to Out. Days run oldest first; the axis of
- * each day is cut to the hours that had work, so nights do not fill the page.
+ * The order as a timeline: one block per day, one lane per station, a bar per
+ * pass from In to Out. A pass is on the day it ended, as in the day and
+ * period views. Days run oldest first; the axis of each day is cut to the
+ * hours that had work, so nights do not fill the page. A pass that began on
+ * an earlier day (left overnight, or over a weekend) does not pull the axis
+ * back: the axis starts at midnight at the earliest and the bar is cut there.
  */
 export function buildTimeline(intervals: WorkInterval[]): TimelineDay[] {
-  return [...groupBy(intervals, (iv) => dayKey(iv.start)).entries()]
+  return [...groupBy(intervals, (iv) => dayKey(iv.end)).entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([day, ivs]) => {
-      const first = Math.min(...ivs.map((iv) => iv.start));
+      const midnight = dayStart(day);
+      const first = Math.min(...ivs.map((iv) => Math.max(iv.start, midnight)));
       const last = Math.max(...ivs.map((iv) => iv.end));
       const axisStart = Math.floor(first / HOUR) * HOUR;
       const axisEnd = Math.max(axisStart + HOUR, Math.ceil(last / HOUR) * HOUR);

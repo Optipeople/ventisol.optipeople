@@ -28,6 +28,15 @@ export function ventisolAccountId(): string | null {
   return id ? id : null;
 }
 
+/**
+ * Longest wait for one answer from the Optipeople API. Without it a hung
+ * upstream would hold the request (and the user) until the platform gives
+ * up. A timeout is handled like any other network failure: "unavailable".
+ */
+const UPSTREAM_TIMEOUT_MS = 10_000;
+
+const upstreamTimeout = () => AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+
 // Stable code id; the human label ("Super Administrator") can drift.
 const SUPER_ADMIN_PERMISSION = "SuperAdministrator";
 
@@ -56,6 +65,7 @@ export async function optipeopleLogin(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       cache: "no-store",
+      signal: upstreamTimeout(),
     });
   } catch (err) {
     console.error("optipeopleLogin: upstream unreachable:", err);
@@ -69,8 +79,15 @@ export async function optipeopleLogin(
     };
   }
 
-  const data = (await res.json()) as LoginResponse;
-  if (!data.access_token) return { ok: false, reason: "invalid" };
+  // The body can still time out or be cut off after the headers arrived.
+  let data: LoginResponse;
+  try {
+    data = (await res.json()) as LoginResponse;
+  } catch (err) {
+    console.error("optipeopleLogin: unreadable response:", err);
+    return { ok: false, reason: "unavailable" };
+  }
+  if (!data?.access_token) return { ok: false, reason: "invalid" };
   return { ok: true, data };
 }
 
@@ -102,6 +119,7 @@ export async function fetchCurrentUser(
     res = await fetch(`${API_URL}/api/User/GetCurrentUser`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
+      signal: upstreamTimeout(),
     });
   } catch (err) {
     console.error("fetchCurrentUser: upstream unreachable:", err);
@@ -306,10 +324,18 @@ export async function clearSessionCookies(): Promise<void> {
 
 // --- Password reset (same Optipeople endpoints as vola) ---
 
+/**
+ * "sent": the backend took the request. "rejected": it answered 4xx, which
+ * may only mean the e-mail is unknown, so callers must not tell it apart
+ * from "sent" in what they show. "unavailable": network failure, timeout or
+ * 5xx.
+ */
+export type PasswordResetRequest = "sent" | "rejected" | "unavailable";
+
 export async function requestPasswordReset(
   email: string,
   resetUrl: string
-): Promise<boolean> {
+): Promise<PasswordResetRequest> {
   try {
     const res = await fetch(
       `${API_URL}/api/IncomacAuthentication/ForgotPassword`,
@@ -317,12 +343,15 @@ export async function requestPasswordReset(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, resetUrl }),
+        cache: "no-store",
+        signal: upstreamTimeout(),
       }
     );
-    return res.ok;
+    if (res.ok) return "sent";
+    return res.status >= 400 && res.status < 500 ? "rejected" : "unavailable";
   } catch (err) {
     console.error("requestPasswordReset: upstream unreachable:", err);
-    return false;
+    return "unavailable";
   }
 }
 
@@ -336,6 +365,8 @@ export async function setNewForgottenPassword(args: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(args),
+      cache: "no-store",
+      signal: upstreamTimeout(),
     });
     return res.ok;
   } catch (err) {

@@ -28,13 +28,17 @@ export function LoginForm({ initialError, next }: { initialError?: string; next?
         <input
           id="email"
           name="email"
-          type="email"
+          type="text"
+          inputMode="email"
           autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           defaultValue={state?.email}
           required
           disabled={pending}
           placeholder="Brugernavn eller e-mail"
-          aria-label="E-mail"
+          aria-label="Brugernavn eller e-mail"
           className={authInputClasses}
         />
         <input

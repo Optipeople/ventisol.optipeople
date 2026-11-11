@@ -22,6 +22,29 @@ describe("Copenhagen days", () => {
   it("makes the DST-end day 25 hours long", () => {
     expect((dayEnd("2026-10-25") - dayStart("2026-10-25")) / 3_600_000).toBe(25);
   });
+  it("makes the DST-start day in spring 23 hours long", () => {
+    // 29 March 2026: 02:00 becomes 03:00.
+    expect(new Date(dayStart("2026-03-29")).toISOString()).toBe("2026-03-28T23:00:00.000Z");
+    expect(new Date(dayEnd("2026-03-29")).toISOString()).toBe("2026-03-29T22:00:00.000Z");
+    expect((dayEnd("2026-03-29") - dayStart("2026-03-29")) / 3_600_000).toBe(23);
+  });
+  it("keeps every instant of the 23 hour day on that day", () => {
+    const start = dayStart("2026-03-29");
+    const end = dayEnd("2026-03-29");
+    expect(dayKey(start)).toBe("2026-03-29");
+    expect(dayKey(end - 1)).toBe("2026-03-29");
+    expect(dayKey(start - 1)).toBe("2026-03-28");
+    expect(dayKey(end)).toBe("2026-03-30");
+    // The hour that does not exist: 01:59 is followed by 03:00.
+    expect(formatClock(Date.parse("2026-03-29T00:59:00Z"))).toBe("01:59");
+    expect(formatClock(Date.parse("2026-03-29T01:00:00Z"))).toBe("03:00");
+  });
+  it("starts the days around both switches at local midnight", () => {
+    for (const day of ["2026-03-28", "2026-03-29", "2026-03-30", "2026-10-24", "2026-10-25", "2026-10-26"]) {
+      expect(dayKey(dayStart(day))).toBe(day);
+      expect(formatClock(dayStart(day))).toBe("00:00");
+    }
+  });
   it("puts a late-evening UTC instant on the next local day", () => {
     expect(dayKey(Date.parse("2026-10-20T22:30:00Z"))).toBe("2026-10-21");
   });

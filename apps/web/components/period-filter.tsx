@@ -17,6 +17,7 @@ export function PeriodFilter({
   from,
   to,
   today,
+  earliest,
   presets,
   sort,
   dir,
@@ -24,6 +25,8 @@ export function PeriodFilter({
   from: string;
   to: string;
   today: string;
+  /** The earliest day that can be shown (earliestDay in lib/views.ts). */
+  earliest: string;
   presets: PeriodPreset[];
   sort: string;
   dir: string;
@@ -55,8 +58,8 @@ export function PeriodFilter({
         </span>
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <DateField label="Fra" value={from} max={today} onChange={(v) => go({ from: v })} />
-        <DateField label="Til" value={to} max={today} onChange={(v) => go({ to: v })} />
+        <DateField label="Fra" value={from} min={earliest} max={today} required onChange={(v) => go({ from: v })} />
+        <DateField label="Til" value={to} min={earliest} max={today} required onChange={(v) => go({ to: v })} />
       </div>
       <div className="mt-3 flex flex-wrap gap-[6px]">
         {presets.map((p) => {

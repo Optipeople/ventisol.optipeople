@@ -8,7 +8,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/components/ui/data-table";
-import type { ElementSummary, OrderSortKey, OrderSummary, StationSummary } from "@/lib/report";
+import { stationKey, type ElementSummary, type OrderSortKey, type OrderSummary, type StationSummary } from "@/lib/report";
 import { formatDuration, formatInt, formatPercent, formatScanTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,23 @@ export function EmptyState({ children }: { children: React.ReactNode }) {
       {children}
     </p>
   );
+}
+
+/** The read did not get everything: shown instead of numbers that would be wrong. */
+export function ReadFailed({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      role="alert"
+      className="mt-5 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] p-8 text-center text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]"
+    >
+      {children}
+    </p>
+  );
+}
+
+/** One quiet line under a filter, e.g. that a date was moved. */
+export function Note({ children }: { children: React.ReactNode }) {
+  return <p className="mt-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">{children}</p>;
 }
 
 export function SectionTitle({ title, aside }: { title: string; aside?: React.ReactNode }) {
@@ -46,7 +63,8 @@ function StationList({ stations, active }: { stations: string[]; active: string[
   return (
     <span className="text-[13px] leading-[18px]">
       {stations.map((s, i) => (
-        <span key={s}>
+        // Two stations can carry the same name (they are told apart by number).
+        <span key={`${i}-${s}`}>
           {i > 0 && <span className="text-[var(--ds-grey-light-03)]"> · </span>}
           <span className={cn(active.includes(s) && "font-bold text-[var(--ds-orange-darkest)]")}>{s}</span>
         </span>
@@ -206,7 +224,7 @@ export function StationsTable({
         </DataTableHead>
         <DataTableBody>
           {stations.map((s) => (
-            <DataTableRow key={s.station} className="hover:bg-[var(--ds-table-blue-hover)]">
+            <DataTableRow key={stationKey(s)} className="hover:bg-[var(--ds-table-blue-hover)]">
               <DataTableCell className="whitespace-nowrap font-bold">{s.station}</DataTableCell>
               <DataTableCell align="right" className="tabular-nums">{formatInt(s.done)}</DataTableCell>
               <DataTableCell align="right" className="tabular-nums">

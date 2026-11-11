@@ -4,7 +4,7 @@
  * The app stores and transports dates as ISO yyyy-MM-dd (URL params, API
  * calls, report filenames). Only what the user reads and types is dd-MM-yyyy,
  * the everyday Danish/EU convention. This replaces the native
- * <input type="date">, whose rendering follows the *browser's* locale — a
+ * <input type="date">, whose rendering follows the *browser's* locale: a
  * Danish operator on an English Windows install was shown 09/14/2026.
  *
  * All arithmetic runs in UTC so a DST boundary can never shift a day.
@@ -13,7 +13,7 @@
 const ISO_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MS_PER_DAY = 86_400_000;
 
-/** Earliest year we accept from typed input — guards against half-typed years. */
+/** Earliest year we accept from typed input: guards against half-typed years. */
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2999;
 
@@ -75,7 +75,7 @@ export function parseDisplayDate(input: string): string | null {
   const digitsOnly = /^\d+$/.test(text);
   if (digitsOnly) {
     if (text.length === 8) {
-      // ddMMyyyy — but accept yyyyMMdd too when ddMMyyyy cannot be real.
+      // ddMMyyyy, but accept yyyyMMdd too when ddMMyyyy cannot be real.
       return (
         fromParts(text.slice(4), text.slice(2, 4), text.slice(0, 2)) ??
         fromParts(text.slice(0, 4), text.slice(4, 6), text.slice(6))
@@ -109,7 +109,7 @@ function fromParts(year: string, month: string, day: string): string | null {
  */
 export function maskDateInput(raw: string): string {
   if (!/^[\d-]*$/.test(raw)) return raw;
-  // A 4-digit leading group means an ISO paste — never reachable by typing
+  // A 4-digit leading group means an ISO paste, never reachable by typing
   // through the mask, which breaks after two digits.
   if (/^\d{4}-/.test(raw)) return raw;
   const digits = raw.replace(/\D/g, "").slice(0, 8);

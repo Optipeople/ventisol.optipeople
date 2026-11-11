@@ -201,6 +201,30 @@ describe("summarizeOrders", () => {
     expect(orders.map((o) => o.orderNo)).toEqual([58557, 58556]);
   });
 
+  it("counts elements the same way per order and in the KPI: barcodes with a timed pass", () => {
+    // An Out with no In and no DurationSec cannot be timed. Its order is
+    // listed (it was scanned), but the barcode is not an element worked on.
+    const untimed = scan("Out", at("07:30"), { barcode: "058556050109" });
+    const lost = scan("Out", at("07:40"), { orderNo: 58558, barcode: "058558010101" });
+    const all = [...scans, untimed, lost];
+    const intervals = pairScans(all, at("09:30"));
+    const lines = summarizeOrders(intervals, all);
+    expect(lines.find((x) => x.orderNo === 58556)!.elements).toBe(2);
+    expect(lines.find((x) => x.orderNo === 58558)).toMatchObject({ elements: 0, totalMs: 0, days: [] });
+    const k = computeKpis(intervals, lines);
+    expect(k.elements).toBe(3);
+    expect(k.elements).toBe(lines.reduce((t, o) => t + o.elements, 0));
+  });
+
+  it("counts the days worked by the day a pass ended, as the day and period views do", () => {
+    const overnight = [
+      ...pass(at("15:00", "2026-10-20"), at("07:00")),
+      ...pass(at("08:00"), at("08:10"), { station: "Station 20", stationNo: 2 }),
+    ];
+    const [o] = summarizeOrders(pairScans(overnight, at("12:00")), overnight);
+    expect(o.days).toEqual(["2026-10-21"]);
+  });
+
   it("computes the KPIs", () => {
     const k = computeKpis(ivs, orders);
     expect(k.elements).toBe(3);
@@ -220,7 +244,7 @@ describe("summarizeStations", () => {
       ...pass(at("08:10"), at("08:30"), { barcode: "058556050101" }),
       scan("In", at("08:40"), { station: "Station 20", stationNo: 2 }),
     ];
-    const lines = summarizeStations(pairScans(scans, at("09:00")), at("09:00"));
+    const lines = summarizeStations(pairScans(scans, at("09:00")), { until: at("09:00") });
     expect(lines.map((l) => l.station)).toEqual(["Station 10", "Station 20"]);
     const s10 = lines[0];
     expect(s10.done).toBe(2);
@@ -235,6 +259,108 @@ describe("summarizeStations", () => {
 
   it("returns nothing for no work", () => {
     expect(summarizeStations([])).toEqual([]);
+  });
+
+  describe("with a pass left overnight", () => {
+    const from = dayStart("2026-10-21");
+    const scans = [
+      // Left at station 1 at 15:00 the day before, finished at 07:00.
+      ...pass(at("15:00", "2026-10-20"), at("07:00")),
+      // Station 2 works 08:00 to 10:00.
+      ...pass(at("08:00"), at("10:00"), { barcode: "058556050101", station: "Station 20", stationNo: 2 }),
+    ];
+    const ivs = pairScans(scans, at("12:00"));
+
+    it("starts the span at the first scan of the day, not at yesterday's In or at midnight", () => {
+      const [one, two] = summarizeStations(ivs, { from, until: at("12:00") });
+      // The first scan today is the Out at 07:00: 07:00 to 12:00 is 5 hours.
+      // Station 1 only scanned out then, so the night is not work on this day.
+      expect(one.utilisation).toBe(0);
+      expect(two.utilisation).toBeCloseTo(2 / 5, 10);
+    });
+
+    it("does not dilute the other stations or credit the night to the overnight one", () => {
+      // In 15:00 yesterday, Out 07:10 today; station 2 works 07:00 to 14:00; seen at 15:00.
+      const day = pairScans(
+        [
+          ...pass(at("15:00", "2026-10-20"), at("07:10")),
+          ...pass(at("07:00"), at("14:00"), { barcode: "058556050101", station: "Station 20", stationNo: 2 }),
+        ],
+        at("15:00")
+      );
+      const [one, two] = summarizeStations(day, { from, until: at("15:00") });
+      // The span is 07:00 to 15:00, 8 hours: 7 of 8, not 7 of 15.
+      expect(two.utilisation).toBeCloseTo(7 / 8, 10);
+      // Station 1 gets its ten minutes after 07:00, not the night.
+      expect(one.utilisation).toBeCloseTo(10 / (8 * 60), 10);
+      expect(one.busyMs).toBe((16 * 60 + 10) * MIN);
+    });
+
+    it("starts at an In of the day that comes before the overnight Out", () => {
+      const day = pairScans(
+        [
+          ...pass(at("15:00", "2026-10-20"), at("09:00")),
+          ...pass(at("06:00"), at("08:00"), { barcode: "058556050101", station: "Station 20", stationNo: 2 }),
+        ],
+        at("10:00")
+      );
+      const [one, two] = summarizeStations(day, { from, until: at("10:00") });
+      // 06:00 to 10:00; station 1 is at work on the overnight pass until 09:00.
+      expect(one.utilisation).toBeCloseTo(3 / 4, 10);
+      expect(two.utilisation).toBeCloseTo(2 / 4, 10);
+    });
+
+    it("was distorted without the day start: the span ran back to yesterday", () => {
+      const [one, two] = summarizeStations(ivs, { until: at("12:00") });
+      expect(one.utilisation).toBeCloseTo(16 / 21, 10);
+      expect(two.utilisation).toBeCloseTo(2 / 21, 10);
+    });
+
+    it("keeps the whole pass in the time worked and the average", () => {
+      const [one] = summarizeStations(ivs, { from, until: at("12:00") });
+      expect(one.busyMs).toBe(16 * 60 * MIN);
+      expect(one.averageMs).toBe(16 * 60 * MIN);
+      expect(one.done).toBe(1);
+    });
+
+    it("ends a finished day at its last scan", () => {
+      const [one, two] = summarizeStations(ivs, { from });
+      // 07:00 to 10:00.
+      expect(one.utilisation).toBe(0);
+      expect(two.utilisation).toBeCloseTo(2 / 3, 10);
+    });
+
+    it("starts the span at the first scan when that is later than midnight", () => {
+      const day = pairScans(pass(at("08:00"), at("09:00")), at("12:00"));
+      const [line] = summarizeStations(day, { from, until: at("12:00") });
+      expect(line.utilisation).toBeCloseTo(1 / 4, 10);
+    });
+
+    it("has no span yet when the only work is in progress since yesterday: no scan today", () => {
+      const open = pairScans([scan("In", at("20:00", "2026-10-20"))], at("06:00"));
+      const [line] = summarizeStations(open, { from, until: at("06:00") });
+      expect(line.utilisation).toBe(0);
+      expect(line.busyMs).toBe(10 * 60 * MIN);
+      expect(line.active).toBe(1);
+    });
+
+    it("counts an element in progress since yesterday from the day's first scan", () => {
+      const day = pairScans(
+        [
+          scan("In", at("20:00", "2026-10-20")),
+          ...pass(at("07:00"), at("08:00"), { barcode: "058556050101", station: "Station 20", stationNo: 2 }),
+        ],
+        at("09:00")
+      );
+      const [one, two] = summarizeStations(day, { from, until: at("09:00") });
+      expect(one.utilisation).toBe(1);
+      expect(two.utilisation).toBeCloseTo(1 / 2, 10);
+    });
+
+    it("gives no utilisation to a span of no length", () => {
+      const open = pairScans([scan("In", from)], from);
+      expect(summarizeStations(open, { from, until: from })[0].utilisation).toBe(0);
+    });
   });
 });
 
@@ -276,6 +402,35 @@ describe("buildTimeline", () => {
     expect(days[0].axisEnd).toBe(at("14:00", "2026-10-20"));
     expect(days[0].totalMs).toBe(40 * MIN);
     expect(days[1].lanes[0].bars).toHaveLength(1);
+  });
+
+  it("puts a pass on the day it ended, as the day and period views do", () => {
+    const days = buildTimeline(pairScans(pass(at("15:00", "2026-10-20"), at("07:10")), at("12:00")));
+    expect(days.map((d) => d.day)).toEqual(["2026-10-21"]);
+    expect(days[0].totalMs).toBe((16 * 60 + 10) * MIN);
+  });
+
+  it("keeps the axis inside the day for a pass that spans a weekend", () => {
+    // In on Friday 16 October at 15:00, Out on Monday 19 October at 07:10.
+    const scans = [
+      ...pass(at("15:00", "2026-10-16"), at("07:10", "2026-10-19")),
+      ...pass(at("07:30", "2026-10-19"), at("08:20", "2026-10-19"), PACKING),
+    ];
+    const [monday, ...more] = buildTimeline(pairScans(scans, at("12:00")));
+    expect(more).toEqual([]);
+    expect(monday.day).toBe("2026-10-19");
+    // From midnight, not from Friday afternoon: 9 hours, not 66.
+    expect(monday.axisStart).toBe(dayStart("2026-10-19"));
+    expect(monday.axisEnd).toBe(at("09:00", "2026-10-19"));
+    // The bar itself keeps its real start, for the tooltip.
+    expect(monday.lanes[0].bars[0].start).toBe(at("15:00", "2026-10-16"));
+  });
+
+  it("puts an element in progress on today", () => {
+    const days = buildTimeline(pairScans([scan("In", at("22:00", "2026-10-20"))], at("09:30")));
+    expect(days.map((d) => d.day)).toEqual(["2026-10-21"]);
+    expect(days[0].axisStart).toBe(dayStart("2026-10-21"));
+    expect(days[0].axisEnd).toBe(at("10:00"));
   });
 });
 

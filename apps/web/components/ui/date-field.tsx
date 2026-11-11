@@ -50,6 +50,7 @@ export function DateField({
   value,
   min,
   max,
+  required,
   onChange,
 }: {
   label: string;
@@ -57,6 +58,8 @@ export function DateField({
   value: string;
   min?: string;
   max?: string;
+  /** The field cannot be left empty: emptying it puts the current date back. */
+  required?: boolean;
   onChange: (value: string) => void;
 }) {
   const intlLocale = INTL_LOCALE;
@@ -122,7 +125,9 @@ export function DateField({
     if (open) return; // Focus moved into the calendar, not away from the field.
     const trimmed = text.trim();
     if (!trimmed) {
-      commit("");
+      // A required field shows the date the page is on again, so the two
+      // cannot go out of step.
+      commit(required ? value : "");
       return;
     }
     const iso = parseDisplayDate(trimmed);
@@ -336,7 +341,7 @@ const Calendar = React.forwardRef<
       weekday: "short",
       timeZone: "UTC",
     });
-    // 2024-01-01 was a Monday — Danish and ISO weeks both start there.
+    // 2024-01-01 was a Monday: Danish and ISO weeks both start there.
     const monday = Date.UTC(2024, 0, 1);
     return Array.from({ length: 7 }, (_, i) =>
       // Danish "short" weekdays carry a trailing period the grid has no room for.

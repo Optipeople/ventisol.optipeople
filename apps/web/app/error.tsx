@@ -6,11 +6,15 @@ import { Button } from "@/components/ui/button";
 
 export default function Error({
   error,
-  reset,
+  retry,
 }: {
-  error: Error & { digest?: string };
-  reset: () => void;
+  error: unknown;
+  retry: () => void;
 }) {
+  // A value thrown in a client component need not be an Error. globalThis,
+  // because this component is itself called Error.
+  const message = error instanceof globalThis.Error ? error.message : "";
+
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -25,12 +29,13 @@ export default function Error({
           Noget gik galt under hentningen fra OptiCloud. Det er som regel
           forbigående, så prøv igen om et øjeblik.
         </p>
-        {process.env.NODE_ENV !== "production" && error.message && (
+        {process.env.NODE_ENV !== "production" && message && (
           <p className="mt-3 break-words text-[12px] leading-[18px] text-[var(--ds-red-dark)]">
-            {error.message}
+            {message}
           </p>
         )}
-        <Button className="mt-5" onClick={() => reset()}>
+        {/* retry() fetches the segment again; reset() would only re-render the failed result. */}
+        <Button className="mt-5" onClick={() => retry()}>
           Prøv igen
         </Button>
       </div>
