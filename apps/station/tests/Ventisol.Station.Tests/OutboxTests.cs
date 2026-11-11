@@ -265,4 +265,149 @@ public sealed class OutboxTests : IDisposable
 
         Assert.Equal([1, 2, 1, 0], counts);
     }
+
+    // Fails the first try, then waits ten minutes after it unless the wait is cut short.
+    async Task<(List<ScanEvent> Sent, Task Run, CancellationTokenSource Stop)> FailOnceThenWaitLong(Outbox box, OptiCloudException failure)
+    {
+        var sent = new List<ScanEvent>();
+        var failed = 0;
+        var stop = new CancellationTokenSource();
+        var run = box.RunAsync((e, _) =>
+        {
+            if (Interlocked.Increment(ref failed) == 1) throw failure;
+            lock (sent) sent.Add(e);
+            return Task.CompletedTask;
+        }, stop.Token, (_, ct) => Task.Delay(TimeSpan.FromMinutes(10), ct));
+        await Until(() => Volatile.Read(ref failed) >= 1);
+        return (sent, run, stop);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_nudge_ends_the_wait_after_a_failure_and_tries_at_once()
+    {
+        var box = new Outbox(_folder);
+        var a = In("058556050103", 1, T0);
+        box.Add(a);
+        var (sent, run, stop) = await FailOnceThenWaitLong(box, new OptiCloudException(OptiCloudException.Unreachable));
+
+        box.Nudge();
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([a], sent);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_new_scan_ends_the_wait_and_both_go_in_order()
+    {
+        var box = new Outbox(_folder);
+        var a = In("058556050103", 1, T0);
+        box.Add(a);
+        var (sent, run, stop) = await FailOnceThenWaitLong(box, new OptiCloudException(OptiCloudException.Unreachable));
+
+        var b = Out("058556050103", 1, T0.AddMinutes(1));
+        box.Add(b);
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([a, b], sent);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_nudge_does_not_end_the_wait_after_a_wrong_password()
+    {
+        var box = new Outbox(_folder);
+        box.Add(In("058556050103", 1, T0));
+        var (sent, run, stop) = await FailOnceThenWaitLong(box, new OptiCloudException(OptiCloudException.BadLogin, 400, auth: true));
+
+        box.Nudge();
+        box.Add(In("058556050102", 2, T0));
+        await Task.Delay(300);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(sent);
+        Assert.Equal(2, box.Pending);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_file_a_power_cut_left_empty_is_rebuilt_from_the_journal_and_sent()
+    {
+        var journal = new ScanJournal(Path.Combine(_folder, "journal"));
+        var a = In("058556050103", 1, T0);
+        var b = Out("058556050103", 1, T0.AddMinutes(1));
+        var first = new Outbox(_folder);
+        foreach (var s in new[] { a, b }) { first.Add(s); journal.Append(s); }
+        File.WriteAllBytes(Directory.GetFiles(_folder, "*.json").Order(StringComparer.Ordinal).First(), []);
+        var log = new List<string>();
+        var box = new Outbox(_folder, m => { lock (log) log.Add(m); }) { Rebuild = journal.Find };
+        var sent = new List<ScanEvent>();
+        using var stop = new CancellationTokenSource();
+
+        var run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token, Record([]));
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([a, b], sent);
+        Assert.Equal(0, box.Failed);
+        Assert.Contains(log, l => l.Contains("journalen"));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task An_empty_file_the_journal_does_not_have_is_moved_aside_and_logged()
+    {
+        var a = In("058556050103", 1, T0);
+        var b = In("058556050102", 2, T0);
+        var first = new Outbox(_folder);
+        first.Add(a);
+        first.Add(b);
+        File.WriteAllBytes(Directory.GetFiles(_folder, "*.json").Order(StringComparer.Ordinal).First(), []);
+        var log = new List<string>();
+        var box = new Outbox(_folder, m => { lock (log) log.Add(m); }) { Rebuild = new ScanJournal(Path.Combine(_folder, "journal")).Find };
+        var sent = new List<ScanEvent>();
+        using var stop = new CancellationTokenSource();
+
+        var run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token, Record([]));
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([b], sent);
+        Assert.Equal(1, box.Failed);
+        Assert.Contains(log, l => l.Contains("failed"));
+    }
+
+    [Fact]
+    public void New_scans_stay_behind_older_ones_when_the_clock_was_set_back()
+    {
+        // Queued while the clock was a day ahead, then the clock was corrected and the PC restarted.
+        var a = In("058556050103", 1, T0);
+        new Outbox(_folder).Add(a);
+        var file = Directory.GetFiles(_folder, "*.json").Single();
+        var ahead = DateTime.UtcNow.AddDays(1).Ticks;
+        File.Move(file, Path.Combine(_folder, $"{ahead:D19}-{a.ScanId:N}.json"));
+
+        var box = new Outbox(_folder);
+        var b = Out("058556050103", 1, T0.AddMinutes(1));
+        var c = In("058556050102", 2, T0.AddMinutes(2));
+        box.Add(b);
+        box.Add(c);
+
+        Assert.Equal([a, b, c], box.Peek());
+        Assert.Equal([a, b, c], new Outbox(_folder).Peek());
+    }
+
+    [Fact]
+    public void Written_files_are_whole_and_leave_no_tmp_behind()
+    {
+        var box = new Outbox(_folder);
+        var a = In("058556050103", 1, T0);
+        box.Add(a);
+
+        Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
+        Assert.Equal([a], new Outbox(_folder).Peek());
+    }
 }

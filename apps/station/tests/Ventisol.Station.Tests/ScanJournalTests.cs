@@ -55,4 +55,19 @@ public sealed class ScanJournalTests : IDisposable
             [$"{Noon.AddDays(-2):yyyy-MM-dd}.jsonl", $"{Noon.AddDays(-1):yyyy-MM-dd}.jsonl", $"{Noon:yyyy-MM-dd}.jsonl", "notes.jsonl"],
             Directory.GetFiles(_folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
+
+    [Fact]
+    public void A_scan_is_found_by_its_ScanId_on_any_day_kept()
+    {
+        var journal = new ScanJournal(_folder);
+        var yesterday = In("058556050103", 1, Noon.AddDays(-1));
+        var today = Out("058556050103", 1, Noon);
+        journal.Append(yesterday);
+        journal.Append(today);
+
+        Assert.Equal(yesterday, new ScanJournal(_folder).Find(yesterday.ScanId));
+        Assert.Equal(today, new ScanJournal(_folder).Find(today.ScanId));
+        Assert.Null(new ScanJournal(_folder).Find(Guid.NewGuid()));
+        Assert.Null(new ScanJournal(Path.Combine(_folder, "none")).Find(today.ScanId));
+    }
 }
