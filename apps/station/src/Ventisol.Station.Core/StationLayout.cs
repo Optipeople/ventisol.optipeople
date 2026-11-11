@@ -44,18 +44,26 @@ public sealed class StationLayout
         _tiles.All(Fits) &&
         !_tiles.Any(a => _tiles.Any(b => a != b && a.Overlaps(b)));
 
-    // A saved layout, where stations not on it were taken off the screen on purpose (hidden). A station set up
-    // since it was saved gets the first free spot, or is hidden too when there is none. Hidden stations that are
-    // no longer set up are forgotten. Null if the saved layout doesn't fit, so the caller starts from the default.
+    // A saved layout, where stations not on it were taken off the screen on purpose (hidden). Stations and hidden
+    // stations no longer set up are forgotten, and the rest of the layout kept. A station set up since it was saved
+    // gets the first free spot. Only someone hiding a station keeps it off the screen, so when there is no room the
+    // stations start over from the default and the widgets go where there is room; a widget left out has no tile.
+    // Null if the saved layout doesn't fit, so the caller starts from the default.
     public static (StationLayout Layout, IReadOnlyList<string> Hidden)? Restore(
         IEnumerable<TilePlace> saved, IReadOnlyList<string> stations, IEnumerable<string> hidden, IEnumerable<string> widgets)
     {
-        var layout = new StationLayout(saved);
+        var widgetIds = widgets.ToList();
+        var layout = new StationLayout(saved.Where(t => stations.Contains(t.Id) || widgetIds.Contains(t.Id)));
         var off = hidden.Where(stations.Contains).ToHashSet();
         var placed = layout._tiles.Select(t => t.Id).ToHashSet();
-        if (!layout.IsValidFor([.. placed.Where(id => stations.Contains(id) && !off.Contains(id)), .. widgets])) return null;
+        if (!layout.IsValidFor([.. placed.Where(id => stations.Contains(id) && !off.Contains(id)), .. widgetIds])) return null;
         foreach (var id in stations.Where(id => !placed.Contains(id) && !off.Contains(id)))
-            if (!layout.TryAdd(id, Columns / 4, Rows / 2)) off.Add(id);
+        {
+            if (layout.TryAdd(id, Columns / 4, Rows / 2)) continue;
+            var fresh = Default(stations.Where(s => !off.Contains(s)));
+            foreach (var w in widgetIds) fresh.TryAdd(w, layout[w].ColumnSpan, layout[w].RowSpan);
+            return (fresh, [.. stations.Where(off.Contains)]);
+        }
         return (layout, [.. stations.Where(off.Contains)]);
     }
 

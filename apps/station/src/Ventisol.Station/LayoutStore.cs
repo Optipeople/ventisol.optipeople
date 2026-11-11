@@ -21,7 +21,12 @@ static class LayoutStore
             var saved = JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(File));
             if (saved is { Tiles: not null, Widgets: not null } &&
                 StationLayout.Restore(saved.Tiles, stationIds, saved.Hidden ?? [], saved.Widgets.Select(w => w.Id)) is { } r)
-                return (r.Layout, saved.Widgets, r.Hidden);
+            {
+                // A new station on a full screen starts the layout over, and widgets with no room left are dropped.
+                var widgets = saved.Widgets.Where(w => r.Layout.Tiles.Any(t => t.Id == w.Id)).ToList();
+                if (widgets.Count < saved.Widgets.Count) Log.Write($"Layout: no room for {saved.Widgets.Count - widgets.Count} widget(s), dropped");
+                return (r.Layout, widgets, r.Hidden);
+            }
         }
         catch { } // None saved yet, an older format, or unreadable: start from the default.
         return (StationLayout.Default(stationIds), [], []);

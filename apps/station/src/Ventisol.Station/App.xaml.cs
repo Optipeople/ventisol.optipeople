@@ -27,7 +27,10 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, x) =>
         {
             Log.Write($"Fatal: {x.ExceptionObject}");
-            if (x.IsTerminating) StartAgain();
+            if (!x.IsTerminating) return;
+            // OnExit doesn't run on a crash: take the tray icon away, or a dead one stays next to the new one.
+            try { _tray?.Dispose(); } catch { }
+            StartAgain();
         };
         TaskScheduler.UnobservedTaskException += (_, x) => { Log.Write($"Background error: {x.Exception}"); x.SetObserved(); };
 

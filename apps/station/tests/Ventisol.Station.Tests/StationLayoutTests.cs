@@ -80,23 +80,51 @@ public class StationLayoutTests
     }
 
     [Fact]
-    public void Restore_places_a_new_station_in_a_free_spot_or_hides_it_when_full()
+    public void Restore_places_a_new_station_in_a_free_spot_or_starts_from_the_default_when_full()
     {
         var l = Seven();
         l.Remove("s3");
         var r = StationLayout.Restore(l.Tiles, [.. Ids, "s8"], [], []);
         Assert.NotNull(r);
-        Assert.Equal(new TilePlace("s3", 6, 0, 3, 3), r.Value.Layout["s3"]);
-        Assert.Equal(["s8"], r.Value.Hidden);
+        Assert.Empty(r.Value.Hidden);
+        Assert.Equal(StationLayout.Default([.. Ids, "s8"]).Tiles, r.Value.Layout.Tiles);
+
+        // "Nulstil" with five stations fills the screen; a sixth still shows up.
+        string[] five = [.. Ids[..5]];
+        r = StationLayout.Restore(StationLayout.Default(five).Tiles, [.. five, "s6"], [], []);
+        Assert.NotNull(r);
+        Assert.Empty(r.Value.Hidden);
+        Assert.True(r.Value.Layout.IsValidFor([.. five, "s6"]));
     }
 
     [Fact]
-    public void Restore_forgets_hidden_stations_no_longer_set_up_and_refuses_unknown_blocks()
+    public void Restore_from_the_default_keeps_hidden_stations_off_and_widgets_where_there_is_room()
+    {
+        TilePlace[] saved = [new("s1", 0, 0, 4, 6), new("s2", 4, 0, 4, 6), new("w1", 8, 0, 4, 6)];
+        var r = StationLayout.Restore(saved, ["s1", "s2", "s3", "s4"], ["s4"], ["w1"]);
+        Assert.NotNull(r);
+        Assert.Equal(["s4"], r.Value.Hidden);
+        Assert.Equal(new TilePlace("s3", 6, 0, 6, 3), r.Value.Layout["s3"]);
+        Assert.Equal(new TilePlace("w1", 0, 3, 4, 3), r.Value.Layout["w1"]);
+        Assert.True(r.Value.Layout.IsValidFor(["s1", "s2", "s3", "w1"]));
+    }
+
+    [Fact]
+    public void Restore_forgets_stations_no_longer_set_up_and_refuses_widgets_without_a_tile()
     {
         var r = StationLayout.Restore(Seven().Tiles, Ids, ["s9"], []);
         Assert.NotNull(r);
         Assert.Empty(r.Value.Hidden);
         Assert.Null(StationLayout.Restore(Seven().Tiles, Ids, [], ["w1"]));
-        Assert.Null(StationLayout.Restore(Seven().Tiles, Ids[..6], [], []));
+
+        // s7 was taken out of the setup: its tile goes, the rest of the layout and the hidden list stay.
+        var l = Seven();
+        l.Remove("s1");
+        Assert.True(l.TryAdd("w1", 3, 3));
+        r = StationLayout.Restore(l.Tiles, Ids[..6], ["s1"], ["w1"]);
+        Assert.NotNull(r);
+        Assert.Equal(["s1"], r.Value.Hidden);
+        Assert.Equal(new TilePlace("w1", 0, 0, 3, 3), r.Value.Layout["w1"]);
+        Assert.True(r.Value.Layout.IsValidFor([.. Ids[1..6], "w1"]));
     }
 }

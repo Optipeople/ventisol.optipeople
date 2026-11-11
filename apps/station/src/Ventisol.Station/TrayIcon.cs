@@ -25,16 +25,19 @@ sealed class TrayIcon : IDisposable
         _vm = vm;
 
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Vis skærmen", null, (_, _) => ShowWindow());
-        menu.Items.Add("Åbn log", null, (_, _) => OpenLogs());
+        menu.Items.Add("Vis skærmen", null, Safe("show", ShowWindow));
+        menu.Items.Add("Åbn log", null, Safe("open log", OpenLogs));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Genstart", null, (_, _) => { Log.Write("Restart from the tray"); App.Restart(); });
-        menu.Items.Add("Luk", null, (_, _) => { Log.Write("Closed from the tray"); Application.Current.Shutdown(); });
+        menu.Items.Add("Genstart", null, Safe("restart", () => { Log.Write("Restart from the tray"); App.Restart(); }));
+        // Kept apart from Genstart and asked about, so a slip of the mouse doesn't stop the scans.
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("Luk", null, Safe("close", Close));
         // The first item is what a double click does: show it in bold.
         menu.Items[0].Font = new System.Drawing.Font(menu.Items[0].Font, System.Drawing.FontStyle.Bold);
 
         _icon = new Forms.NotifyIcon { Icon = LoadIcon(), ContextMenuStrip = menu };
-        _icon.MouseDoubleClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) ShowWindow(); };
+        var show = Safe("show", ShowWindow);
+        _icon.MouseDoubleClick += (s, e) => { if (e.Button == Forms.MouseButtons.Left) show(s, e); };
         _vm.PropertyChanged += OnChanged;
         UpdateTip();
         _icon.Visible = true;
@@ -57,6 +60,22 @@ sealed class TrayIcon : IDisposable
         _window.Show();
         _window.Activate();
     }
+
+    void Close()
+    {
+        if (MessageBox.Show(_window, "Luk MES-skærmen? Scanninger modtages ikke, før den startes igen.", "Luk",
+                MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+        Log.Write("Closed from the tray");
+        Application.Current.Shutdown();
+    }
+
+    // WinForms shows an error dialog for an exception in a tray click, and on a kiosk PC nobody
+    // is there to close it: log it and carry on instead.
+    static EventHandler Safe(string what, Action action) => (_, _) =>
+    {
+        try { action(); }
+        catch (Exception ex) { Log.Write($"Tray {what} failed: {ex}"); }
+    };
 
     static void OpenLogs()
     {
