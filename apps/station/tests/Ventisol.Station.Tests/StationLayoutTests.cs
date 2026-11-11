@@ -67,4 +67,36 @@ public class StationLayoutTests
         l.Remove("w1");
         Assert.True(l.IsValidFor(Ids));
     }
+
+    [Fact]
+    public void Restore_keeps_hidden_stations_off_the_screen()
+    {
+        var l = Seven();
+        l.Remove("s3");
+        var r = StationLayout.Restore(l.Tiles, Ids, ["s3"], []);
+        Assert.NotNull(r);
+        Assert.Equal(["s3"], r.Value.Hidden);
+        Assert.Null(r.Value.Layout.Tiles.FirstOrDefault(t => t.Id == "s3"));
+    }
+
+    [Fact]
+    public void Restore_places_a_new_station_in_a_free_spot_or_hides_it_when_full()
+    {
+        var l = Seven();
+        l.Remove("s3");
+        var r = StationLayout.Restore(l.Tiles, [.. Ids, "s8"], [], []);
+        Assert.NotNull(r);
+        Assert.Equal(new TilePlace("s3", 6, 0, 3, 3), r.Value.Layout["s3"]);
+        Assert.Equal(["s8"], r.Value.Hidden);
+    }
+
+    [Fact]
+    public void Restore_forgets_hidden_stations_no_longer_set_up_and_refuses_unknown_blocks()
+    {
+        var r = StationLayout.Restore(Seven().Tiles, Ids, ["s9"], []);
+        Assert.NotNull(r);
+        Assert.Empty(r.Value.Hidden);
+        Assert.Null(StationLayout.Restore(Seven().Tiles, Ids, [], ["w1"]));
+        Assert.Null(StationLayout.Restore(Seven().Tiles, Ids[..6], [], []));
+    }
 }

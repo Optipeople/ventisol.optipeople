@@ -45,12 +45,14 @@ public partial class MainWindow : Window
     readonly List<Button> _dots = [];
 
     StationLayout _layout;
+    // Stations this screen leaves out. They still take scans; only their tile is gone until put back.
+    readonly HashSet<string> _hidden = [];
     bool _editing;
     DateTimeOffset _lastTouch = DateTimeOffset.Now;
 
-    // A block on the stations page: a station or a widget, plus the frame, grip and (for widgets)
-    // remove button shown while arranging. Station is the scanner number, for a tap to scan in the demo.
-    sealed record Tile(Grid Root, Rectangle Frame, Thumb Grip, Button? Remove, TranslateTransform Shift, int? Station);
+    // A block on the stations page: a station or a widget, plus the frame, grip and remove button
+    // shown while arranging. Station is the scanner number, for a tap to scan in the demo.
+    sealed record Tile(Grid Root, Rectangle Frame, Thumb Grip, Button Remove, TranslateTransform Shift, int? Station);
 
     static string StationId(int number) => $"station-{number}";
 
@@ -70,8 +72,9 @@ public partial class MainWindow : Window
         _demo = new DemoScanner(_vm);
         _kiosk = kiosk;
 
-        var (layout, widgets) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
+        var (layout, widgets, hidden) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
         _layout = layout;
+        _hidden.UnionWith(hidden);
         foreach (var spec in widgets) _vm.AddWidget(spec);
         _document = new OrderDocumentViewModel(_documents);
         foreach (var s in _vm.Stations)
@@ -84,7 +87,6 @@ public partial class MainWindow : Window
         BuildTiles();
         BuildGuides();
         BuildDots();
-        BuildPicker();
         _demoInput = !_settings.IsConnected;
         // Sample scans would be sent to OptiCloud like real ones, so only without it.
         if (showcase && _demoInput) _demo.Showcase(DateTimeOffset.Now);
@@ -440,7 +442,8 @@ public partial class MainWindow : Window
         for (var c = 0; c < StationLayout.Columns; c++) StationsGrid.ColumnDefinitions.Add(new ColumnDefinition());
         for (var r = 0; r < StationLayout.Rows; r++) StationsGrid.RowDefinitions.Add(new RowDefinition());
 
-        foreach (var station in _vm.Stations) CreateTile(StationId(station.Number), station, station.Number);
+        foreach (var station in _vm.Stations.Where(s => !_hidden.Contains(StationId(s.Number))))
+            CreateTile(StationId(station.Number), station, station.Number);
         foreach (var widget in _vm.Widgets) CreateTile(widget.Id, widget, null);
         PlaceTiles(animate: false);
     }
@@ -465,18 +468,14 @@ public partial class MainWindow : Window
         root.Children.Add(grip);
         frame.Visibility = grip.Visibility;
 
-        Button? remove = null;
-        if (station is null)
+        var remove = new Button
         {
-            remove = new Button
-            {
-                Style = (Style)FindResource("RemoveButton"), Margin = new Thickness(0, 4, 4, 0),
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-                Visibility = grip.Visibility, ToolTip = "Fjern",
-            };
-            remove.Click += (_, _) => RemoveWidget(id);
-            root.Children.Add(remove);
-        }
+            Style = (Style)FindResource("RemoveButton"), Margin = new Thickness(0, 4, 4, 0),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            Visibility = grip.Visibility, ToolTip = station is null ? "Fjern" : "Skjul på denne skærm",
+        };
+        remove.Click += (_, _) => RemoveTile(id);
+        root.Children.Add(remove);
 
         _tiles[id] = new Tile(root, frame, grip, remove, shift, station);
         StationsGrid.Children.Add(root);
@@ -510,7 +509,7 @@ public partial class MainWindow : Window
             if (before.TryGetValue(id, out var was)) Motion.Glide(t.Shift, was - t.Root.TranslatePoint(new Point(), StationsGrid));
     }
 
-    void SaveLayout() => LayoutStore.Save(_layout, _vm.Widgets.Select(w => w.Spec));
+    void SaveLayout() => LayoutStore.Save(_layout, _vm.Widgets.Select(w => w.Spec), _hidden);
 
     void BuildGuides()
     {
@@ -524,44 +523,84 @@ public partial class MainWindow : Window
     (int Column, int Row) CellAt(Point p) =>
         (Math.Clamp((int)(p.X / CellWidth), 0, StationLayout.Columns - 1), Math.Clamp((int)(p.Y / CellHeight), 0, StationLayout.Rows - 1));
 
-    // ===== Widgets =====
+    // ===== Adding and removing blocks =====
 
+    // Built each time it opens: the hidden stations first, to put back, then the widgets.
     void BuildPicker()
     {
-        foreach (var (label, kind, metric, columns, rows) in WidgetViewModel.Catalog)
+        PickerItems.Children.Clear();
+        var hidden = _vm.Stations.Where(s => _hidden.Contains(StationId(s.Number))).ToList();
+        if (hidden.Count > 0)
         {
-            var item = new Button { Style = (Style)FindResource("PickerItem"), Content = label };
-            item.Click += (_, _) => AddWidget(new WidgetSpec($"widget-{Guid.NewGuid():N}"[..15], kind, metric), columns, rows);
-            PickerItems.Children.Add(item);
+            PickerItems.Children.Add(PickerHeader("Skjulte stationer"));
+            foreach (var s in hidden) PickerItems.Children.Add(PickerItem(s.Name, () => ShowStation(s)));
+            PickerItems.Children.Add(PickerHeader("Widgets"));
         }
+        foreach (var (label, kind, metric, columns, rows) in WidgetViewModel.Catalog)
+            PickerItems.Children.Add(PickerItem(label, () => AddWidget(new WidgetSpec($"widget-{Guid.NewGuid():N}"[..15], kind, metric), columns, rows)));
     }
 
-    void OnAddWidget(object sender, RoutedEventArgs e) => Picker.IsOpen = !Picker.IsOpen;
+    Button PickerItem(string label, Action click)
+    {
+        var item = new Button { Style = (Style)FindResource("PickerItem"), Content = label };
+        item.Click += (_, _) => click();
+        return item;
+    }
+
+    TextBlock PickerHeader(string text) => new()
+    {
+        Style = (Style)FindResource("TextBase"), Text = text.ToUpperInvariant(), FontSize = 12, FontWeight = FontWeights.Bold,
+        Foreground = (Brush)FindResource("Ink3"), Margin = new Thickness(14, PickerItems.Children.Count == 0 ? 6 : 14, 14, 4),
+    };
+
+    void OnAddWidget(object sender, RoutedEventArgs e)
+    {
+        if (!Picker.IsOpen) BuildPicker();
+        Picker.IsOpen = !Picker.IsOpen;
+    }
 
     void AddWidget(WidgetSpec spec, int columns, int rows)
     {
+        if (TryPlaceNew(spec.Id, columns, rows)) Enter(spec.Id, _vm.AddWidget(spec), null);
+    }
+
+    // A hidden station comes back at its default size, or smaller if that is all there is room for.
+    void ShowStation(StationViewModel station)
+    {
+        var id = StationId(station.Number);
+        if (!TryPlaceNew(id, StationLayout.Columns / 4, StationLayout.Rows / 2)) return;
+        _hidden.Remove(id);
+        Enter(id, station, station.Number);
+    }
+
+    bool TryPlaceNew(string id, int columns, int rows)
+    {
         Picker.IsOpen = false;
-        if (!_layout.TryAdd(spec.Id, columns, rows))
-        {
-            EditHint.Text = "Der er ikke plads. Gør en blok mindre først, så der er mindst 2 x 2 felter fri.";
-            EditHint.Foreground = (Brush)FindResource("Warn");
-            return;
-        }
-        CreateTile(spec.Id, _vm.AddWidget(spec), null);
+        if (_layout.TryAdd(id, columns, rows)) return true;
+        EditHint.Text = "Der er ikke plads. Gør en blok mindre først, så der er mindst 2 x 2 felter fri.";
+        EditHint.Foreground = (Brush)FindResource("Warn");
+        return false;
+    }
+
+    void Enter(string id, object content, int? station)
+    {
+        CreateTile(id, content, station);
         PlaceTiles(animate: false);
-        Motion.Enter(_tiles[spec.Id].Root, fromY: 16);
+        Motion.Enter(_tiles[id].Root, fromY: 16);
         SaveLayout();
         ResetHint();
     }
 
-    void RemoveWidget(string id)
+    // A widget is gone for good; a station is only hidden on this screen and can be put back from the picker.
+    void RemoveTile(string id)
     {
-        var root = _tiles[id].Root;
-        root.IsHitTestVisible = false;
-        Motion.Leave(root, toY: 12, done: () => StationsGrid.Children.Remove(root));
+        var tile = _tiles[id];
+        tile.Root.IsHitTestVisible = false;
+        Motion.Leave(tile.Root, toY: 12, done: () => StationsGrid.Children.Remove(tile.Root));
         _tiles.Remove(id);
         _layout.Remove(id);
-        _vm.RemoveWidget(id);
+        if (tile.Station is null) _vm.RemoveWidget(id);
+        else _hidden.Add(id);
         SaveLayout();
     }
 
@@ -612,23 +651,33 @@ public partial class MainWindow : Window
         foreach (var t in _tiles.Values)
         {
             t.Frame.Visibility = t.Grip.Visibility = v;
-            if (t.Remove is { } r) r.Visibility = v;
+            t.Remove.Visibility = v;
             t.Root.Cursor = on ? Cursors.SizeAll : null;
             if (!on) continue;
             Motion.FadeIn(t.Frame);
             Motion.Pop(t.Grip, 0.4);
-            if (t.Remove is { } x) Motion.Pop(x, 0.4);
+            Motion.Pop(t.Remove, 0.4);
         }
     }
 
     void OnEditDone(object sender, RoutedEventArgs e) => StopEditing();
 
-    // Back to the stations only, four to a row.
+    // Back to every station and nothing else, four to a row.
     void OnEditReset(object sender, RoutedEventArgs e)
     {
-        foreach (var id in _vm.Widgets.Select(w => w.Id).ToList()) RemoveWidget(id);
+        foreach (var id in _vm.Widgets.Select(w => w.Id).ToList()) RemoveTile(id);
+        var back = _vm.Stations.Where(st => _hidden.Contains(StationId(st.Number))).ToList();
+        _hidden.Clear();
+        foreach (var st in back) CreateTile(StationId(st.Number), st, st.Number);
         _layout = StationLayout.Default(_vm.Stations.Select(s => StationId(s.Number)));
         PlaceTiles();
+        // The stations put back fade in where they land, instead of gliding in from a corner.
+        foreach (var st in back)
+        {
+            var tile = _tiles[StationId(st.Number)];
+            Motion.Glide(tile.Shift, new Vector());
+            Motion.Enter(tile.Root);
+        }
         SaveLayout();
         ResetHint();
     }

@@ -114,7 +114,7 @@
             </Setter>
         </Style>
 
-        <!-- A line in the widget picker -->
+        <!-- A line in the picker: a hidden station or a widget -->
         <Style x:Key="PickerItem" TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Ink}" />
             <Setter Property="FontFamily" Value="{StaticResource Hanken}" />
@@ -410,7 +410,7 @@
             <Button DockPanel.Dock="Right" Style="{StaticResource BarButtonPrimary}" Content="Færdig" Click="OnEditDone" />
             <Button DockPanel.Dock="Right" Style="{StaticResource BarButton}" Content="Nulstil" Margin="0,0,10,0" Click="OnEditReset" />
             <Grid DockPanel.Dock="Right" Margin="0,0,10,0">
-                <Button x:Name="AddButton" Style="{StaticResource BarButton}" Content="+ Tilføj widget" Click="OnAddWidget" />
+                <Button x:Name="AddButton" Style="{StaticResource BarButton}" Content="+ Tilføj" Click="OnAddWidget" />
                 <Popup x:Name="Picker" PlacementTarget="{Binding ElementName=AddButton}" Placement="Bottom" VerticalOffset="8"
                        StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
                     <Border Background="{StaticResource Panel}" CornerRadius="8" Padding="8" BorderBrush="{StaticResource Rule}" BorderThickness="1">

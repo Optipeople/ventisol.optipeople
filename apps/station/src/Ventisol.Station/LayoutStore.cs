@@ -5,35 +5,34 @@ using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
 
-// The blocks' layout and which widgets there are, kept on this PC. Moves to the setup in
+// The blocks' layout, which widgets there are and which stations this screen leaves out, kept on this PC. Moves to the setup in
 // OptiCloud later, so every screen can be set up from one place.
 static class LayoutStore
 {
-    sealed record Saved(List<TilePlace> Tiles, List<WidgetSpec> Widgets);
+    // Hidden is missing in layouts saved before stations could be taken off: then every station shows.
+    sealed record Saved(List<TilePlace> Tiles, List<WidgetSpec> Widgets, List<string>? Hidden = null);
 
     static readonly string File = Path.Combine(AppPaths.Data, "layout.json");
 
-    public static (StationLayout Layout, IReadOnlyList<WidgetSpec> Widgets) Load(IReadOnlyList<string> stationIds)
+    public static (StationLayout Layout, IReadOnlyList<WidgetSpec> Widgets, IReadOnlyList<string> Hidden) Load(IReadOnlyList<string> stationIds)
     {
         try
         {
             var saved = JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(File));
-            if (saved is { Tiles: not null, Widgets: not null })
-            {
-                var layout = new StationLayout(saved.Tiles);
-                if (layout.IsValidFor([.. stationIds, .. saved.Widgets.Select(w => w.Id)])) return (layout, saved.Widgets);
-            }
+            if (saved is { Tiles: not null, Widgets: not null } &&
+                StationLayout.Restore(saved.Tiles, stationIds, saved.Hidden ?? [], saved.Widgets.Select(w => w.Id)) is { } r)
+                return (r.Layout, saved.Widgets, r.Hidden);
         }
         catch { } // None saved yet, an older format, or unreadable: start from the default.
-        return (StationLayout.Default(stationIds), []);
+        return (StationLayout.Default(stationIds), [], []);
     }
 
-    public static void Save(StationLayout layout, IEnumerable<WidgetSpec> widgets)
+    public static void Save(StationLayout layout, IEnumerable<WidgetSpec> widgets, IEnumerable<string> hidden)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(File)!);
-            System.IO.File.WriteAllText(File, JsonSerializer.Serialize(new Saved([.. layout.Tiles], [.. widgets])));
+            System.IO.File.WriteAllText(File, JsonSerializer.Serialize(new Saved([.. layout.Tiles], [.. widgets], [.. hidden])));
         }
         catch { } // The layout still holds until the app restarts.
     }

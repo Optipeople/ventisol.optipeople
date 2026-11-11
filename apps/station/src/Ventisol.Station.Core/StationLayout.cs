@@ -44,6 +44,21 @@ public sealed class StationLayout
         _tiles.All(Fits) &&
         !_tiles.Any(a => _tiles.Any(b => a != b && a.Overlaps(b)));
 
+    // A saved layout, where stations not on it were taken off the screen on purpose (hidden). A station set up
+    // since it was saved gets the first free spot, or is hidden too when there is none. Hidden stations that are
+    // no longer set up are forgotten. Null if the saved layout doesn't fit, so the caller starts from the default.
+    public static (StationLayout Layout, IReadOnlyList<string> Hidden)? Restore(
+        IEnumerable<TilePlace> saved, IReadOnlyList<string> stations, IEnumerable<string> hidden, IEnumerable<string> widgets)
+    {
+        var layout = new StationLayout(saved);
+        var off = hidden.Where(stations.Contains).ToHashSet();
+        var placed = layout._tiles.Select(t => t.Id).ToHashSet();
+        if (!layout.IsValidFor([.. placed.Where(id => stations.Contains(id) && !off.Contains(id)), .. widgets])) return null;
+        foreach (var id in stations.Where(id => !placed.Contains(id) && !off.Contains(id)))
+            if (!layout.TryAdd(id, Columns / 4, Rows / 2)) off.Add(id);
+        return (layout, [.. stations.Where(off.Contains)]);
+    }
+
     public string? IdAt(int column, int row) => _tiles.FirstOrDefault(t => t.Contains(column, row))?.Id;
 
     public bool TryMove(string id, int column, int row) => TryPlace(this[id] with { Column = column, Row = row });
