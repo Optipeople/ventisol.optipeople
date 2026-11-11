@@ -290,10 +290,11 @@ public sealed class CloudSyncTests : IDisposable
             sync.Start();
             sync.Record(In(A, 1, Now));
             await Until(() => sync.Status.Failed == 1);
-            await Until(() => sync.Status.State == CloudState.Online);
+            // A refused scan needs a person: red, not "connected".
+            await Until(() => sync.Status.State == CloudState.Error);
 
             Assert.Equal(Outbox.RefusalsBeforeAside, api.Count("CreateRow"));
-            Assert.Equal("Forbundet · 1 scanning afvist, se log", sync.Status.Text);
+            Assert.Equal("1 scanning afvist, se log", sync.Status.Text);
             Assert.Equal(0, sync.Pending);
             lock (statuses) Assert.Contains(statuses, s => s.Failed == 1);
         }
@@ -303,6 +304,45 @@ public sealed class CloudSyncTests : IDisposable
         again.Start();
         await Until(() => api.RowCount == 1 && again.Pending == 0);
         Assert.Equal(0, again.Status.Failed);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Reads_working_while_scans_fail_to_send_is_amber_not_green()
+    {
+        var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("CreateRow") ? new HttpResponseMessage(HttpStatusCode.InternalServerError) : null };
+        using var sync = Sync(api);
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Online);
+
+        // Scanned two minutes ago (the clock stands still here), not sent since.
+        sync.Record(In(A, 1, Now.AddMinutes(-2)));
+        var polls = api.Count("GetRowsPaged");
+        await Until(() => api.Count("CreateRow") > 2 && api.Count("GetRowsPaged") > polls + 1);
+
+        Assert.Equal(CloudState.Offline, sync.Status.State);
+        Assert.StartsWith("Sender ikke · 1 scanning venter", sync.Status.Text);
+        Assert.NotNull(sync.Status.Banner);
+        api.Override = null;
+        await Until(() => api.RowCount == 1 && sync.Status.State == CloudState.Online);
+        Assert.Null(sync.Status.Banner);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Waking_cuts_a_long_wait_short()
+    {
+        var api = new FakeOptiCloud();
+        var waits = 0;
+        // Every wait but the first poll's lasts "forever" unless woken.
+        using var sync = new CloudSync(FakeOptiCloud.Settings(StationMode.Viewer), FakeOptiCloud.Password, _folder, _ => { }, () => Now, api,
+            (t, ct) => Interlocked.Increment(ref waits) == 1 ? Task.CompletedTask : Task.Delay(Timeout.Infinite, ct));
+        api.Down = true;
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Offline && Volatile.Read(ref waits) >= 2);
+
+        api.Down = false;
+        sync.Wake();
+
+        await Until(() => sync.Status.State == CloudState.Online);
     }
 
     [Fact]

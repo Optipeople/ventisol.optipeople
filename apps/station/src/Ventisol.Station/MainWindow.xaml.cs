@@ -253,10 +253,18 @@ public partial class MainWindow : Window
     void ShowCloudStatus()
     {
         var status = _cloud.Status;
-        // A viewer that can't reach OptiCloud still shows what it read last; say how old that is.
-        var stale = _settings.Mode == StationMode.Viewer && status.State is CloudState.Offline or CloudState.Error && status.LastSync is not null;
-        _vm.CloudText = stale ? $"{status.Text} · data fra {status.LastSync!.Value.ToLocalTime():HH':'mm}" : status.Text;
+        var now = DateTimeOffset.Now;
+        var viewer = _settings.Mode == StationMode.Viewer;
+        // A viewer that can't reach OptiCloud still shows what it read last; say how old that is,
+        // and after a while grey the tiles, so nobody takes them for now.
+        var failing = viewer && status.State is CloudState.Offline or CloudState.Error && status.LastRead is not null;
+        _vm.CloudText = failing ? $"{status.Text} · data fra {status.LastRead!.Value.ToLocalTime():HH':'mm}" : status.Text;
         _vm.CloudHealth = status.State switch { CloudState.Online => "Ok", CloudState.Error => "Alarm", _ => "Warn" };
+        var stale = viewer ? CloudHealth.StaleText(status, now) : null;
+        _vm.BannerText = stale ?? status.Banner;
+        _vm.IdleText = CloudHealth.IdleText(_settings.Mode, status.LastRead is not null);
+        _vm.Report.Note = CloudHealth.ReportNote(_settings.Mode, status, now);
+        StationsGrid.Opacity = stale is null ? 1 : 0.45;
     }
 
     // ===== Scanners =====
@@ -349,6 +357,8 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.Now;
         _vm.Tick(now);
+        // A viewer's data grows stale with time alone.
+        if (_settings.Mode == StationMode.Viewer) ShowCloudStatus();
         if (_stopping is { } stop && stop.Station.Current?.Raw != stop.Barcode.Raw) CloseStop();
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
         if (Document.IsOpen)

@@ -106,6 +106,8 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         // Counts every change of the wished Number, so a read can tell the wish moved on meanwhile,
         // also when it came back to the same Number (an Out and In of the same element).
         public int Wish;
+        // Since when a set or its fields have failed without one getting in; null: not failing.
+        public DateTimeOffset? FailingSince;
 
         // In step on an element and not left alone: the one state in which it is read again.
         public bool InStep => Stopped is null && Known is { Length: > 0 } k && k == Desired.Number;
@@ -306,6 +308,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
             e.Fields.RemoveAll(o => o.Number == order.Number && o.SameFields(order));
             e.FieldFailures = 0;
             e.FieldsAt = DateTimeOffset.MinValue;
+            if (e.Failures == 0) e.FailingSince = null;
         }
     }
 
@@ -317,6 +320,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
             if (!_machines.TryGetValue(machine, out var e)) return TimeSpan.Zero;
             var wait = Outbox.Wait(x, e.FieldFailures++);
             e.FieldsAt = now + wait;
+            e.FailingSince ??= now;
             return wait;
         }
     }
@@ -337,7 +341,19 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
             var wait = Outbox.Wait(x, e.Failures++);
             e.Known = null;
             e.RetryAt = now + wait;
+            e.FailingSince ??= now;
             return wait;
+        }
+    }
+
+    // How long the longest-failing machine has failed to get its order (or its fields) in, else
+    // null. The status says so after a while: the order on the machine is behind the station.
+    public TimeSpan? FailingFor(DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            var since = _machines.Values.Select(e => e.FailingSince).Where(t => t is not null).Min();
+            return since is { } t ? now - t : null;
         }
     }
 
@@ -370,6 +386,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
     static void Reset(Entry e)
     {
         e.Failures = 0;
+        if (e.FieldFailures == 0) e.FailingSince = null;
         e.RetryAt = DateTimeOffset.MinValue;
         e.VerifyAt = DateTimeOffset.MinValue;
     }

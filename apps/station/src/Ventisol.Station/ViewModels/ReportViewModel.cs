@@ -18,6 +18,9 @@ public sealed partial class ReportViewModel(MainViewModel main) : ObservableObje
     [ObservableProperty] public partial IReadOnlyList<StationRow> Stations { get; private set; } = [];
     [ObservableProperty] public partial bool HasOrders { get; private set; }
 
+    // A short line when the report may miss scans (OptiCloud not reached), else null.
+    [ObservableProperty] public partial string? Note { get; set; }
+
     public void Refresh(DateTimeOffset now)
     {
         var states = main.Stations.Select(s => s.State).ToList();

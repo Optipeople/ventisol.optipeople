@@ -49,9 +49,29 @@
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- When OptiCloud can't be reached the report may miss scans: one quiet line says so -->
+        <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Margin="12,0,12,2">
+            <StackPanel.Style>
+                <Style TargetType="StackPanel">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Note}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </StackPanel.Style>
+            <Ellipse Width="8" Height="8" Fill="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,1,10,0" />
+            <TextBlock Style="{StaticResource Cell}" FontSize="16" Foreground="{StaticResource Ink3}" Text="{Binding Note}" />
+        </StackPanel>
 
         <!-- Orders -->
-        <Border x:Name="OrdersPanel" Style="{StaticResource TablePanel}">
+        <Border x:Name="OrdersPanel" Grid.Row="1" Style="{StaticResource TablePanel}">
             <StackPanel>
                 <TextBlock Style="{StaticResource Title}" Text="ORDRER I DAG" />
                 <TextBlock Style="{StaticResource Sub}" Text="Montage · tid fra scan ind til scan ud, alle stationer" />
@@ -118,7 +138,7 @@
         </Border>
 
         <!-- Stations -->
-        <Border x:Name="StationsPanel" Grid.Column="1" Style="{StaticResource TablePanel}">
+        <Border x:Name="StationsPanel" Grid.Row="1" Grid.Column="1" Style="{StaticResource TablePanel}">
             <StackPanel>
                 <TextBlock Style="{StaticResource Title}" Text="STATIONER I DAG" />
                 <TextBlock Style="{StaticResource Sub}" Text="Montage · belægning er tid i gang siden dagens første scanning" />

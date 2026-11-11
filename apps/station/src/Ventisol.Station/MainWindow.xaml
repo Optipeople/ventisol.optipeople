@@ -188,7 +188,7 @@
                                 </StackPanel>
                                 <TextBlock x:Name="Hint" Style="{StaticResource TextBase}" FontSize="22" VerticalAlignment="Center"
                                            Foreground="{StaticResource Quiet}"
-                                           Text="{Binding DataContext.IdleText, Mode=OneTime, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                           Text="{Binding DataContext.IdleText, RelativeSource={RelativeSource AncestorType=Window}}" />
                             </Grid>
                         </Border>
                     </StackPanel>
@@ -374,6 +374,7 @@
     <Grid x:Name="Root" Background="{StaticResource Canvas}" MouseLeftButtonDown="OnPageMouseDown">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -405,6 +406,27 @@
                        VerticalAlignment="Center" Text="Montage · Ventisol, Vrå" />
         </DockPanel>
 
+        <!-- A calm line when OptiCloud can't be reached: on a scan station that its scans wait safely,
+             on a viewer how old its data is. Nothing when all is well. -->
+        <Border x:Name="Banner" Grid.Row="1" Margin="52,4,52,2" Padding="20,12" CornerRadius="8" Background="{StaticResource Panel}"
+                IsHitTestVisible="False">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding BannerText}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel Orientation="Horizontal">
+                <Ellipse Width="10" Height="10" Fill="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,1,14,0" />
+                <TextBlock Style="{StaticResource TextBase}" FontSize="19" Foreground="{StaticResource Ink2}" TextWrapping="Wrap"
+                           Text="{Binding BannerText}" />
+            </StackPanel>
+        </Border>
+
         <!-- In layout mode the caption becomes the instructions and the way out -->
         <DockPanel x:Name="EditBar" Margin="52,26,52,6" Height="34" Visibility="Collapsed">
             <Button DockPanel.Dock="Right" Style="{StaticResource BarButtonPrimary}" Content="Færdig" Click="OnEditDone" />
@@ -425,7 +447,7 @@
             </StackPanel>
         </DockPanel>
 
-        <Grid Grid.Row="1" Margin="42,10,42,0">
+        <Grid Grid.Row="2" Margin="42,10,42,0">
             <!-- The cells blocks snap to, only shown while arranging -->
             <UniformGrid x:Name="Guides" Rows="6" Columns="12" Visibility="Collapsed" IsHitTestVisible="False" />
 
@@ -442,7 +464,7 @@
         </Grid>
 
         <!-- Page dots, as on the dashboards, and the logo that opens the menu -->
-        <Grid Grid.Row="2" Height="64">
+        <Grid Grid.Row="3" Height="64">
             <StackPanel x:Name="Dots" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" />
             <Button x:Name="LogoButton" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14"
                     Cursor="Hand" Focusable="False" ToolTip="Menu" Click="OnLogo">
@@ -462,10 +484,10 @@
         </Grid>
 
         <!-- A station's element document, over the pages -->
-        <local:DocumentOverlay x:Name="Document" Grid.RowSpan="3" />
+        <local:DocumentOverlay x:Name="Document" Grid.RowSpan="4" />
 
         <!-- Asks before a station's element is stopped by hand; a tap beside it or Esc cancels -->
-        <Grid x:Name="StopLayer" Grid.RowSpan="3" Visibility="Collapsed">
+        <Grid x:Name="StopLayer" Grid.RowSpan="4" Visibility="Collapsed">
             <!-- On release, so the release does not land on the tile below once the layer is gone -->
             <Border Background="#99000000" MouseLeftButtonUp="OnStopScrim" />
             <Border x:Name="StopCard" HorizontalAlignment="Center" VerticalAlignment="Center" Width="760"
@@ -489,7 +511,7 @@
         </Grid>
 
         <!-- The menu slides in from the right; a tap beside it closes it -->
-        <Grid x:Name="MenuLayer" Grid.RowSpan="3" Visibility="Collapsed">
+        <Grid x:Name="MenuLayer" Grid.RowSpan="4" Visibility="Collapsed">
             <Border x:Name="Scrim" Background="#99000000" MouseLeftButtonDown="OnScrim" />
             <Border HorizontalAlignment="Right" Width="500" Background="{StaticResource Panel}">
                 <Border.RenderTransform>
@@ -498,6 +520,6 @@
                 <local:MenuPanel x:Name="Menu" />
             </Border>
         </Grid>
-        <local:SetupView x:Name="Setup" Grid.RowSpan="3" />
+        <local:SetupView x:Name="Setup" Grid.RowSpan="4" />
     </Grid>
 </Window>

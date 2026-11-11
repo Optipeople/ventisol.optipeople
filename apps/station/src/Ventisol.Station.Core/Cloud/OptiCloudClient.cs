@@ -54,6 +54,15 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 
     public bool IsLoggedIn => _token is not null;
 
+    // How far the PC's clock is ahead of OptiCloud's (negative: behind), from the Date header of
+    // the last answer that had one; null before. To a second or so: the header has whole seconds.
+    public TimeSpan? ClockSkew
+    {
+        get { var t = Interlocked.Read(ref _skewTicks); return t == long.MinValue ? null : TimeSpan.FromTicks(t); }
+    }
+
+    long _skewTicks = long.MinValue;
+
     public async Task LoginAsync(CancellationToken ct = default)
     {
         await _auth.WaitAsync(ct);
@@ -242,6 +251,7 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         try
         {
             using var response = await _http.SendAsync(request, timeout.Token);
+            if (response.Headers.Date is { } date) Interlocked.Exchange(ref _skewTicks, (DateTimeOffset.UtcNow - date).Ticks);
             return ((int)response.StatusCode, await response.Content.ReadAsStringAsync(timeout.Token));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

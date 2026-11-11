@@ -1,9 +1,16 @@
+using System.Net.NetworkInformation;
+
 namespace Ventisol.Station.Core.Cloud;
 
-public enum CloudState { NotSetUp, Connecting, Online, Offline, Error }
+// Online green; Error red (needs a person); every other amber. Warning: connected, but something
+// else is off (an order not sent to a machine, the PC's clock). See CloudHealth.
+public enum CloudState { NotSetUp, Connecting, Online, Warning, Offline, Error }
 
 // What the menu shows. Text is Danish, shown as it is. Failed: scans OptiCloud refused, in outbox\failed.
-public sealed record CloudStatus(CloudState State, string Text, int Pending, DateTimeOffset? LastSync, int Failed = 0);
+// LastSync: OptiCloud last answered (a read or a scan sent). LastRead: last read without fault.
+// Banner: the calm line for the main screen of a scan station whose scans wait, else null.
+public sealed record CloudStatus(CloudState State, string Text, int Pending, DateTimeOffset? LastSync, int Failed = 0,
+    string? Banner = null, DateTimeOffset? LastRead = null);
 
 // The station's link to OptiCloud, the one object the app talks to.
 // Scan mode: every scan goes to the outbox on disk at once and is sent in the background, and to
@@ -53,10 +60,21 @@ public sealed class CloudSync : IDisposable
     readonly MachineOrders? _orders;
     Task? _run;
     bool _started, _disposed;
-    CloudState _state;
-    string _account = "", _error = "";
+    string _account = "";
     string? _logged;
-    DateTimeOffset? _lastSync;
+    // What CloudHealth judges by, under _gate.
+    DateTimeOffset _startedAt;
+    DateTimeOffset? _lastRead, _lastSent, _oldest;
+    bool _readFailing;
+    CloudProblem _readProblem, _writeProblem;
+    string _readError = "", _writeError = "";
+    string? _fatal;
+    OptiCloudClient? _client;
+    TimeSpan? _skewLogged;
+    // Cancelled (and replaced) by Wake: ends a retry wait of the reads at once.
+    CancellationTokenSource _wake = new();
+    // Judges again now and then: an age passing a limit is no event.
+    Timer? _tick;
     CloudStatus _status;
 
     public CloudSync(StationSettings settings, string? password, string dataFolder, Action<string> log, Func<DateTimeOffset>? clock = null,
@@ -74,15 +92,21 @@ public sealed class CloudSync : IDisposable
         if (settings.Mode == StationMode.Scan) _journal = new ScanJournal(Path.Combine(dataFolder, "journal"), log);
         // A file a power cut left empty is rebuilt from the journal, not given up.
         if (_journal is not null) _outbox.Rebuild = _journal.Find;
-        _state = IsSetUp ? CloudState.Connecting : CloudState.NotSetUp;
+        _startedAt = _clock();
         // Held until the screen has been rebuilt from OptiCloud (SetMachineOrders with rebuilt).
         if (settings.Mode == StationMode.Scan && IsSetUp) _orders = new MachineOrders(held: true, verify: MachineOrders.DefaultVerify);
+        _oldest = OldestWaiting();
         _status = Make();
-        _outbox.PendingChanged += (_, _) => Publish();
-        _outbox.Sent += (_, _) => Synced();
-        _outbox.SendFailed += (_, x) => Failed(x);
-        // The server answered, it just won't take that scan: connected, with the count shown.
-        _outbox.Refused += (_, _) => Synced();
+        _outbox.PendingChanged += (_, _) =>
+        {
+            var oldest = OldestWaiting();
+            lock (_gate) _oldest = oldest;
+            Publish();
+        };
+        _outbox.Sent += (_, _) => SentOk();
+        _outbox.SendFailed += (_, x) => WriteFailed(x);
+        // The server answered, it just won't take that scan: counted (Failed), so it shows red.
+        _outbox.Refused += (_, _) => SentOk(sent: false);
     }
 
     public event EventHandler<CloudStatus>? StatusChanged;
@@ -109,7 +133,9 @@ public sealed class CloudSync : IDisposable
         // Once per start, so a fixed setup sends again what was refused; a scan that did get in
         // is recognised by its ScanId.
         _outbox.RetryFailed();
+        lock (_gate) _startedAt = _clock();
         Publish();
+        _tick = new Timer(_ => Publish(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
         if (_journal is not null)
         {
@@ -130,6 +156,41 @@ public sealed class CloudSync : IDisposable
             }
             _run = Task.Run(() => RunAsync(_stop.Token));
         }
+        // The network back (a cable, the Wi-Fi, the VPN): try at once, not after the backoff.
+        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailability;
+        NetworkChange.NetworkAddressChanged += OnNetworkAddress;
+    }
+
+    void OnNetworkAvailability(object? sender, NetworkAvailabilityEventArgs e)
+    {
+        if (e.IsAvailable) Wake();
+    }
+
+    void OnNetworkAddress(object? sender, EventArgs e) => Wake();
+
+    // Cuts every backoff short: the waiting scans are tried and OptiCloud read at once. Called when
+    // the network changes; safe from any thread.
+    public void Wake()
+    {
+        if (_disposed) return;
+        _outbox.Nudge();
+        CancellationTokenSource old;
+        lock (_gate)
+        {
+            old = _wake;
+            _wake = new CancellationTokenSource();
+        }
+        old.Cancel();
+    }
+
+    // A retry wait that Wake ends early. Only ct cancelling throws.
+    async Task WaitAsync(TimeSpan span, CancellationToken ct)
+    {
+        CancellationToken woken;
+        lock (_gate) woken = _wake.Token;
+        using var both = CancellationTokenSource.CreateLinkedTokenSource(ct, woken);
+        try { await _delay(span, both.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     // Scan mode only. On disk before it returns; false (and logged) if it could not be saved.
@@ -175,6 +236,7 @@ public sealed class CloudSync : IDisposable
         try
         {
             using var client = new OptiCloudClient(_settings.ApiBaseUrl, _settings.Username!, _password!, _handler);
+            lock (_gate) _client = client;
             var table = new ScanTable(client, _log);
             await RetryAsync(() => ConnectAsync(client, table, ct), ct);
 
@@ -197,7 +259,8 @@ public sealed class CloudSync : IDisposable
         {
             // Not expected: everything is retried below. Logged so it is found afterwards.
             _log($"OptiCloud stoppede: {x}");
-            Failed(x);
+            lock (_gate) _fatal = x.Message;
+            Publish();
         }
     }
 
@@ -226,15 +289,12 @@ public sealed class CloudSync : IDisposable
 
     async Task ConnectAsync(OptiCloudClient client, ScanTable table, CancellationToken ct)
     {
-        // A retry keeps showing why the last try failed.
-        lock (_gate) if (_state is not (CloudState.Offline or CloudState.Error)) _state = CloudState.Connecting;
-        Publish();
         await client.LoginAsync(ct);
         var (account, name) = await AccountAsync(client, _settings, ct);
         await table.EnsureAsync(account, ct);
         lock (_gate) _account = name;
         _log($"OptiCloud: forbundet til {(name.Length > 0 ? name : account.ToString())}");
-        Synced();
+        ReadOk();
     }
 
     async Task LoadOnceAsync(ScanTable table, CancellationToken ct)
@@ -244,7 +304,7 @@ public sealed class CloudSync : IDisposable
         // meanwhile is in one or the other; the journal and _recorded hold every one recorded.
         var local = Local(since);
         var events = (await table.ReadSinceAsync(since, ct)).Concat(local).ToList();
-        Synced();
+        ReadOk();
         Raise(events, since, fromCloud: true);
     }
 
@@ -281,7 +341,7 @@ public sealed class CloudSync : IDisposable
                 foreach (var e in events) cache[e.ScanId] = e;
                 polls++;
                 failures = 0;
-                Synced();
+                ReadOk();
 
                 // A new day changes what is done today even when no scan changed.
                 var today = Midnight(now);
@@ -297,8 +357,8 @@ public sealed class CloudSync : IDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch (Exception x)
             {
-                Failed(x);
-                await _delay(Outbox.Wait(x, failures++), ct);
+                ReadFailed(x);
+                await WaitAsync(Outbox.Wait(x, failures++), ct);
             }
         }
     }
@@ -317,10 +377,12 @@ public sealed class CloudSync : IDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception x)
             {
-                Failed(x);
+                ReadFailed(x);
                 error = x;
             }
-            await _delay(Outbox.Wait(error, failures), ct);
+            // A wrong password waits its quarter of an hour even when the network changes.
+            if (error is OptiCloudException { IsBadLogin: true }) await _delay(Outbox.Wait(error, failures), ct);
+            else await WaitAsync(Outbox.Wait(error, failures), ct);
         }
     }
 
@@ -331,27 +393,65 @@ public sealed class CloudSync : IDisposable
         if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud, refresh));
     }
 
-    void Synced()
+    // OptiCloud was read (or logged in to). Scans waiting are tried now: reads working means
+    // the network is back, the sender may still be in its backoff.
+    void ReadOk()
     {
         lock (_gate)
         {
-            _state = CloudState.Online;
-            _lastSync = _clock();
+            _lastRead = _clock();
+            _readFailing = false;
+            _readProblem = CloudProblem.None;
+            _logged = null;
+        }
+        if (_outbox.Pending > 0) _outbox.Nudge();
+        Publish();
+    }
+
+    // A scan got in (or, sent false, was given up on: the server answered all the same).
+    void SentOk(bool sent = true)
+    {
+        lock (_gate)
+        {
+            if (sent) _lastSent = _clock();
+            _writeProblem = CloudProblem.None;
             _logged = null;
         }
         Publish();
     }
 
-    void Failed(Exception x)
+    void ReadFailed(Exception x)
     {
         var o = x as OptiCloudException;
+        // A read OptiCloud refuses (404, bad request) won't pass by itself.
+        var problem = o is null || o.IsRejected ? CloudProblem.Unexpected : o.IsAuth ? CloudProblem.Auth : CloudProblem.Network;
         var message = o?.Message ?? x.Message;
+        lock (_gate)
+        {
+            _readFailing = true;
+            _readProblem = problem;
+            _readError = message;
+        }
+        Note(message);
+    }
+
+    // A refusal is tried again a few times before it is given up (Refused): no alarm before that.
+    void WriteFailed(OptiCloudException x)
+    {
+        lock (_gate)
+        {
+            _writeProblem = x.IsAuth ? CloudProblem.Auth : CloudProblem.Network;
+            _writeError = x.Message;
+        }
+        Note(x.Message);
+    }
+
+    // The same failure on every retry is logged once, until it works again.
+    void Note(string message)
+    {
         bool fresh;
         lock (_gate)
         {
-            _state = o is null || o.IsAuth || o.IsRejected ? CloudState.Error : CloudState.Offline;
-            _error = message;
-            // The same failure on every retry is logged once, until it works again.
             fresh = message != _logged;
             _logged = message;
         }
@@ -361,33 +461,56 @@ public sealed class CloudSync : IDisposable
 
     void Publish()
     {
-        CloudStatus status;
+        CloudStatus? changed = null;
+        TimeSpan? skew;
         lock (_gate)
         {
-            status = Make();
-            if (status == _status) return;
-            _status = status;
+            skew = _client?.ClockSkew;
+            var status = Make();
+            if (status != _status) changed = _status = status;
         }
-        if (!_disposed) StatusChanged?.Invoke(this, status);
+        NoteClock(skew);
+        if (changed is not null && !_disposed) StatusChanged?.Invoke(this, changed);
+    }
+
+    // A PC clock off OptiCloud's is logged once, and again when it changed by a minute or more.
+    void NoteClock(TimeSpan? skew)
+    {
+        if (skew is not { } d || CloudHealth.ClockText(d) is not { } text) return;
+        lock (_gate)
+        {
+            if (_skewLogged is { } was && (was - d).Duration() < TimeSpan.FromMinutes(1)) return;
+            _skewLogged = d;
+        }
+        _log($"OptiCloud: {text} (PC'en {d.TotalSeconds:+0;-0} s i forhold til OptiCloud)");
     }
 
     // Under _gate.
-    CloudStatus Make()
+    CloudStatus Make() => CloudHealth.Evaluate(new CloudFacts(
+        _settings.Mode, IsSetUp, _startedAt, _account,
+        Pending: _outbox.Pending,
+        OldestWaiting: _outbox.Pending > 0 ? _oldest : null,
+        Refused: _outbox.Failed,
+        LastRead: _lastRead,
+        LastSent: _lastSent,
+        ReadFailing: _readFailing,
+        ReadProblem: _readProblem,
+        ReadError: _readError,
+        WriteProblem: _writeProblem,
+        WriteError: _writeError,
+        Fatal: _fatal,
+        OrdersFailingFor: _orders?.FailingFor(_ordersClock()),
+        ClockSkew: _client?.ClockSkew), _clock());
+
+    // The scan time of the oldest scan in the outbox: the file names keep the order.
+    DateTimeOffset? OldestWaiting()
     {
-        var n = _outbox.Pending;
-        var failed = _outbox.Failed;
-        var waiting = n == 1 ? "1 scanning venter" : $"{n} scanninger venter";
-        var refused = failed == 1 ? "1 scanning afvist, se log" : $"{failed} scanninger afvist, se log";
-        var text = _state switch
+        try
         {
-            CloudState.NotSetUp => n > 0 ? $"Ikke sat op · {waiting}" : "Ikke sat op",
-            CloudState.Connecting => "Forbinder…",
-            CloudState.Online when failed > 0 => $"Forbundet · {refused}",
-            CloudState.Online => _account.Length > 0 ? $"Forbundet · {_account}" : "Forbundet",
-            CloudState.Offline => n > 0 ? $"Offline · {waiting}" : "Offline",
-            _ => n > 0 ? $"Fejl: {_error} · {waiting}" : $"Fejl: {_error}",
-        };
-        return new CloudStatus(_state, text, n, _lastSync, failed);
+            var first = Directory.EnumerateFiles(_outbox.Folder, "*.json").Order(StringComparer.Ordinal).FirstOrDefault();
+            return first is null ? null : ScanJson.Read(File.ReadAllText(first))?.At;
+        }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { return null; }
     }
 
     // The start of the scans read: Window back from now.
@@ -451,6 +574,9 @@ public sealed class CloudSync : IDisposable
             _disposed = true;
             run = _run;
         }
+        NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailability;
+        NetworkChange.NetworkAddressChanged -= OnNetworkAddress;
+        _tick?.Dispose();
         _stop.Cancel();
         try { run?.Wait(TimeSpan.FromSeconds(3)); }
         catch (AggregateException) { }

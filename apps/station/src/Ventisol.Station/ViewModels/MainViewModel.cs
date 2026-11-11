@@ -44,8 +44,11 @@ public sealed partial class MainViewModel : ObservableObject
     public bool IsViewer { get; init; }
     public bool ShowsScanners => !IsViewer;
     public string RoleText => IsViewer ? "Visning" : "Scanstation";
-    // What a free station says. Nobody scans at a viewer, so it doesn't ask for a scan.
-    public string IdleText => IsViewer ? "Venter på scanning" : "Scan et element";
+    // What a free station says. Nobody scans at a viewer, so it doesn't ask for a scan (CloudHealth.IdleText).
+    [ObservableProperty] public partial string IdleText { get; set; } = "Scan et element";
+
+    // The line over the stations when OptiCloud can't be reached (CloudHealth), else null.
+    [ObservableProperty] public partial string? BannerText { get; set; }
 
     // When the last scan came in anywhere, so updates wait for a quiet moment.
     public DateTimeOffset LastScanAt { get; private set; } = DateTimeOffset.MinValue;
