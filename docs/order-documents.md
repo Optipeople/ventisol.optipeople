@@ -9,7 +9,11 @@ When an operator scans an element in, the station app can show the order's produ
 - One file per order: `<order>_<yyyyMMdd>.pdf`, e.g. `58721_20261022.pdf`. The date is the print date.
 - On site the folder is the network share `R:\Indkøb\Shares\Ordre`. It may have subfolders, and it may be
   slow or offline.
-- An order can be printed again. The locator takes the newest date in the name, then the newest write time.
+- Special orders carry a prefix before the order number: `BE_58721_20261022.pdf`, and any other prefix
+  (`TE_`, `RKK_` ...). The name is parts split by `_`: the last part is the date, the order is the first
+  all-digit part before it, so any prefix of letters is skipped.
+- An order can be printed again, and an older version may be kept beside the new one as history (with or
+  without a prefix). The locator takes the newest date in the name, then the newest write time.
 - The folder is a setting on the setup screen, "Mappe med ordredokumenter" (`StationSettings.DocumentsFolder`).
   Empty turns the feature off.
 - The samples are customer data. They live in the untracked `orderdocs/` folder at the repo root on the
@@ -164,7 +168,7 @@ Lengths and sizes stay as printed (`1491,0`), so nothing is lost in rounding.
 
 - `FindAsync(order)` gives `OrderDocumentLookup(Order, Status, Path, Error)` with status `Found`,
   `NotFound`, `FolderUnavailable` or `Off` (no folder set).
-- Lists `<order>_*.pdf` in the folder and its subfolders (8 levels) on a background thread, into an
+- Lists `[prefix_]<order>_<date>.pdf` in the folder and its subfolders (8 levels) on a background thread, into an
   index kept for 30 s. A miss lists again, at most every 3 s. One listing runs at a time.
 - A listing slower than 10 s answers from the last index if it has the order, else `FolderUnavailable`
   ("Mappen svarer ikke"); the listing goes on and fills the index for the next scan.

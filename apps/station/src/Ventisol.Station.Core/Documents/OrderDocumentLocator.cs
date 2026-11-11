@@ -18,8 +18,9 @@ public sealed record OrderDocumentLookup(int Order, OrderDocumentStatus Status, 
 // What a look through the folder found: how many orders have a document, or why it couldn't look.
 public sealed record OrderDocumentFolderStatus(bool Available, int Orders, int Files, string? Error = null);
 
-// Finds the PDF 3E wrote for an order in the documents folder: "<order>_<yyyyMMdd>.pdf", in the
-// folder or any folder below it. With more than one for an order, the newest date in the name wins,
+// Finds the PDF 3E wrote for an order in the documents folder: "<order>_<yyyyMMdd>.pdf", or with a
+// prefix such as "BE_<order>_<yyyyMMdd>.pdf", in the folder or any folder below it. With more than one
+// for an order (an older one kept as history, prefixed or not), the newest date in the name wins,
 // then the newest write time. The folder is a network share on site, so it is never read on the
 // caller's thread: the files are listed in the background into an index, kept for RefreshAfter
 // (30 s), and listed again when that is up or when an order isn't in the index (at most every
@@ -181,19 +182,25 @@ public sealed partial class OrderDocumentLocator
         _ => "Mappen kan ikke læses",
     };
 
-    // "58721_20261022.pdf" gives order 58721 and 22 October 2026. Anything after the first "_"
-    // that isn't a date still counts, with no date.
+    // The name is parts split by "_". The last part is the print date, the order is the first part
+    // before it that is all digits, so a prefix of letters is skipped: "58721_20261022.pdf" and
+    // "BE_58721_20261022.pdf" (or TE_, RKK_ ...) both give order 58721 and 22 October 2026.
+    // A last part that isn't a date still counts, with no date.
     public static bool TryParseFileName(string fileName, out int order, out DateOnly? date)
     {
         order = 0;
         date = null;
         var m = FileNameRegex().Match(fileName);
-        if (!m.Success || !int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out order)) return false;
-        if (DateOnly.TryParseExact(m.Groups[2].Value, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) date = d;
+        if (!m.Success) return false;
+        var parts = m.Groups[1].Value.Split('_');
+        if (parts.Length < 2) return false;
+        var orderPart = parts[..^1].FirstOrDefault(OrderPartRegex().IsMatch);
+        if (orderPart is null || !int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out order)) return false;
+        if (DateOnly.TryParseExact(parts[^1], "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) date = d;
         return true;
     }
 
-    // Every "<order>_*.pdf" in the folder and the folders below it, skipping what can't be read.
+    // Every "[prefix_]<order>_*.pdf" in the folder and the folders below it, skipping what can't be read.
     // Throws when the folder itself can't be read.
     public static IReadOnlyList<Entry> ListFolder(string folder, CancellationToken ct)
     {
@@ -217,6 +224,9 @@ public sealed partial class OrderDocumentLocator
         return result;
     }
 
-    [GeneratedRegex(@"^0*(\d{1,9})_([^\\/]*)\.pdf$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^([^\\/]+)\.pdf$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FileNameRegex();
+
+    [GeneratedRegex(@"^0*\d{1,9}$", RegexOptions.CultureInvariant)]
+    private static partial Regex OrderPartRegex();
 }

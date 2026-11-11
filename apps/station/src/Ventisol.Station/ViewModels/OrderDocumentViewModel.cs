@@ -187,7 +187,7 @@ public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : O
                 Message("Mappen med ordredokumenter kan ikke læses", $"{load.Error ?? "Mappen svarer ikke"}. {documents.Folder}", retry: true);
                 return;
             case OrderDocumentLoadStatus.NotFound:
-                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf i {documents.Folder}.", retry: true);
+                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf (eller fx BE_{barcode.Order}_*.pdf) i {documents.Folder}.", retry: true);
                 return;
             case OrderDocumentLoadStatus.Unreadable:
                 Message($"Produktionslisten for ordre {barcode.Order} kan ikke åbnes", load.Error ?? "Filen kan ikke læses", retry: true);

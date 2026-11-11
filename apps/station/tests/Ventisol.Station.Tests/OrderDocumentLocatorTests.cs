@@ -35,6 +35,11 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     [InlineData("058721_20261022.pdf", 58721, "2026-10-22")]
     [InlineData("58721_20261022 (1).pdf", 58721, null)]
     [InlineData("58721_x.pdf", 58721, null)]
+    [InlineData("BE_58721_20261022.pdf", 58721, "2026-10-22")]
+    [InlineData("TE_58721_20261105.pdf", 58721, "2026-11-05")]
+    [InlineData("RKK_058721_20261022.pdf", 58721, "2026-10-22")]
+    [InlineData("order_58721_20261022.pdf", 58721, "2026-10-22")]
+    [InlineData("BE_X_58721_20261022.pdf", 58721, "2026-10-22")]
     public void File_names_give_order_and_date(string name, int order, string? date)
     {
         Assert.True(OrderDocumentLocator.TryParseFileName(name, out var o, out var d));
@@ -44,7 +49,8 @@ public sealed class OrderDocumentLocatorTests : IDisposable
 
     [Theory]
     [InlineData("58721.pdf")]
-    [InlineData("order_58721_20261022.pdf")]
+    [InlineData("BE_20261022.pdf")]
+    [InlineData("BE_X_20261022.pdf")]
     [InlineData("58721_20261022.txt")]
     public void Other_files_are_not_order_documents(string name) =>
         Assert.False(OrderDocumentLocator.TryParseFileName(name, out _, out _));
@@ -71,6 +77,23 @@ public sealed class OrderDocumentLocatorTests : IDisposable
         Assert.Equal(later, (await locator.FindAsync(58800)).Path);
         Assert.Equal(OrderDocumentStatus.NotFound, (await locator.FindAsync(12345)).Status);
         Assert.Equal(2, locator.IndexedOrders);
+    }
+
+    [Fact]
+    public async Task A_prefixed_document_is_found_and_the_newest_date_wins_across_prefixes()
+    {
+        Touch("58721_20261022.pdf", new DateTime(2026, 11, 9, 0, 0, 0, DateTimeKind.Utc));
+        var changed = Touch("BE_58721_20261105.pdf", new DateTime(2026, 11, 5, 0, 0, 0, DateTimeKind.Utc));
+        var special = Touch(@"sub\RKK_58800_20261022.pdf");
+        Touch("TE_58801_20261101.pdf");
+        var newer = Touch("58801_20261110.pdf");
+
+        var locator = new OrderDocumentLocator(_root);
+
+        Assert.Equal(changed, (await locator.FindAsync(58721)).Path);
+        Assert.Equal(special, (await locator.FindAsync(58800)).Path);
+        Assert.Equal(newer, (await locator.FindAsync(58801)).Path);
+        Assert.Equal(3, locator.IndexedOrders);
     }
 
     [Fact]
