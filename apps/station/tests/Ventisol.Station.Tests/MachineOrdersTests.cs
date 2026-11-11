@@ -965,12 +965,12 @@ public sealed class MachineOrdersTests : IDisposable
         sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = E(A) }, fromCloud: true);
         await Until(() => api.Sets.Length == 1);
         Assert.Equal((machine, A), api.Sets[0]);
-        Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains($"\"number\":\"{A}\"") && r.Body.Contains("\"expectedSpeed\":0"));
+        Assert.Contains(api.Snapshot(), r => r.Path.Contains("SetOrderToMachine") && r.Body!.Contains($"\"number\":\"{A}\"") && r.Body.Contains("\"expectedSpeed\":0"));
 
         // Then the fields, in the machine's factory, as text by label.
         await Until(() => api.FieldsOf(A) is not null);
         Assert.Equal(new Dictionary<string, string> { ["Ordre"] = "58556", ["Position"] = "5", ["Underposition"] = "1", ["Emne"] = "3", ["Scannet ind"] = Local(T0) }, api.FieldsOf(A));
-        Assert.Contains(api.Requests.ToList(), r => r.Path.Contains("ExternalSetPartOrder") && r.Body!.Contains($"\"factoryId\":\"{api.Factory}\"")
+        Assert.Contains(api.Snapshot(), r => r.Path.Contains("ExternalSetPartOrder") && r.Body!.Contains($"\"factoryId\":\"{api.Factory}\"")
             && r.Body.Contains($"\"partOrderNumber\":\"{A}\"") && r.Body.Contains("{\"label\":\"Ordre\",\"text\":\"58556\"}"));
 
         sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [machine] = MachineOrder.None });
@@ -1021,7 +1021,7 @@ public sealed class MachineOrdersTests : IDisposable
         await client.SetOrderFieldsAsync(machine, E(B));
         await client.SetOrderFieldsAsync(machine, MachineOrder.None);
 
-        Assert.Equal(1, api.Requests.Count(r => r.Path.StartsWith("api/Machine/Get/")));
+        Assert.Equal(1, api.Snapshot().Count(r => r.Path.StartsWith("api/Machine/Get/")));
         Assert.Equal(2, api.Count("ExternalSetPartOrder"));
         Assert.Equal("1", api.FieldsOf(B)!["Underposition"]);
     }

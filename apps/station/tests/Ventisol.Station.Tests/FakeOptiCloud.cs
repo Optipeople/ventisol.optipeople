@@ -54,6 +54,7 @@ public sealed class FakeOptiCloud : HttpMessageHandler
     public int Count(string pathPart) { lock (_gate) return Requests.Count(r => r.Path.Contains(pathPart, StringComparison.OrdinalIgnoreCase)); }
 
     public int LoginCount(string grant) { lock (_gate) return Requests.Count(r => r.Path.EndsWith("Authentication/login") && r.Body!.Contains(grant)); }
+    public List<(string Method, string Path, string? Body, string? Auth)> Snapshot() { lock (_gate) return [.. Requests]; }
 
     // Makes the current token stale, as when it runs out.
     public void ExpireToken() { lock (_gate) _token = "expired-" + _token; }
