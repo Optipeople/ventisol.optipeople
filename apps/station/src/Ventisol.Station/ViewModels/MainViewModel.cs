@@ -169,9 +169,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    public WidgetViewModel AddWidget(WidgetSpec spec)
+    public WidgetViewModel AddWidget(WidgetViewModel w)
     {
-        var w = WidgetViewModel.Create(spec);
         Widgets.Add(w);
         RefreshWidgets(DateTimeOffset.Now);
         return w;
@@ -179,7 +178,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void RemoveWidget(string id)
     {
-        if (Widgets.FirstOrDefault(w => w.Id == id) is { } w) Widgets.Remove(w);
+        if (Widgets.FirstOrDefault(w => w.Id == id) is not { } w) return;
+        Widgets.Remove(w);
+        if (w is DocumentWidget d) d.Document.Close();
     }
 
     void RefreshWidgets(DateTimeOffset now)

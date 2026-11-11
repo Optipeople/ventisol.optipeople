@@ -3,13 +3,13 @@ using Ventisol.Station.Core;
 
 namespace Ventisol.Station.ViewModels;
 
-public enum WidgetKind { Clock, Kpi, RecentOrders }
+public enum WidgetKind { Clock, Kpi, RecentOrders, Document }
 
 // OrdersPacked keeps its name so layouts saved with it still load; it counts orders scanned out at packing.
 public enum KpiMetric { Elements, AverageTime, StationsBusy, OrdersPacked }
 
-// What a widget is, as saved with the layout.
-public sealed record WidgetSpec(string Id, WidgetKind Kind, KpiMetric? Metric = null);
+// What a widget is, as saved with the layout. Station: whose element a Document widget shows.
+public sealed record WidgetSpec(string Id, WidgetKind Kind, KpiMetric? Metric = null, int? Station = null);
 
 // A block that is not a station. Updated once a second from the same numbers as the report page.
 public abstract class WidgetViewModel(WidgetSpec spec) : ObservableObject
@@ -30,8 +30,10 @@ public abstract class WidgetViewModel(WidgetSpec spec) : ObservableObject
         ("Tal: ordrer ved pakning i dag", WidgetKind.Kpi, KpiMetric.OrdersPacked, 3, 2),
     ];
 
-    public static WidgetViewModel Create(WidgetSpec spec) => spec.Kind switch
+    // A Document widget needs its own document view model, which the window makes (it has the folder).
+    public static WidgetViewModel Create(WidgetSpec spec, Func<OrderDocumentViewModel> document) => spec.Kind switch
     {
+        WidgetKind.Document => new DocumentWidget(spec, document()),
         WidgetKind.Clock => new ClockWidget(spec),
         WidgetKind.RecentOrders => new RecentOrdersWidget(spec),
         _ => new KpiWidget(spec),
@@ -61,6 +63,17 @@ public sealed partial class KpiWidget(WidgetSpec spec) : WidgetViewModel(spec)
             _ => ("Elementer", k.Elements.ToString(), "Scannet i dag"),
         };
     }
+}
+
+// A station's element document, small enough to sit among the tiles: it follows the station as a scan
+// moves it to a new element, the same as the full document does. A tap opens the full one (MainWindow).
+public sealed class DocumentWidget(WidgetSpec spec, OrderDocumentViewModel document) : WidgetViewModel(spec)
+{
+    public int Station => Spec.Station ?? 0;
+    public OrderDocumentViewModel Document => document;
+
+    // Fed by the window, which knows each station's element (TargetFor), not from the day's numbers.
+    public override void Update(DateTimeOffset now, Kpis kpis, IReadOnlyList<OrderLine> orders) { }
 }
 
 public sealed record RecentOrderRow(string Order, string Where, string Total, bool Active);

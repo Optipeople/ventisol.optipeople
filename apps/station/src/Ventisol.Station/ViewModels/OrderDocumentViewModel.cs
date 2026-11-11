@@ -53,6 +53,9 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 
     public DocumentTarget? Target { get; private set; }
 
+    // False for a widget: it never shows the pages, so it doesn't render them either.
+    public bool ShowsPages { get; init; } = true;
+
     // The document on screen is a copy, because the folder can't be reached right now.
     [ObservableProperty] public partial bool FromCopy { get; private set; }
     // ... and an older version than the folder lists now.
@@ -229,7 +232,11 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         State = DocumentState.Ready;
         if (load.Position is null)
         {
-            Warning = $"Position {Sheet.Position} står ikke i produktionslisten. Hele PDF'en vises.";
+            Warning = ShowsPages
+                ? $"Position {Sheet.Position} står ikke i produktionslisten. Hele PDF'en vises."
+                : $"Position {Sheet.Position} står ikke i produktionslisten. Tryk for at se hele PDF'en.";
+            // A widget has no pages to show, so its drawing area says where they are.
+            if (!ShowsPages) DrawingNote = "Tryk for at se hele PDF'en";
             OpenPages(0, canLeave: false);
             return;
         }
@@ -267,7 +274,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 
     void OpenPages(int start, bool canLeave = true)
     {
-        if (_load is not { Pdf: not null, Document: { } doc } load || _cts is not { } cts) return;
+        if (!ShowsPages || _load is not { Pdf: not null, Document: { } doc } load || _cts is not { } cts) return;
         CanLeavePages = canLeave;
         if (Pages.Count == 0)
         {

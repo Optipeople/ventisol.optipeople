@@ -18,6 +18,13 @@
         </Border>
     </DataTemplate>
 
+    <!-- A station's element document, small (DocumentWidgetView); a tap opens the full one -->
+    <DataTemplate DataType="{x:Type vm:DocumentWidget}">
+        <Border Style="{StaticResource WidgetPanel}" ClipToBounds="True">
+            <local:DocumentWidgetView DataContext="{Binding Document}" />
+        </Border>
+    </DataTemplate>
+
     <!-- One number: what it is, the number, how it is counted -->
     <DataTemplate DataType="{x:Type vm:KpiWidget}">
         <Border Style="{StaticResource WidgetPanel}">

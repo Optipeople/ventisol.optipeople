@@ -1,0 +1,207 @@
+<!-- A station's element document as a widget among the tiles: the station, the element, and the drawing
+     as big as the block allows. A wide block puts the key facts beside the drawing, a tall one under it,
+     a small one shows only the drawing (code-behind picks by size). Nothing scrolls: a tap on the block
+     opens the full document. DataContext is an OrderDocumentViewModel. -->
+<UserControl x:Class="Ventisol.Station.DocumentWidgetView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Ventisol.Station.ViewModels"
+             xmlns:doc="clr-namespace:Ventisol.Station.Core.Documents;assembly=Ventisol.Station.Core">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="Shown" />
+        <Style x:Key="Left" TargetType="TextBlock" BasedOn="{StaticResource TextBase}">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style x:Key="Label" TargetType="TextBlock" BasedOn="{StaticResource Kicker}">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+        </Style>
+        <!-- A fact beside the drawing: label over value; hidden with no value (set the value in Tag) -->
+        <Style x:Key="Fact" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,12" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+                <Trigger Property="Tag" Value="">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="FactValue" TargetType="TextBlock" BasedOn="{StaticResource Left}">
+            <Setter Property="FontSize" Value="19" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="20,16,20,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header: the station with its dot, the element big, and how long it has been there -->
+        <StackPanel>
+            <DockPanel>
+                <!-- Says a tap opens more -->
+                <TextBlock DockPanel.Dock="Right" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"
+                           Foreground="{StaticResource Ink3}" VerticalAlignment="Center" Text="&#xE740;" ToolTip="Tryk for hele dokumentet" />
+                <Ellipse Width="9" Height="9" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="{StaticResource Off}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding InProgress}" Value="True">
+                                    <Setter Property="Fill" Value="{StaticResource Ok}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Ellipse.Style>
+                </Ellipse>
+                <TextBlock Style="{StaticResource Label}" VerticalAlignment="Center" Text="{Binding StationName}" />
+            </DockPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" Visibility="{Binding HasElement, Converter={StaticResource Shown}}">
+                <TextBlock x:Name="OrderText" FontWeight="Bold" FontSize="32" VerticalAlignment="Baseline" Text="{Binding Sheet.Order}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource Figures}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding InProgress}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource OkText}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock x:Name="ElementText" Style="{StaticResource Figures}" FontSize="18" Foreground="{StaticResource Ink3}"
+                           VerticalAlignment="Baseline" Margin="12,0,0,0">
+                    <TextBlock.Text>
+                        <MultiBinding StringFormat="Pos. {0} · stk. {1}">
+                            <Binding Path="Sheet.Position" />
+                            <Binding Path="Sheet.Piece" />
+                        </MultiBinding>
+                    </TextBlock.Text>
+                </TextBlock>
+            </StackPanel>
+            <!-- The wrapper is hidden on a small block (code-behind), the line when there is no element -->
+            <Border x:Name="StatusLine">
+                <TextBlock Style="{StaticResource Left}" FontSize="15" Foreground="{StaticResource Ink3}" Margin="0,2,0,0"
+                           Text="{Binding StatusText}" Visibility="{Binding HasElement, Converter={StaticResource Shown}}" />
+            </Border>
+        </StackPanel>
+
+        <!-- The position wasn't in the PDF, or parts couldn't be read -->
+        <Border Grid.Row="1" Background="{StaticResource Warn}" CornerRadius="6" Padding="12,6" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Warning}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Style="{StaticResource Left}" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Dark}"
+                       TextWrapping="Wrap" MaxHeight="40" Text="{Binding Warning}" />
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0" ClipToBounds="True">
+            <!-- The element: the drawing, with its facts beside it (wide) or under it (tall) -->
+            <Grid x:Name="Element">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding State}" Value="{x:Static vm:DocumentState.Ready}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="SideColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Image Source="{Binding Drawing}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                <TextBlock Style="{StaticResource TextBase}" FontSize="16" Foreground="{StaticResource Quiet}" VerticalAlignment="Center"
+                           Text="{Binding DrawingNote}" />
+
+                <!-- Tall: the first facts in a row under the drawing -->
+                <ItemsControl x:Name="Strip" Grid.Row="1" Margin="0,12,0,0" MaxHeight="64" ClipToBounds="True" Visibility="Collapsed"
+                              ItemsSource="{Binding Sheet.Facts}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type doc:SheetFact}">
+                            <StackPanel Margin="0,0,24,8" MaxWidth="240">
+                                <TextBlock Style="{StaticResource Label}" Text="{Binding Label}" />
+                                <TextBlock Style="{StaticResource FactValue}" FontSize="17" Text="{Binding Value}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Wide: notes, who and when, then the key facts, beside the drawing; what doesn't fit is cut -->
+                <StackPanel x:Name="Side" Grid.Column="1" Grid.RowSpan="2" Margin="20,0,0,0" Visibility="Collapsed">
+                    <ItemsControl ItemsSource="{Binding Sheet.Notes}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource Rule}" CornerRadius="6" Padding="10,6" Margin="0,0,0,10">
+                                    <TextBlock Style="{StaticResource Left}" FontSize="15" FontWeight="Bold" TextWrapping="Wrap" Text="{Binding}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Style="{StaticResource Fact}" Tag="{Binding Sheet.Customer}">
+                        <TextBlock Style="{StaticResource Label}" Text="KUNDE" />
+                        <TextBlock Style="{StaticResource FactValue}" Text="{Binding Sheet.Customer}" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Fact}" Tag="{Binding Sheet.DeliveryWeek}">
+                        <TextBlock Style="{StaticResource Label}" Text="LEV. UGE" />
+                        <TextBlock Style="{StaticResource FactValue}" Text="{Binding Sheet.DeliveryWeek}" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Fact}" Tag="{Binding Sheet.System}">
+                        <TextBlock Style="{StaticResource Label}" Text="SYSTEM" />
+                        <TextBlock Style="{StaticResource FactValue}" Text="{Binding Sheet.System}" />
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding Sheet.Facts}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type doc:SheetFact}">
+                                <StackPanel Margin="0,0,0,12">
+                                    <TextBlock Style="{StaticResource Label}" Text="{Binding Label}" />
+                                    <TextBlock Style="{StaticResource FactValue}" Text="{Binding Value}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Grid>
+
+            <!-- Loading, nothing there, or why not -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding State}" Value="{x:Static vm:DocumentState.Ready}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Style="{StaticResource TextBase}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap" TextAlignment="Center"
+                           Text="{Binding MessageTitle}" />
+                <TextBlock x:Name="MessageDetail" Style="{StaticResource TextBase}" FontSize="14" Foreground="{StaticResource Ink3}"
+                           TextWrapping="Wrap" TextAlignment="Center" MaxHeight="60" Margin="0,6,0,0" Text="{Binding MessageDetail}" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

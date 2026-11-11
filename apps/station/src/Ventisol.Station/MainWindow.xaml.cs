@@ -75,7 +75,12 @@ public partial class MainWindow : Window
         var (layout, widgets, hidden) = LayoutStore.Load([.. _vm.Stations.Select(s => StationId(s.Number))]);
         _layout = layout;
         _hidden.UnionWith(hidden);
-        foreach (var spec in widgets) _vm.AddWidget(spec);
+        foreach (var spec in widgets)
+        {
+            // A document widget for a station that has since been taken out of the setup goes with it.
+            if (spec.Kind == WidgetKind.Document && !_vm.Stations.Any(s => s.Number == spec.Station)) { _layout.Remove(spec.Id); continue; }
+            _vm.AddWidget(MakeWidget(spec));
+        }
         _document = new OrderDocumentViewModel(_documents);
         foreach (var s in _vm.Stations)
         {
@@ -85,6 +90,7 @@ public partial class MainWindow : Window
         Document.Attach(_document, _vm.Stations);
         Document.CloseRequested += (_, _) => CloseDocument();
         BuildTiles();
+        FollowDocument();
         BuildGuides();
         BuildDots();
         _demoInput = !_settings.IsConnected;
@@ -163,7 +169,8 @@ public partial class MainWindow : Window
         var now = DateTimeOffset.Now;
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
         var today = ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now));
-        if (loaded.Refresh) { _vm.ApplyDone(today); return; }
+        // A refresh can bring a station's last element done; a document widget on an idle station shows it.
+        if (loaded.Refresh) { _vm.ApplyDone(today); FollowDocument(); return; }
         _vm.Apply(today, now);
         SendMachineOrders(loaded.FromCloud);
         foreach (var s in _vm.Stations)
@@ -366,6 +373,7 @@ public partial class MainWindow : Window
             if (now - _lastTouch > DocumentIdle) CloseDocument();
             else _document.UpdateStatus(now);
         }
+        foreach (var w in _vm.Widgets.OfType<DocumentWidget>()) w.Document.UpdateStatus(now);
     }
 
     protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
@@ -415,10 +423,15 @@ public partial class MainWindow : Window
         Keyboard.Focus(this);
     }
 
+    // The open document and every document widget follow their station to its element now.
     void FollowDocument()
     {
         if (Document.Station is { } n) _document.Follow(TargetFor(n));
+        foreach (var w in _vm.Widgets.OfType<DocumentWidget>()) w.Document.Follow(TargetFor(w.Station));
     }
+
+    WidgetViewModel MakeWidget(WidgetSpec spec) =>
+        WidgetViewModel.Create(spec, () => new OrderDocumentViewModel(_documents) { ShowsPages = false });
 
     // Finds and reads the element's document and renders its drawing, in the background. A scan never waits on it.
     void PrefetchDocument(Barcode barcode)
@@ -547,8 +560,14 @@ public partial class MainWindow : Window
             PickerItems.Children.Add(PickerHeader("Widgets"));
         }
         foreach (var (label, kind, metric, columns, rows) in WidgetViewModel.Catalog)
-            PickerItems.Children.Add(PickerItem(label, () => AddWidget(new WidgetSpec($"widget-{Guid.NewGuid():N}"[..15], kind, metric), columns, rows)));
+            PickerItems.Children.Add(PickerItem(label, () => AddWidget(new WidgetSpec(NewWidgetId(), kind, metric), columns, rows)));
+        // A station's element document, one entry per station: a screen can show one next to its tile.
+        PickerItems.Children.Add(PickerHeader("Dokument for station"));
+        foreach (var s in _vm.Stations)
+            PickerItems.Children.Add(PickerItem(s.Name, () => AddWidget(new WidgetSpec(NewWidgetId(), WidgetKind.Document, Station: s.Number), 4, 3)));
     }
+
+    static string NewWidgetId() => $"widget-{Guid.NewGuid():N}"[..15];
 
     Button PickerItem(string label, Action click)
     {
@@ -571,7 +590,10 @@ public partial class MainWindow : Window
 
     void AddWidget(WidgetSpec spec, int columns, int rows)
     {
-        if (TryPlaceNew(spec.Id, columns, rows)) Enter(spec.Id, _vm.AddWidget(spec), null);
+        if (!TryPlaceNew(spec.Id, columns, rows)) return;
+        var widget = _vm.AddWidget(MakeWidget(spec));
+        if (widget is DocumentWidget d) d.Document.Follow(TargetFor(d.Station));
+        Enter(spec.Id, widget, null);
     }
 
     // A hidden station comes back at its default size, or smaller if that is all there is room for.
@@ -723,6 +745,8 @@ public partial class MainWindow : Window
                 if (_demoInput) _demo.Scan(n);
                 else OpenDocument(n);
             }
+            // A document widget opens its station's full document, with the drawing big and every table.
+            else if (_vm.Widgets.FirstOrDefault(w => w.Id == id) is DocumentWidget d) OpenDocument(d.Station);
             return;
         }
         if (_dragFrom is not { } from) return;
