@@ -32,6 +32,19 @@ static class LayoutStore
         return (StationLayout.Default(stationIds), [], []);
     }
 
+    // Moves the saved layout to layout.bad.json, so the next start uses the default one and the bad
+    // one can still be looked at. False when there was none to move.
+    public static bool SetAside()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(File)) return false;
+            System.IO.File.Move(File, Path.ChangeExtension(File, ".bad.json"), overwrite: true);
+            return true;
+        }
+        catch { return false; }
+    }
+
     public static void Save(StationLayout layout, IEnumerable<WidgetSpec> widgets, IEnumerable<string> hidden)
     {
         try

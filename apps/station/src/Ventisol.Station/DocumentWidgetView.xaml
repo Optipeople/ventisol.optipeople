@@ -63,7 +63,7 @@
                 <TextBlock Style="{StaticResource Label}" VerticalAlignment="Center" Text="{Binding StationName}" />
             </DockPanel>
             <StackPanel Orientation="Horizontal" Margin="0,2,0,0" Visibility="{Binding HasElement, Converter={StaticResource Shown}}">
-                <TextBlock x:Name="OrderText" FontWeight="Bold" FontSize="32" VerticalAlignment="Baseline" Text="{Binding Sheet.Order}">
+                <TextBlock x:Name="OrderText" FontWeight="Bold" FontSize="32" VerticalAlignment="Bottom" Text="{Binding Sheet.Order}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource Figures}">
                             <Style.Triggers>
@@ -75,7 +75,7 @@
                     </TextBlock.Style>
                 </TextBlock>
                 <TextBlock x:Name="ElementText" Style="{StaticResource Figures}" FontSize="18" Foreground="{StaticResource Ink3}"
-                           VerticalAlignment="Baseline" Margin="12,0,0,0">
+                           VerticalAlignment="Bottom" Margin="12,0,0,5">
                     <TextBlock.Text>
                         <MultiBinding StringFormat="Pos. {0} · stk. {1}">
                             <Binding Path="Sheet.Position" />

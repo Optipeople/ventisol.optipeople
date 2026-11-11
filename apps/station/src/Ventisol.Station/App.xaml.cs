@@ -53,8 +53,23 @@ public partial class App : Application
         var kiosk = e.Args.Contains("--kiosk", StringComparer.OrdinalIgnoreCase);
         // --showcase starts with sample scans on the screen.
         var showcase = e.Args.Contains("--showcase", StringComparer.OrdinalIgnoreCase);
-        var window = new MainWindow(kiosk, showcase);
-        window.Show();
+        MainWindow window;
+        try
+        {
+            window = new MainWindow(kiosk, showcase);
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            // Without this the error handler above keeps a process with no window alive, and it holds
+            // the single-instance lock, so the app can't be opened again. A saved layout is the likely
+            // cause (a widget that can't be drawn): set it aside and start on the default one. If there
+            // was none, give up rather than start again for ever.
+            Log.Write($"Window could not be shown: {ex}");
+            if (LayoutStore.SetAside()) { Log.Write("Layout set aside, starting again on the default layout"); Restart(); }
+            else Shutdown(1);
+            return;
+        }
         _tray = new TrayIcon(window, (ViewModels.MainViewModel)window.DataContext);
     }
 
