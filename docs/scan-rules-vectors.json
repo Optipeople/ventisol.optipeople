@@ -15,8 +15,6 @@
     "       compare sorted by end, then stationNo, then barcode.",
     "  inProgress: per station, its latest In with no Out, over the whole window, each",
     "       {stationNo, barcode, since}; at most one per station; compare sorted by stationNo.",
-    "  packed: order numbers (OrderNo, digits 2-6 of the barcode) with a done record at a Packing",
-    "       station and nothing in progress, sorted ascending.",
     "Times compare as instants (same millisecond), not as strings."
   ],
   "cases": [
@@ -29,8 +27,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:12:00Z" } ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -43,8 +40,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:30:00Z", "end": "2026-10-21T06:40:00Z" } ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -55,8 +51,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:10:00Z" } ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -68,8 +63,7 @@
       ],
       "expected": {
         "done": [],
-        "inProgress": [ { "stationNo": 1, "barcode": "058556050102", "since": "2026-10-21T06:20:00Z" } ],
-        "packed": []
+        "inProgress": [ { "stationNo": 1, "barcode": "058556050102", "since": "2026-10-21T06:20:00Z" } ]
       }
     },
     {
@@ -82,8 +76,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:05:00Z" } ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -98,8 +91,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050102", "stationNo": 2, "start": "2026-10-20T21:00:00Z", "end": "2026-10-21T05:00:00Z" } ],
-        "inProgress": [ { "stationNo": 1, "barcode": "058556050103", "since": "2026-10-20T20:00:00Z" } ],
-        "packed": []
+        "inProgress": [ { "stationNo": 1, "barcode": "058556050103", "since": "2026-10-20T20:00:00Z" } ]
       }
     },
     {
@@ -112,8 +104,7 @@
       ],
       "expected": {
         "done": [ { "barcode": "058556050102", "stationNo": 2, "start": "2026-10-19T21:00:00Z", "end": "2026-10-21T06:00:00Z" } ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -134,8 +125,7 @@
           { "barcode": "058556050103", "stationNo": 7, "start": "2026-10-21T06:20:00Z", "end": "2026-10-21T06:30:00Z" },
           { "barcode": "058557010101", "stationNo": 7, "start": "2026-10-21T07:00:00Z", "end": "2026-10-21T07:05:00Z" }
         ],
-        "inProgress": [ { "stationNo": 2, "barcode": "058557020101", "since": "2026-10-21T07:10:00Z" } ],
-        "packed": [58556]
+        "inProgress": [ { "stationNo": 2, "barcode": "058557020101", "since": "2026-10-21T07:10:00Z" } ]
       }
     },
     {
@@ -152,8 +142,7 @@
           { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:10:00Z" },
           { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:30:00Z", "end": "2026-10-21T06:35:00Z" }
         ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -171,8 +160,7 @@
           { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:00:00Z" },
           { "barcode": "058556050102", "stationNo": 2, "start": "2026-10-21T07:00:00Z", "end": "2026-10-21T07:05:00Z" }
         ],
-        "inProgress": [],
-        "packed": []
+        "inProgress": []
       }
     },
     {
@@ -184,8 +172,7 @@
       ],
       "expected": {
         "done": [],
-        "inProgress": [ { "stationNo": 1, "barcode": "058556050102", "since": "2026-10-21T06:30:00Z" } ],
-        "packed": []
+        "inProgress": [ { "stationNo": 1, "barcode": "058556050102", "since": "2026-10-21T06:30:00Z" } ]
       }
     }
   ]

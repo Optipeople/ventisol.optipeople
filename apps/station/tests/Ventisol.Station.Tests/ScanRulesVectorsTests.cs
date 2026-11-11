@@ -42,7 +42,6 @@ public class ScanRulesVectorsTests
             expected.GetProperty("inProgress").EnumerateArray().Select(p => (p.GetProperty("stationNo").GetInt32(), p.GetProperty("barcode").GetString()!, Time(p, "since"))).OrderBy(p => p.Item1),
             r.InProgress.Select(p => (p.Key, p.Value.Barcode.Raw, p.Value.Since)).OrderBy(p => p.Key));
 
-        // "packed" in the vectors is for the web report; the station shows no packed status.
     }
 
     static DateTimeOffset Time(JsonElement e, string name) =>

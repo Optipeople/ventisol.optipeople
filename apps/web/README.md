@@ -8,7 +8,7 @@ OptiCloud. Built like `optipeople.vola`: same stack, auth flow and look.
 Three views (Danish UI):
 
 - **Dagsoverblik** (`/`, `?dato=yyyy-MM-dd`): one day, today by default. KPIs
-  (elements, orders packed, average time per element per station, total
+  (elements, orders at packing, average time per element per station, total
   worked time), the day's orders and the stations (done, average, utilisation).
 - **Ordre** (`/ordre/{orderNo}`): one order across the last 30 days. Total
   time, every element (barcode, position, piece) and a **timeline**: a block
@@ -126,9 +126,9 @@ the station app:
   one element in progress: its latest In with no Out.
 - `docs/scan-rules-vectors.json` holds shared cases that both this site
   (`lib/scan-rules-vectors.test.ts`) and the station app run.
-- An order is **packed** when it has an Out at a Packing station and nothing
-  on it is in progress (a finished rework pass after packing does not undo
-  it); **I gang** when something is in progress; otherwise **Afventer**.
+- An order is **I gang** when something on it is in progress, otherwise
+  **Ikke i gang**. No order is called packed or done: without the order's
+  element count the scans can't tell that.
 - A pass belongs to the (Copenhagen) day it ended, as in the station app; one in progress shows on today. Day and period reads start 36 hours early so a pass begun the day before has its In.
 - Station utilisation: time worked / time from the day's first scan to now
   (today) or to the last scan (past days). Same rules as `DayReport` in the

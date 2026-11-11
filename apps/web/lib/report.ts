@@ -10,8 +10,9 @@
 //     the later In wins.
 //   - An Out with no In: its start is put back from DurationSec, or it is
 //     skipped when there is none.
-//   - An order is packed when it has an Out at a Packing station and nothing
-//     on it is in progress.
+//   - No order is called packed or done: without the order's element count the
+//     scans can't tell that. An order is active while something on it is in
+//     progress, else idle.
 //   - An element still in progress counts up to "now"; an In older than
 //     36 hours with no Out is ignored.
 //
@@ -198,7 +199,7 @@ function stationNames(intervals: WorkInterval[]): string[] {
 
 const sum = (values: number[]) => values.reduce((t, v) => t + v, 0);
 
-export type OrderStatus = "packed" | "active" | "waiting";
+export type OrderStatus = "active" | "idle";
 
 export interface OrderSummary {
   orderNo: number;
@@ -209,7 +210,7 @@ export interface OrderSummary {
   stations: string[];
   /** Stations where an element of the order is in progress now. */
   activeAt: string[];
-  /** packed: an Out at packing, nothing in progress. active: something in progress. */
+  /** active: something on it is in progress now. idle: nothing is. */
   status: OrderStatus;
   firstScan: number;
   lastScan: number;
@@ -221,13 +222,11 @@ export interface OrderSummary {
 
 /**
  * The status rule on its own, for one order's intervals: active while
- * anything is in progress, else packed once it has a finished pass (an Out)
- * at a Packing station (a later rework pass does not unpack it), else waiting.
+ * anything is in progress, else idle. Nothing more is guessed from the scans
+ * (a pass at packing does not make an order packed).
  */
 export function orderStatus(orderIntervals: WorkInterval[]): OrderStatus {
-  if (orderIntervals.some((iv) => iv.inProgress)) return "active";
-  if (orderIntervals.some((iv) => isPacking(iv))) return "packed";
-  return "waiting";
+  return orderIntervals.some((iv) => iv.inProgress) ? "active" : "idle";
 }
 
 /**
@@ -315,7 +314,8 @@ export interface Kpis {
   /** Distinct elements worked on. */
   elements: number;
   orders: number;
-  ordersPacked: number;
+  /** Orders with a finished pass at a Packing station: a count of scans, not a claim they are packed. */
+  ordersAtPacking: number;
   /** Mean time of a finished pass at a station (time per element per station). */
   averagePassMs: number | null;
   /** All time worked, in progress included. */
@@ -329,7 +329,7 @@ export function computeKpis(intervals: WorkInterval[], orders: OrderSummary[]): 
   return {
     elements: new Set(intervals.map((iv) => iv.barcode)).size,
     orders: orders.length,
-    ordersPacked: orders.filter((o) => o.status === "packed").length,
+    ordersAtPacking: new Set(done.filter((iv) => isPacking(iv)).map((iv) => iv.orderNo)).size,
     averagePassMs: done.length > 0 ? sum(done.map((iv) => iv.durationMs)) / done.length : null,
     totalWorkedMs: sum(intervals.map((iv) => iv.durationMs)),
     inProgress: intervals.filter((iv) => iv.inProgress).length,
@@ -448,7 +448,7 @@ export const ORDER_SORT_KEYS: OrderSortKey[] = [
   "last",
 ];
 
-const STATUS_RANK: Record<OrderStatus, number> = { active: 0, waiting: 1, packed: 2 };
+const STATUS_RANK: Record<OrderStatus, number> = { active: 0, idle: 1 };
 
 function sortValue(o: OrderSummary, key: OrderSortKey): number {
   switch (key) {

@@ -79,7 +79,7 @@ export default async function OrderPage({
               hint={`${summary.days.length} ${summary.days.length === 1 ? "dag" : "dage"} i arbejde`}
             />
             <KpiTile
-              label={summary.status === "packed" ? "Pakket" : "Sidste scanning"}
+              label="Sidste scanning"
               value={summary.status === "active" ? "Nu" : formatDateTime(summary.lastScan)}
               hint={
                 summary.reworkPasses > 0

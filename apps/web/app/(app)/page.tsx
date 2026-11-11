@@ -44,10 +44,10 @@ export default async function OverviewPage({
             explain="Forskellige elementer (stregkoder) scannet ind på en station i dag"
           />
           <KpiTile
-            label="Ordrer pakket"
-            value={formatInt(kpis.ordersPacked)}
+            label="Ordrer ved pakning"
+            value={formatInt(kpis.ordersAtPacking)}
             hint={`af ${formatCount(kpis.orders, "ordre", "ordrer")}`}
-            explain="Ordrer hvis sidste scanning er en ud-scanning på pakning, og hvor intet er i gang"
+            explain="Ordrer med mindst én ud-scanning på en pakkestation. Siger ikke, at ordren er færdigpakket"
           />
           <KpiTile
             label="Gns. tid pr. element pr. station"

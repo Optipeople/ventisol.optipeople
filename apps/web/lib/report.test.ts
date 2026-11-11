@@ -153,42 +153,18 @@ describe("pairScans", () => {
 });
 
 describe("order status", () => {
-  it("is packed when it has an Out at packing and nothing is in progress", () => {
-    const scans = [...pass(at("07:00"), at("07:05")), ...pass(at("07:10"), at("07:12"), PACKING)];
-    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("packed");
-  });
-
-  it("is not packed while another element is still in progress", () => {
-    const scans = [
-      ...pass(at("07:10"), at("07:12"), PACKING),
-      scan("In", at("07:00"), { barcode: "058556050101" }),
-    ];
+  it("is active while something on the order is in progress", () => {
+    const scans = [...pass(at("07:10"), at("07:12"), PACKING), scan("In", at("07:00"), { barcode: "058556050101" })];
     expect(orderStatus(pairScans(scans, at("07:30")))).toBe("active");
   });
 
-  it("stays packed after a finished rework pass (the last scan need not be the packing Out)", () => {
-    const scans = [...pass(at("07:10"), at("07:12"), PACKING), ...pass(at("08:00"), at("08:05"))];
-    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("packed");
+  it("is only idle, never packed, when nothing is in progress, even after packing", () => {
+    const scans = [...pass(at("07:00"), at("07:05")), ...pass(at("07:10"), at("07:12"), PACKING)];
+    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("idle");
   });
 
-  it("is active, not packed, while a rework pass after packing is in progress", () => {
-    const scans = [...pass(at("07:10"), at("07:12"), PACKING), scan("In", at("08:00"))];
-    expect(orderStatus(pairScans(scans, at("08:30")))).toBe("active");
-  });
-
-  it("is not packed by an In at packing alone, nor by an untimed Out there", () => {
-    const scans = [
-      ...pass(at("07:00"), at("07:05")),
-      scan("In", at("07:10"), PACKING),
-      // An Out with neither an In nor DurationSec is no pass, so it packs nothing.
-      scan("Out", at("07:20"), { ...PACKING, barcode: "058556050101" }),
-    ];
-    expect(orderStatus(pairScans(scans, at("07:10") + STALE_OPEN_MS + 1))).toBe("waiting");
-  });
-
-  it("is waiting between stations", () => {
-    const scans = pass(at("07:00"), at("07:05"));
-    expect(orderStatus(pairScans(scans, at("12:00")))).toBe("waiting");
+  it("is idle between stations", () => {
+    expect(orderStatus(pairScans(pass(at("07:00"), at("07:05")), at("12:00")))).toBe("idle");
   });
 });
 
@@ -209,7 +185,7 @@ describe("summarizeOrders", () => {
     expect(o.elements).toBe(2);
     expect(o.totalMs).toBe((5 + 10 + 2 + 3) * MIN);
     expect(o.stations).toEqual(["Station 10", "Station 20", "Pakning"]);
-    expect(o.status).toBe("packed");
+    expect(o.status).toBe("idle");
     expect(o.firstScan).toBe(at("07:00"));
     expect(o.lastScan).toBe(at("07:22"));
   });
@@ -229,7 +205,7 @@ describe("summarizeOrders", () => {
     const k = computeKpis(ivs, orders);
     expect(k.elements).toBe(3);
     expect(k.orders).toBe(2);
-    expect(k.ordersPacked).toBe(1);
+    expect(k.ordersAtPacking).toBe(1);
     expect(k.inProgress).toBe(1);
     expect(k.totalWorkedMs).toBe((5 + 10 + 2 + 3 + 4 + 30) * MIN);
     // Finished passes only: 5, 10, 2, 3, 4 minutes.

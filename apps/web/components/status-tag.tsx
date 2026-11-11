@@ -2,21 +2,18 @@ import { Tag } from "@/components/ui/tag";
 import type { OrderStatus } from "@/lib/report";
 
 const LABEL: Record<OrderStatus, string> = {
-  packed: "Pakket",
   active: "I gang",
-  waiting: "Afventer",
+  idle: "Ikke i gang",
 };
 
 const VARIANT = {
-  packed: "positive",
   active: "warning",
-  waiting: "default",
+  idle: "default",
 } as const;
 
 const TITLE: Record<OrderStatus, string> = {
-  packed: "Sidste scanning er en ud-scanning på pakning, og intet er i gang",
   active: "Et element er scannet ind på en station og ikke ud endnu",
-  waiting: "Intet er i gang lige nu, men ordren er ikke pakket",
+  idle: "Intet på ordren er scannet ind på en station lige nu",
 };
 
 export function StatusTag({ status }: { status: OrderStatus }) {

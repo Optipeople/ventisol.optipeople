@@ -79,7 +79,7 @@ export default async function PeriodPage({ searchParams }: { searchParams: Promi
 
       <div className="mt-5">
         <KpiRow>
-          <KpiTile label="Ordrer" value={formatInt(report.kpis.orders)} hint={`${formatInt(report.kpis.ordersPacked)} pakket`} />
+          <KpiTile label="Ordrer" value={formatInt(report.kpis.orders)} hint={`${formatInt(report.kpis.ordersAtPacking)} ved pakning`} />
           <KpiTile label="Elementer" value={formatInt(report.kpis.elements)} />
           <KpiTile label="Arbejdstid i alt" value={formatDuration(report.kpis.totalWorkedMs)} />
           <KpiTile

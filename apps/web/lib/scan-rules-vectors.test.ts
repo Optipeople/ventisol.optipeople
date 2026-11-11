@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { orderStatus, pairScans, type WorkInterval } from "@/lib/report";
+import { pairScans } from "@/lib/report";
 import { parseBarcode, type Direction, type Scan } from "@/lib/scans";
 
 interface VectorEvent {
@@ -29,7 +29,6 @@ interface VectorCase {
   expected: {
     done: { barcode: string; stationNo: number; start: string; end: string }[];
     inProgress: { stationNo: number; barcode: string; since: string }[];
-    packed: number[];
   };
 }
 
@@ -56,12 +55,6 @@ function toScan(e: VectorEvent): Scan {
     durationSec: e.durationSec,
     device: null,
   };
-}
-
-function groupByOrder(intervals: WorkInterval[]): Map<number, WorkInterval[]> {
-  const map = new Map<number, WorkInterval[]>();
-  for (const iv of intervals) map.set(iv.orderNo, [...(map.get(iv.orderNo) ?? []), iv]);
-  return map;
 }
 
 describe("shared scan-rule vectors", () => {
@@ -95,11 +88,5 @@ describe("shared scan-rule vectors", () => {
       .map((p) => ({ stationNo: p.stationNo, barcode: p.barcode, since: ms(p.since) }))
       .sort((a, b) => a.stationNo - b.stationNo);
     expect(inProgress).toEqual(expectedInProgress);
-
-    const packed = [...groupByOrder(intervals)]
-      .filter(([, ivs]) => orderStatus(ivs) === "packed")
-      .map(([orderNo]) => orderNo)
-      .sort((a, b) => a - b);
-    expect(packed).toEqual([...c.expected.packed].sort((a, b) => a - b));
   });
 });
