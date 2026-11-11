@@ -236,6 +236,9 @@ public sealed class OrderDocumentsTests : IDisposable
         Assert.Equal([2], File.ReadAllBytes(cache.Find(58800, @"R:\b\58800_20261022.pdf")!));
         Assert.True(cache.IsCopyOf(a, @"R:\a\58800_20261022.pdf"));
         Assert.False(cache.IsCopyOf(a, @"R:\b\58800_20261022.pdf"));
+        // A copy from before the folder hash, by its plain name, is still a copy of that file (not "an older version").
+        Assert.True(cache.IsCopyOf(Path.Combine(_root, "cache", "58800_20261022.pdf"), @"R:\a\58800_20261022.pdf"));
+        Assert.False(cache.IsCopyOf(Path.Combine(_root, "cache", "58800_20261001.pdf"), @"R:\a\58800_20261022.pdf"));
     }
 
     sealed class ManualTime(DateTimeOffset now) : TimeProvider

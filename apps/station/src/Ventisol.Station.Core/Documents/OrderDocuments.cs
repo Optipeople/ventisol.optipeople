@@ -309,9 +309,11 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
         return $"c{Convert.ToHexStringLower(hash, 0, 4)}_{Path.GetFileName(sourcePath)}";
     }
 
-    // Whether the copy is of that file on the share.
+    // Whether the copy is of that file on the share. Copies saved before the folder hash was added carry the
+    // plain file name; those count too, so they aren't called an older version after the update.
     public bool IsCopyOf(string copyPath, string sourcePath) =>
-        string.Equals(Path.GetFileName(copyPath), NameFor(sourcePath), StringComparison.OrdinalIgnoreCase);
+        string.Equals(Path.GetFileName(copyPath), NameFor(sourcePath), StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Path.GetFileName(copyPath), Path.GetFileName(sourcePath), StringComparison.OrdinalIgnoreCase);
 
     public void Save(string sourcePath, byte[] bytes)
     {
