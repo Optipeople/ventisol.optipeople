@@ -48,6 +48,28 @@ public class BarcodeTests
     }
 
     [Theory]
+    [InlineData("03058830010105", "058830030101")] // the scan that showed as order 30588
+    [InlineData("3058830010105", "058830030101")]  // the same without its leading 0
+    [InlineData("01058842010112", "058842010101")]
+    [InlineData("02058817010109", "058817020101")]
+    [InlineData("12058861020116", "058861120201")]
+    public void Reads_a_14_digit_label_with_the_position_first(string text, string element)
+    {
+        Assert.True(Barcode.TryParse(text, out var b));
+        Assert.Equal(element, b.Raw);
+    }
+
+    [Fact]
+    public void Both_profile_layouts_of_one_element_read_the_same()
+    {
+        Assert.True(Barcode.TryParse("05883003010114", out var a));
+        Assert.True(Barcode.TryParse("03058830010105", out var b));
+        Assert.Equal(a.Raw, b.Raw);
+        Assert.Equal(58830, b.Order);
+        Assert.Equal(3, b.Position);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("0585560501")]

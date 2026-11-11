@@ -109,7 +109,10 @@ From the physical sample (`context/IMG_4723.jpg`, `context/IMG_4724.jpg`), a pal
 - 12 digits, numbers only. 1D barcode (Code 128 or Interleaved 2 of 5, to be confirmed with a scan). The LI3678-SR reads both.
 - The batch number (Serienr., e.g. 260708) is not in the barcode, only printed as text. **We don't need it.** The goal is order time, and the order number is in the barcode. Batch time can be added later by looking up order → batch (3E or the Schirmer files).
 - The label also shows the element size (e.g. 1183 × 1539) and the shipping week (Afsendelse 2026/43).
-- The Schirmer XML `Barcode` field is 14 digits (e.g. `05866002010301`), not 12. Same start, two more digits (a profile number). Confirmed on a real profile label (`05872102010104`, order 58721 pos 2): the station reads the first 12 digits.
+- The Schirmer XML `Barcode` field is 14 digits (e.g. `05866002010301`), not 12. Profile labels from the saw come in two 14-digit layouts, both seen in production scans on 2026-11-11:
+  - `0 58830 03 01 01 14`: 0, order, position, sub-position, piece, profile number.
+  - `03 0 58830 01 01 05`: position, 0, order, sub-position, piece, profile number.
+  The station reads both as the 12-digit element (`058830030101`), telling them apart by the third digit (0 only in the second layout; this fails for orders 50000-50999 and 60000-60999 in the first). A scanner can read one label twice within 0.3 s, so a repeat of the same element at the same station within 2 s is ignored.
 
 ## Advice: scanners on one PC
 

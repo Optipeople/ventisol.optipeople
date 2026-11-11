@@ -56,6 +56,8 @@ public sealed partial class MainViewModel : ObservableObject
     // Raised for every scan that reaches a station, read or not.
     public event EventHandler? Scanned;
 
+    readonly RepeatScans _repeats = new();
+
     // A scan from scanner n. The raw text is exactly what the scanner sent.
     public void Scan(int scannerNumber, string raw, DateTimeOffset now)
     {
@@ -65,6 +67,8 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (Barcode.TryParse(raw, out var barcode))
         {
+            // The scanner read the label twice: the second read would scan it straight out again.
+            if (_repeats.IsRepeat(station.Number, barcode, now)) return;
             var result = station.Scan(barcode, now);
             if (result is { Kind: ScanKind.Out, Duration: { } d })
                 History.Add(new WorkRecord(result.Station, barcode, now - d, now));
