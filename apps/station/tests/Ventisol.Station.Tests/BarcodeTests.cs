@@ -34,13 +34,28 @@ public class BarcodeTests
     }
 
     [Theory]
+    [InlineData("05872102010104")]
+    [InlineData("5872102010104")] // 14 digits without the leading 0
+    public void Reads_a_14_digit_profile_label_as_its_element(string text)
+    {
+        Assert.True(Barcode.TryParse(text, out var b));
+        Assert.Equal("058721020101", b.Raw);
+        Assert.Equal(58721, b.Order);
+        Assert.Equal(2, b.Position);
+        Assert.Equal(1, b.SubPosition);
+        Assert.Equal(1, b.Piece);
+        Assert.Equal("Pos. 2", b.PositionLabel);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("0585560501")]
     [InlineData("05855605010")] // 12 digits with the last one lost, not a missing leading 0
     [InlineData("05856050103")] // 12 digits with a middle one lost
     [InlineData("0585560501034")]
-    [InlineData("05866002010301")]
+    [InlineData("0587210201010")] // 14 digits with one lost
+    [InlineData("058721020101041")]
     [InlineData("05855605010A")]
     public void Rejects_invalid_barcodes(string? text)
     {
