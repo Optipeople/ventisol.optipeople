@@ -26,11 +26,13 @@ public sealed class StationLayout
 
     public TilePlace this[string id] => _tiles.Single(t => t.Id == id);
 
-    // Four blocks to a row, 3 x 3 cells each. The last one takes what is left of its row.
+    // Four blocks to a row, 3 x 3 cells each (smaller when there are more than 8). The last one takes what is left of its row.
     public static StationLayout Default(IEnumerable<string> ids)
     {
         var list = ids.ToList();
-        const int perRow = 4, width = Columns / perRow, height = Rows / 2;
+        // More stations get smaller blocks so all stay on the grid: 4 x 2 rows, then 4 x 3 rows, then 6 x 3 rows
+        // (the smallest blocks there are, so 18 at most).
+        int perRow = list.Count <= 12 ? 4 : 6, width = Columns / perRow, height = list.Count <= 8 ? Rows / 2 : Rows / 3;
         return new(list.Select((id, i) =>
         {
             var span = i == list.Count - 1 ? Columns - i % perRow * width : width;

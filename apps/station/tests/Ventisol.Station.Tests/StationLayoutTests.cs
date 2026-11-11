@@ -17,6 +17,14 @@ public class StationLayoutTests
         Assert.True(l.IsValidFor(Ids));
     }
 
+    [Theory]
+    [InlineData(8), InlineData(9), InlineData(12), InlineData(13), InlineData(18)]
+    public void Default_keeps_every_station_on_the_grid(int count)
+    {
+        string[] ids = [.. Enumerable.Range(1, count).Select(n => $"s{n}")];
+        Assert.True(StationLayout.Default(ids).IsValidFor(ids));
+    }
+
     [Fact]
     public void A_block_cannot_grow_into_another_but_can_after_the_other_shrinks()
     {
