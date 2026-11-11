@@ -6,11 +6,12 @@ public sealed record WorkRecord(StationConfig Station, Barcode Barcode, DateTime
     public TimeSpan Duration => End - Start;
 }
 
-// Packed: it has been through packing and nothing on it is in progress. The order closes
-// at the last packing scan; without the order's element count from 3E, this is the best guess.
-public sealed record OrderLine(int Order, int Elements, TimeSpan Total, IReadOnlyList<string> ActiveAt, DateTimeOffset LastSeen, bool Packed);
+// An order as the scans show it: where it is being worked on now, else the station it was last scanned out at.
+// No "packed" or "done" status: without the order's element count from 3E the scans can't tell that, and a guess
+// (e.g. "through packing and nothing in progress") shows an order as packed the moment it is closed at a station.
+public sealed record OrderLine(int Order, int Elements, TimeSpan Total, IReadOnlyList<string> ActiveAt, DateTimeOffset LastSeen, string? LastStation);
 
-public sealed record Kpis(int Elements, TimeSpan? AverageTime, int StationsBusy, int Stations, int OrdersPacked);
+public sealed record Kpis(int Elements, TimeSpan? AverageTime, int StationsBusy, int Stations, int OrdersAtPacking);
 
 public sealed record StationLine(StationConfig Station, int Done, TimeSpan? Average, double Utilization);
 
@@ -34,24 +35,28 @@ public static class DayReport
                 var total = mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration)
                           + here.Aggregate(TimeSpan.Zero, (t, s) => t + s.Elapsed(now));
                 var lastSeen = here.Count > 0 ? now : mine.Max(r => r.End);
-                var packed = here.Count == 0 && mine.Any(r => r.Station.Kind == StationKind.Packing);
+                var last = mine.MaxBy(r => r.End)?.Station.Name;
                 return new OrderLine(order, mine.Select(r => r.Barcode.Raw).Distinct().Count(), total,
-                    [.. here.Select(s => s.Station.Name)], lastSeen, packed);
+                    [.. here.Select(s => s.Station.Name)], lastSeen, last);
             })
             .OrderByDescending(o => o.LastSeen)
             .ToList();
     }
 
+    // Where an order is, as a short line: the stations working on it now, else the station it was last scanned out at.
+    public static string Where(OrderLine o) =>
+        o.ActiveAt.Count > 0 ? string.Join(", ", o.ActiveAt) : o.LastStation is { } s ? $"Sidst ved {s}" : "Venter";
+
     // The day in four numbers: elements worked on, average time per element at a station,
-    // stations working now, and orders packed.
+    // stations working now, and orders scanned out at a packing station (a count of scans, not a claim they're packed).
     public static Kpis Totals(IEnumerable<WorkRecord> done, IEnumerable<StationState> stations, DateTimeOffset now)
     {
         var finished = done.ToList();
         var all = stations.ToList();
         var elements = finished.Select(r => r.Barcode.Raw).Concat(all.Where(s => s.Current is not null).Select(s => s.Current!.Raw)).Distinct().Count();
         TimeSpan? average = finished.Count > 0 ? finished.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) / finished.Count : null;
-        var packed = Orders(finished, all, now).Count(o => o.Packed);
-        return new Kpis(elements, average, all.Count(s => s.IsBusy), all.Count, packed);
+        var atPacking = finished.Where(r => r.Station.Kind == StationKind.Packing).Select(r => r.Barcode.Order).Distinct().Count();
+        return new Kpis(elements, average, all.Count(s => s.IsBusy), all.Count, atPacking);
     }
 
     // Per station: elements done, average time per element, and how much of the day so far

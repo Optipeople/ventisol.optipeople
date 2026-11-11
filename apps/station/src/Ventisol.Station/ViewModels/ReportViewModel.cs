@@ -29,7 +29,7 @@ public sealed partial class ReportViewModel(MainViewModel main) : ObservableObje
             o.Order.ToString(),
             o.Elements.ToString(),
             Format.Long(o.Total),
-            o.Packed ? "Pakket" : o.ActiveAt.Count > 0 ? string.Join(", ", o.ActiveAt) : "Venter",
+            DayReport.Where(o),
             o.ActiveAt.Count > 0))];
         HasOrders = Orders.Count > 0;
 

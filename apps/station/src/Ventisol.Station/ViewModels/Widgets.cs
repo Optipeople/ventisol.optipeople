@@ -5,6 +5,7 @@ namespace Ventisol.Station.ViewModels;
 
 public enum WidgetKind { Clock, Kpi, RecentOrders }
 
+// OrdersPacked keeps its name so layouts saved with it still load; it counts orders scanned out at packing.
 public enum KpiMetric { Elements, AverageTime, StationsBusy, OrdersPacked }
 
 // What a widget is, as saved with the layout.
@@ -26,7 +27,7 @@ public abstract class WidgetViewModel(WidgetSpec spec) : ObservableObject
         ("Tal: elementer i dag", WidgetKind.Kpi, KpiMetric.Elements, 3, 2),
         ("Tal: gns. tid pr. station", WidgetKind.Kpi, KpiMetric.AverageTime, 3, 2),
         ("Tal: stationer i gang", WidgetKind.Kpi, KpiMetric.StationsBusy, 3, 2),
-        ("Tal: ordrer pakket i dag", WidgetKind.Kpi, KpiMetric.OrdersPacked, 3, 2),
+        ("Tal: ordrer ved pakning i dag", WidgetKind.Kpi, KpiMetric.OrdersPacked, 3, 2),
     ];
 
     public static WidgetViewModel Create(WidgetSpec spec) => spec.Kind switch
@@ -56,13 +57,13 @@ public sealed partial class KpiWidget(WidgetSpec spec) : WidgetViewModel(spec)
         {
             KpiMetric.AverageTime => ("Gns. tid pr. station", k.AverageTime is { } a ? Format.Duration(a) : "-", "Fra scan ind til scan ud"),
             KpiMetric.StationsBusy => ("Stationer i gang", $"{k.StationsBusy}/{k.Stations}", "Lige nu"),
-            KpiMetric.OrdersPacked => ("Ordrer pakket", k.OrdersPacked.ToString(), "I dag"),
+            KpiMetric.OrdersPacked => ("Ordrer ved pakning", k.OrdersAtPacking.ToString(), "Scannet ud i dag"),
             _ => ("Elementer", k.Elements.ToString(), "Scannet i dag"),
         };
     }
 }
 
-public sealed record RecentOrderRow(string Order, string Where, string Total, bool Active, bool Packed);
+public sealed record RecentOrderRow(string Order, string Where, string Total, bool Active);
 
 public sealed partial class RecentOrdersWidget(WidgetSpec spec) : WidgetViewModel(spec)
 {
@@ -74,10 +75,9 @@ public sealed partial class RecentOrdersWidget(WidgetSpec spec) : WidgetViewMode
     {
         var rows = orders.Take(Count).Select(o => new RecentOrderRow(
             o.Order.ToString(),
-            o.Packed ? "Pakket" : o.ActiveAt.Count > 0 ? string.Join(", ", o.ActiveAt) : "Venter",
+            DayReport.Where(o),
             Format.Long(o.Total),
-            o.ActiveAt.Count > 0,
-            o.Packed)).ToList();
+            o.ActiveAt.Count > 0)).ToList();
         // Only swap the list when something changed, so the rows don't rebuild every second for nothing.
         if (!rows.SequenceEqual(Rows)) Rows = rows;
     }

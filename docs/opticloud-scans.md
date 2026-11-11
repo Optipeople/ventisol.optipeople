@@ -136,7 +136,8 @@ its `_doc`). Change a rule there and here first.
 - Done today: the work records that end today (local midnight on). One that spans midnight counts
   for the day it ends.
 - Time per order = the sum over its elements and stations; time in progress counts up to now.
-- An order is packed when it has an `Out` at a `Packing` station and nothing on it is in progress.
+- No order is called packed or done: the scans can't tell that without the order's element count.
+  An order not in progress shows the station it was last scanned out at.
 
 ## Orders on machines
 

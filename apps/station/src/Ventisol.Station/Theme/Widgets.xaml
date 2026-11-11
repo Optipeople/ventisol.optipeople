@@ -67,9 +67,6 @@
                                         <Setter TargetName="Dot" Property="Visibility" Value="Visible" />
                                         <Setter TargetName="Where" Property="Foreground" Value="{StaticResource Ink}" />
                                     </DataTrigger>
-                                    <DataTrigger Binding="{Binding Packed}" Value="True">
-                                        <Setter TargetName="Where" Property="Foreground" Value="{StaticResource OkText}" />
-                                    </DataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

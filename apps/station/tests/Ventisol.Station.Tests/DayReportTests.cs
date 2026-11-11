@@ -35,16 +35,19 @@ public class DayReportTests
     }
 
     [Fact]
-    public void An_order_through_packing_with_nothing_in_progress_is_packed()
+    public void An_order_shows_where_it_is_worked_on_else_where_it_was_last_never_packed()
     {
         var pack = StationConfig.Defaults[6];
         var done = new[] { Done(S10, "058556050103", 0, 10), Done(pack, "058556050103", 12, 15) };
 
-        Assert.True(Assert.Single(DayReport.Orders(done, [], T0.AddMinutes(20))).Packed);
+        // Through packing and nothing in progress: still only where it was last, not "Pakket".
+        var line = Assert.Single(DayReport.Orders(done, [], T0.AddMinutes(20)));
+        Assert.Equal(pack.Name, line.LastStation);
+        Assert.Equal($"Sidst ved {pack.Name}", DayReport.Where(line));
 
         var s10 = new StationState(S10);
         s10.Scan(Code("058556050102"), T0.AddMinutes(16));
-        Assert.False(Assert.Single(DayReport.Orders(done, [s10], T0.AddMinutes(20))).Packed);
+        Assert.Equal("Station 10", DayReport.Where(Assert.Single(DayReport.Orders(done, [s10], T0.AddMinutes(20)))));
     }
 
     [Fact]
@@ -60,7 +63,7 @@ public class DayReportTests
         Assert.Equal(2, k.Elements);
         Assert.Equal(TimeSpan.FromMinutes(7), k.AverageTime);
         Assert.Equal((1, 2), (k.StationsBusy, k.Stations));
-        Assert.Equal(1, k.OrdersPacked);
+        Assert.Equal(1, k.OrdersAtPacking);
     }
 
     [Fact]
