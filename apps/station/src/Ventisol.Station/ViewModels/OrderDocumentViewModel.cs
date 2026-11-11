@@ -71,6 +71,11 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     [ObservableProperty] public partial bool HasSheetData { get; private set; }
 
     [ObservableProperty] public partial string MessageTitle { get; private set; } = "";
+    // The same in a few plain words, for the widget: what an operator needs to know, no paths or
+    // error texts (those are in MessageDetail, a tap away, and in the log).
+    [ObservableProperty] public partial string ShortMessage { get; private set; } = "";
+    // The short message is a problem (a warn mark), not just nothing to show yet.
+    [ObservableProperty] public partial bool IsProblem { get; private set; }
     [ObservableProperty] public partial string MessageDetail { get; private set; } = "";
     [ObservableProperty] public partial bool CanRetry { get; private set; }
     // A note above the content: the position wasn't in the PDF, or parts of it couldn't be read.
@@ -111,6 +116,8 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
             HasSheetData = false;
             State = DocumentState.Empty;
             MessageTitle = $"Intet element på {target.StationName} endnu";
+            ShortMessage = "Venter på scanning";
+            IsProblem = false;
             MessageDetail = "Scan et element ind, så vises dets produktionsliste her.";
             CanRetry = false;
             return;
@@ -120,12 +127,14 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         HasSheetData = false;
         if (!documents.IsOn)
         {
-            Message("Ordredokumenter er slået fra", "Vælg mappen med ordredokumenter under Opsætning for at se produktionslisten her.", retry: false);
+            Message("Ordredokumenter er slået fra", "Vælg mappen med ordredokumenter under Opsætning for at se produktionslisten her.", retry: false,
+                "Ordredokumenter er slået fra");
             return;
         }
         // Blank until the load has taken a moment, then "Henter".
         State = DocumentState.Loading;
-        MessageTitle = MessageDetail = "";
+        MessageTitle = MessageDetail = ShortMessage = "";
+        IsProblem = false;
         CanRetry = false;
         _ = LoadAsync(barcode, _cts.Token);
     }
@@ -187,7 +196,10 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         var loading = Task.Delay(LoadingDelay, ct).ContinueWith(_ => { }, TaskScheduler.Default);
         var task = documents.LoadAsync(barcode, ct);
         if (await Task.WhenAny(task, loading) != task && !ct.IsCancellationRequested)
+        {
             MessageTitle = $"Henter produktionsliste for ordre {barcode.Order}";
+            ShortMessage = "Henter produktionsliste";
+        }
 
         OrderDocumentLoad load;
         try { load = await task; }
@@ -196,7 +208,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         {
             if (ct.IsCancellationRequested) return;
             Log.Write($"Order document for {barcode.Raw} failed: {ex}");
-            Message("Produktionslisten kunne ikke hentes", ex.Message, retry: true);
+            Message("Produktionslisten kunne ikke hentes", ex.Message, retry: true, "Produktionslisten kunne ikke hentes");
             return;
         }
         if (ct.IsCancellationRequested) return;
@@ -205,16 +217,20 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         switch (load.Status)
         {
             case OrderDocumentLoadStatus.Off:
-                Message("Ordredokumenter er slået fra", "Vælg mappen med ordredokumenter under Opsætning for at se produktionslisten her.", retry: false);
+                Message("Ordredokumenter er slået fra", "Vælg mappen med ordredokumenter under Opsætning for at se produktionslisten her.", retry: false,
+                    "Ordredokumenter er slået fra");
                 return;
             case OrderDocumentLoadStatus.FolderUnavailable:
-                Message("Mappen med ordredokumenter kan ikke læses", $"{load.Error ?? "Mappen svarer ikke"}. {documents.Folder}", retry: true);
+                Message("Mappen med ordredokumenter kan ikke læses", $"{load.Error ?? "Mappen svarer ikke"}. {documents.Folder}", retry: true,
+                    "Dokumentmappen kan ikke nås");
                 return;
             case OrderDocumentLoadStatus.NotFound:
-                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf (eller fx BE_{barcode.Order}_*.pdf) i {documents.Folder}.", retry: true);
+                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf (eller fx BE_{barcode.Order}_*.pdf) i {documents.Folder}.", retry: true,
+                    "Ingen produktionsliste fundet");
                 return;
             case OrderDocumentLoadStatus.Unreadable:
-                Message($"Produktionslisten for ordre {barcode.Order} kan ikke åbnes", load.Error ?? "Filen kan ikke læses", retry: true);
+                Message($"Produktionslisten for ordre {barcode.Order} kan ikke åbnes", load.Error ?? "Filen kan ikke læses", retry: true,
+                    "Produktionslisten kan ikke åbnes");
                 return;
         }
 
@@ -311,8 +327,10 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         }
     }
 
-    void Message(string title, string detail, bool retry)
+    void Message(string title, string detail, bool retry, string shortMessage)
     {
+        ShortMessage = shortMessage;
+        IsProblem = true;
         State = DocumentState.Message;
         MessageTitle = title;
         MessageDetail = detail;

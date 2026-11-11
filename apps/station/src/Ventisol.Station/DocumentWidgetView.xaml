@@ -197,10 +197,29 @@
                         </Style.Triggers>
                     </Style>
                 </StackPanel.Style>
-                <TextBlock Style="{StaticResource TextBase}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap" TextAlignment="Center"
-                           Text="{Binding MessageTitle}" />
-                <TextBlock x:Name="MessageDetail" Style="{StaticResource TextBase}" FontSize="14" Foreground="{StaticResource Ink3}"
-                           TextWrapping="Wrap" TextAlignment="Center" MaxHeight="60" Margin="0,6,0,0" Text="{Binding MessageDetail}" />
+                <!-- A few plain words, as the station tiles say "Venter på scanning"; a problem gets a warn mark.
+                     What exactly went wrong is in the full document, a tap away. -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" Foreground="{StaticResource Warn}"
+                               VerticalAlignment="Center" Margin="0,0,10,0" Text="&#xE7BA;"
+                               Visibility="{Binding IsProblem, Converter={StaticResource Shown}}" />
+                    <TextBlock FontSize="18" VerticalAlignment="Center" Text="{Binding ShortMessage}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource TextBase}">
+                                <Setter Property="Foreground" Value="{StaticResource Quiet}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsProblem}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource Ink3}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+                <Border x:Name="MessageDetail">
+                    <TextBlock Style="{StaticResource TextBase}" FontSize="14" Foreground="{StaticResource Quiet}" Margin="0,6,0,0"
+                               Text="Tryk for detaljer" Visibility="{Binding IsProblem, Converter={StaticResource Shown}}" />
+                </Border>
             </StackPanel>
         </Grid>
     </Grid>
