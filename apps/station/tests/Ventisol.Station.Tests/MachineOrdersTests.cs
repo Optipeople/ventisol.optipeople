@@ -22,7 +22,15 @@ public sealed class MachineOrdersTests : IDisposable
 
     readonly string _folder = TempFolder();
     readonly List<string> _log = [];
-    DateTimeOffset _now = T0;
+    // The test moves the clock while the sync's loops read it on other threads: a DateTimeOffset is two words,
+    // so reads and writes go through a lock and a loop never sees half a time.
+    readonly Lock _clockGate = new();
+    DateTimeOffset _clock = T0;
+    DateTimeOffset _now
+    {
+        get { lock (_clockGate) return _clock; }
+        set { lock (_clockGate) _clock = value; }
+    }
 
     public void Dispose()
     {
