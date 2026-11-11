@@ -29,8 +29,20 @@ public sealed partial class PdfPageViewModel(int index, int count, bool isPositi
 
 // The element's production document on screen: header, drawing, key facts, cutting list and hardware,
 // or why it can't be shown. Show starts a load in the background; a newer Show drops the older one.
-public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : ObservableObject
+public sealed partial class OrderDocumentViewModel : ObservableObject
 {
+    // Shown after the status line when the document is a copy kept on this PC.
+    public const string CopyNote = "Gemt kopi · mappen kan ikke nås lige nu";
+
+    readonly OrderDocuments documents;
+
+    public OrderDocumentViewModel(OrderDocuments documents)
+    {
+        this.documents = documents;
+        // Every PDF read is kept on this PC too, so a short break in the internet doesn't take it away.
+        documents.Cache ??= new OrderDocumentCache(AppPaths.DocumentsCache);
+    }
+
     // Under this, a load shows nothing new, so a pre-fetched document doesn't flash "Henter".
     static readonly TimeSpan LoadingDelay = TimeSpan.FromMilliseconds(250);
 
@@ -38,6 +50,9 @@ public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : O
     OrderDocumentLoad? _load;
 
     public DocumentTarget? Target { get; private set; }
+
+    // The document on screen is a copy, because the folder can't be reached right now.
+    [ObservableProperty] public partial bool FromCopy { get; private set; }
 
     [ObservableProperty] public partial DocumentState State { get; private set; } = DocumentState.Empty;
     [ObservableProperty] public partial string StationName { get; private set; } = "";
@@ -70,6 +85,7 @@ public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : O
         _cts = new CancellationTokenSource();
         Target = target;
         _load = null;
+        FromCopy = false;
         StationName = target.StationName;
         InProgress = target.InProgress;
         HasElement = target.Barcode is not null;
@@ -131,7 +147,7 @@ public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : O
             { InProgress: true } => $"I gang på {t.StationName}",
             { At: { } done } => $"Sidst på {t.StationName} · scannet ud {done.ToLocalTime():HH:mm}",
             _ => $"Sidst på {t.StationName}",
-        };
+        } + (FromCopy ? " · " + CopyNote : "");
     }
 
     public void Close()
@@ -195,6 +211,12 @@ public sealed partial class OrderDocumentViewModel(OrderDocuments documents) : O
         }
 
         var doc = load.Document!;
+        if (load.FromCopy)
+        {
+            FromCopy = true;
+            UpdateStatus(DateTimeOffset.Now);
+            Log.Write($"Order document {load.Path}: shown from a copy, the folder can't be reached");
+        }
         Sheet = ElementSheet.For(barcode, doc, load.Position);
         HasPdf = load.Pdf is not null;
         HasSheetData = load.Position is not null;

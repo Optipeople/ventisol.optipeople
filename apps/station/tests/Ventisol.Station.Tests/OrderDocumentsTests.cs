@@ -1,5 +1,7 @@
 using Ventisol.Station.Core;
 using Ventisol.Station.Core.Documents;
+using UglyToad.PdfPig.Content;
+using UglyToad.PdfPig.Writer;
 
 namespace Ventisol.Station.Tests;
 
@@ -106,6 +108,116 @@ public sealed class OrderDocumentsTests : IDisposable
         Assert.False(sheet.Cutting.ShowWidth);
         Assert.Equal("Beslag", sheet.Parts.Rows[0].Description);
         Assert.True(sheet.Parts.Rows[0].IsHeading);
+    }
+
+    // A one-page PDF with nothing on it: readable, so it can be kept and shown.
+    static byte[] BlankPdf()
+    {
+        var builder = new PdfDocumentBuilder();
+        builder.AddPage(PageSize.A4);
+        return builder.Build();
+    }
+
+    string Share(string name)
+    {
+        var dir = Path.Combine(_root, "share");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name);
+        File.WriteAllBytes(path, BlankPdf());
+        return path;
+    }
+
+    [Fact]
+    public async Task A_document_read_before_answers_from_memory_as_a_copy_while_the_share_is_gone()
+    {
+        Share("BE_58721_20261022.pdf");
+        var docs = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")) { RefreshAfter = TimeSpan.Zero });
+        var first = await docs.LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, first.Status);
+        Assert.False(first.FromCopy);
+
+        Directory.Delete(Path.Combine(_root, "share"), recursive: true);
+        var copy = await docs.LoadAsync(Code("058721010102"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, copy.Status);
+        Assert.True(copy.FromCopy);
+        Assert.Same(first.Document, copy.Document);
+        Assert.True(docs.Has(58721));
+    }
+
+    [Fact]
+    public async Task A_copy_on_this_pc_answers_when_the_share_is_gone_even_after_a_restart()
+    {
+        Share("BE_58721_20261022.pdf");
+        var cache = new OrderDocumentCache(Path.Combine(_root, "cache"));
+        var before = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: cache);
+        Assert.Equal(OrderDocumentLoadStatus.Ready, (await before.LoadAsync(Code("058721010101"))).Status);
+        Assert.True(File.Exists(Path.Combine(_root, "cache", "BE_58721_20261022.pdf")));
+
+        Directory.Delete(Path.Combine(_root, "share"), recursive: true);
+        var after = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: cache);
+        var load = await after.LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, load.Status);
+        Assert.True(load.FromCopy);
+        Assert.Equal(1, load.Document!.PageCount);
+
+        // An order never read before has no copy: the folder is still unavailable.
+        Assert.Equal(OrderDocumentLoadStatus.FolderUnavailable, (await after.LoadAsync(Code("058800010101"))).Status);
+    }
+
+    [Fact]
+    public async Task When_the_share_answers_the_share_wins_over_an_older_copy()
+    {
+        var cacheDir = Path.Combine(_root, "cache");
+        Directory.CreateDirectory(cacheDir);
+        File.WriteAllBytes(Path.Combine(cacheDir, "58721_20261001.pdf"), BlankPdf());
+        var newest = Share("TE_58721_20261105.pdf");
+
+        var docs = new OrderDocuments(new OrderDocumentLocator(Path.Combine(_root, "share")), cache: new OrderDocumentCache(cacheDir));
+        var load = await docs.LoadAsync(Code("058721010101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, load.Status);
+        Assert.False(load.FromCopy);
+        Assert.Equal(newest, load.Path);
+        // And the copy on this PC is the newest one now.
+        Assert.Equal(Path.Combine(cacheDir, "TE_58721_20261105.pdf"), new OrderDocumentCache(cacheDir).Find(58721));
+    }
+
+    [Fact]
+    public void Copies_not_saved_for_a_week_go_and_only_the_newest_200_are_kept()
+    {
+        var dir = Path.Combine(_root, "cache");
+        Directory.CreateDirectory(dir);
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < 205; i++)
+        {
+            var path = Path.Combine(dir, $"{60000 + i}_20261022.pdf");
+            File.WriteAllBytes(path, [1]);
+            File.SetLastWriteTimeUtc(path, now.AddMinutes(-i));
+        }
+        var old = Path.Combine(dir, "50000_20261022.pdf");
+        File.WriteAllBytes(old, [1]);
+        File.SetLastWriteTimeUtc(old, now.AddDays(-8));
+
+        new OrderDocumentCache(dir).Prune();
+
+        Assert.Equal(OrderDocumentCache.MaxFiles, Directory.GetFiles(dir).Length);
+        Assert.False(File.Exists(old));
+        Assert.True(File.Exists(Path.Combine(dir, "60000_20261022.pdf")));
+        Assert.False(File.Exists(Path.Combine(dir, "60204_20261022.pdf")));
+    }
+
+    [Fact]
+    public void The_copy_for_an_order_is_the_named_file_else_the_newest_date()
+    {
+        var dir = Path.Combine(_root, "cache");
+        Directory.CreateDirectory(dir);
+        foreach (var name in new[] { "58721_20261001.pdf", "BE_58721_20261105.pdf", "58800_20261201.pdf" })
+            File.WriteAllBytes(Path.Combine(dir, name), [1]);
+        var cache = new OrderDocumentCache(dir);
+
+        Assert.Equal(Path.Combine(dir, "BE_58721_20261105.pdf"), cache.Find(58721));
+        Assert.Equal(Path.Combine(dir, "58721_20261001.pdf"), cache.Find(58721, @"R:\x\58721_20261001.pdf"));
+        Assert.Null(cache.Find(12345));
+        Assert.Null(new OrderDocumentCache(Path.Combine(_root, "nope")).Find(58721));
     }
 
     [Fact]

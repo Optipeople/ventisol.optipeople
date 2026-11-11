@@ -184,6 +184,45 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     }
 
     [Fact]
+    public async Task A_failed_listing_keeps_the_last_index_and_its_time()
+    {
+        var time = new ManualTime(new DateTimeOffset(2026, 11, 10, 8, 0, 0, TimeSpan.Zero));
+        var down = false;
+        var listings = 0;
+        var locator = new OrderDocumentLocator(@"R:\", time, (_, _) =>
+        {
+            listings++;
+            if (down) throw new IOException("The network path was not found");
+            return [new(@"R:\58721_20261022.pdf", 58721, new DateOnly(2026, 10, 22), default)];
+        });
+
+        Assert.Equal(OrderDocumentStatus.Found, (await locator.FindAsync(58721)).Status);
+        var listedAt = locator.IndexedAt;
+
+        // The internet goes: the listing fails, the last index answers and keeps its time.
+        down = true;
+        time.Now += TimeSpan.FromMinutes(2);
+        Assert.Equal(@"R:\58721_20261022.pdf", (await locator.FindAsync(58721)).Path);
+        Assert.True(locator.Has(58721));
+        Assert.Equal(listedAt, locator.IndexedAt);
+        Assert.Equal("Mappen kan ikke læses", locator.LastError);
+        Assert.Equal(2, listings);
+
+        // Right after a failed listing the share isn't asked again.
+        Assert.Equal(OrderDocumentStatus.Found, (await locator.FindAsync(58721)).Status);
+        Assert.Equal(OrderDocumentStatus.FolderUnavailable, (await locator.FindAsync(1)).Status);
+        Assert.Equal(2, listings);
+
+        // Back again: a new listing replaces the index.
+        down = false;
+        time.Now += TimeSpan.FromSeconds(5);
+        Assert.Equal(OrderDocumentStatus.Found, (await locator.FindAsync(58721)).Status);
+        Assert.Equal(3, listings);
+        Assert.Null(locator.LastError);
+        Assert.True(locator.IndexedAt > listedAt);
+    }
+
+    [Fact]
     public async Task The_folder_check_counts_orders()
     {
         Touch("58721_20261022.pdf");

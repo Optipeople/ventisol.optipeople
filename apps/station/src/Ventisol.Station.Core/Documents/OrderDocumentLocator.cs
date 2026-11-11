@@ -26,6 +26,9 @@ public sealed record OrderDocumentFolderStatus(bool Available, int Orders, int F
 // (30 s), and listed again when that is up or when an order isn't in the index (at most every
 // MissRefreshAfter, 3 s). A listing that takes longer than Timeout (10 s) answers FolderUnavailable,
 // or from the last index if there is one, and goes on in the background to fill the index.
+// A listing that fails (the share is gone for a while, say the internet is down) keeps the last good
+// index with its time, so lookups and Has go on answering from it; while a listing is still under way,
+// or one failed less than MissRefreshAfter ago, a lookup the last index knows answers from it at once.
 // One listing runs at a time; callers share it.
 public sealed partial class OrderDocumentLocator
 {
@@ -44,6 +47,7 @@ public sealed partial class OrderDocumentLocator
     Index? _index;
     Task<Index>? _listing;
     string? _lastError;
+    DateTimeOffset? _failedAt;
 
     public OrderDocumentLocator(string? folder, TimeProvider? time = null, Func<string, CancellationToken, IReadOnlyList<Entry>>? list = null)
     {
@@ -60,6 +64,9 @@ public sealed partial class OrderDocumentLocator
     // The orders in the last index, or null before the first listing has finished.
     public int? IndexedOrders { get { lock (_gate) return _index?.Best.Count; } }
 
+    // When the last good index was listed, or null before the first listing has finished.
+    public DateTimeOffset? IndexedAt { get { lock (_gate) return _index?.At; } }
+
     // Whether the last index has a PDF for the order, without listing the folder. False when unknown.
     public bool Has(int order)
     {
@@ -71,7 +78,10 @@ public sealed partial class OrderDocumentLocator
         if (Folder is null) return new(order, OrderDocumentStatus.Off);
 
         Index? index;
-        lock (_gate) index = _index;
+        bool listing;
+        DateTimeOffset? failedAt;
+        string? lastError;
+        lock (_gate) (index, listing, failedAt, lastError) = (_index, _listing is not null, _failedAt, _lastError);
         var now = _time.GetUtcNow();
 
         if (index is not null && now - index.At < RefreshAfter)
@@ -79,6 +89,12 @@ public sealed partial class OrderDocumentLocator
             if (index.Best.TryGetValue(order, out var hit)) return Found(order, hit);
             if (now - index.At < MissRefreshAfter) return new(order, OrderDocumentStatus.NotFound);
         }
+
+        // The share is slow or just failed: don't wait for it again, the last index still knows.
+        if (index is not null && index.Best.TryGetValue(order, out var known) && (listing || failedAt is { } f && now - f < MissRefreshAfter))
+            return Found(order, known);
+        if (failedAt is { } failed && now - failed < MissRefreshAfter)
+            return new(order, OrderDocumentStatus.FolderUnavailable, Error: lastError);
 
         var (fresh, error) = await ListAsync(ct).ConfigureAwait(false);
         if (fresh is not null)
@@ -152,12 +168,13 @@ public sealed partial class OrderDocumentLocator
     {
         lock (_gate)
         {
-            if (t.IsCompletedSuccessfully) { _index = t.Result; _lastError = null; }
+            if (t.IsCompletedSuccessfully) { _index = t.Result; _lastError = null; _failedAt = null; }
             else
             {
-                // An unreadable folder drops the index: its paths would only fail to open.
-                _index = null;
+                // An unreadable folder keeps the last good index (and its time): the share is often only
+                // gone for a few minutes, and the documents read from it are kept as copies.
                 _lastError = t.Exception is { } ex ? Describe(ex.GetBaseException()) : "Mappen kan ikke læses";
+                _failedAt = _time.GetUtcNow();
             }
             if (_listing == t) _listing = null;
         }
