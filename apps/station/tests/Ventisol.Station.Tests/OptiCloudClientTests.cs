@@ -49,8 +49,133 @@ public class OptiCloudClientTests
         var api = new FakeOptiCloud { Override = (_, path, _) => path.Contains("login") ? FakeOptiCloud.Json(new { user_name = "x" }) : null };
         using var client = api.Client();
 
-        await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+        var e = await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
         Assert.False(client.IsLoggedIn);
+        // Nothing said the password was wrong.
+        Assert.Equal(OptiCloudException.Unexpected, e.Message);
+        Assert.False(e.IsBadLogin);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_login_page_in_the_way_is_not_a_wrong_password()
+    {
+        // A guest network's login page: a 200 with HTML, whatever was asked for.
+        var api = new FakeOptiCloud
+        {
+            Override = (_, _, _) => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html><body>Log på netværket</body></html>", System.Text.Encoding.UTF8, "text/html") },
+        };
+        using var client = api.Client();
+
+        var e = await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+
+        Assert.Equal(OptiCloudException.Unexpected, e.Message);
+        Assert.False(e.IsBadLogin || e.IsAuth || e.IsRejected);
+        // The usual short wait, and the next try does ask again.
+        Assert.Equal(Outbox.Backoff[0], Outbox.Wait(e, 0));
+        await Assert.ThrowsAsync<OptiCloudException>(() => client.GetCurrentUserAsync());
+        Assert.Equal(2, api.Count("login"));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_wrong_password_is_sent_once_in_a_quarter_of_an_hour_however_many_ask()
+    {
+        var api = new FakeOptiCloud();
+        var now = new DateTimeOffset(2026, 11, 11, 8, 0, 0, TimeSpan.Zero);
+        using var client = new OptiCloudClient("https://fake.opticloud.test", FakeOptiCloud.User, "forkert", api) { Clock = () => now };
+
+        var first = await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+        Assert.Null(first.RetryAfter);
+        Assert.Equal(Outbox.LoginBackoff, Outbox.Wait(first, 0));
+
+        // The loops and the machines each come by on their own timer: none of them gets through.
+        now += TimeSpan.FromMinutes(5);
+        Task Ask(int i) => (i % 3) switch
+        {
+            0 => client.LoginAsync(),
+            1 => client.GetCurrentUserAsync(),
+            _ => client.GetCurrentOrderAsync(Guid.NewGuid()),
+        };
+        var all = await Task.WhenAll(Enumerable.Range(0, 9).Select(i => Assert.ThrowsAsync<OptiCloudException>(() => Ask(i))));
+        Assert.All(all, e => Assert.True(e.IsBadLogin));
+        Assert.Equal(1, api.LoginCount("\"password\""));
+        Assert.Single(api.Requests);
+        // Each is told what is left of the wait, so they all come back together.
+        Assert.All(all, e => Assert.Equal(TimeSpan.FromMinutes(10), Outbox.Wait(e, 3)));
+
+        now += TimeSpan.FromMinutes(10) - TimeSpan.FromSeconds(1);
+        await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+        Assert.Equal(1, api.LoginCount("\"password\""));
+
+        // The quarter of an hour is over: one more try, and again only one.
+        now += TimeSpan.FromSeconds(1);
+        await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+        await Assert.ThrowsAsync<OptiCloudException>(() => client.GetCurrentUserAsync());
+        Assert.Equal(2, api.LoginCount("\"password\""));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_new_client_with_the_right_password_does_not_wait()
+    {
+        var api = new FakeOptiCloud();
+        var now = new DateTimeOffset(2026, 11, 11, 8, 0, 0, TimeSpan.Zero);
+        using var wrong = new OptiCloudClient("https://fake.opticloud.test", FakeOptiCloud.User, "forkert", api) { Clock = () => now };
+        await Assert.ThrowsAsync<OptiCloudException>(() => wrong.LoginAsync());
+
+        // The setup was saved with the right password: CloudSync makes a new client.
+        using var right = new OptiCloudClient("https://fake.opticloud.test", FakeOptiCloud.User, FakeOptiCloud.Password, api) { Clock = () => now };
+        await right.LoginAsync();
+
+        Assert.True(right.IsLoggedIn);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_password_put_right_in_opticloud_works_once_the_wait_is_over()
+    {
+        var wrong = true;
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => wrong && path.Contains("login") ? FakeOptiCloud.Json(new { errors = new[] { new { title = "Login", message = "Invalid credentials" } } }) : null,
+        };
+        var now = new DateTimeOffset(2026, 11, 11, 8, 0, 0, TimeSpan.Zero);
+        using var client = new OptiCloudClient("https://fake.opticloud.test", FakeOptiCloud.User, FakeOptiCloud.Password, api) { Clock = () => now };
+        await Assert.ThrowsAsync<OptiCloudException>(() => client.LoginAsync());
+
+        wrong = false;
+        now += Outbox.LoginBackoff;
+        var user = await client.GetCurrentUserAsync();
+
+        Assert.Equal(FakeOptiCloud.Account, user.AccountId);
+    }
+
+    [Theory(Timeout = 10000)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_answer_with_no_data_about_a_machines_order_is_not_known_not_no_order(bool dataIsNull)
+    {
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => !path.Contains("GetCurrentOrderActiveByMachineId") ? null
+                : dataIsNull ? FakeOptiCloud.Json(new { data = (object?)null, errors = Array.Empty<object>() })
+                : FakeOptiCloud.Json(new { errors = Array.Empty<object>() }),
+        };
+        using var client = api.Client();
+
+        Assert.Null(await client.GetCurrentOrderAsync(Guid.NewGuid()));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Data_that_is_no_object_about_a_machines_order_is_an_error()
+    {
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => path.Contains("GetCurrentOrderActiveByMachineId") ? FakeOptiCloud.Json(new { data = "hm", errors = Array.Empty<object>() }) : null,
+        };
+        using var client = api.Client();
+
+        var e = await Assert.ThrowsAsync<OptiCloudException>(() => client.GetCurrentOrderAsync(Guid.NewGuid()));
+
+        Assert.Equal(OptiCloudException.Unexpected, e.Message);
+        Assert.False(e.IsRejected || e.IsAuth);
     }
 
     [Fact(Timeout = 10000)]

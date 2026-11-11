@@ -29,7 +29,8 @@ static class WindowPlacement
     {
         try
         {
-            if (JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(File)) is not { } p) return;
+            // Null on a first start: use the defaults.
+            if (AtomicFile.TryRead(File, Log.Write) is not { } text || JsonSerializer.Deserialize<Saved>(text) is not { } p) return;
 
             // Only if it still lands on a screen: monitors get unplugged.
             var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
@@ -40,7 +41,7 @@ static class WindowPlacement
             (w.Left, w.Top, w.Width, w.Height) = (p.Left, p.Top, p.Width, p.Height);
             if (p.Maximized) w.WindowState = WindowState.Maximized;
         }
-        catch { } // First start, or a file we can't read: use the defaults.
+        catch (Exception e) { Log.Write($"window.json could not be used, the window opens where Windows puts it: {e.Message}"); }
     }
 
     static void Save(Window w)
@@ -48,10 +49,9 @@ static class WindowPlacement
         try
         {
             var r = w.WindowState == WindowState.Normal ? new Rect(w.Left, w.Top, w.Width, w.Height) : w.RestoreBounds;
-            Directory.CreateDirectory(Path.GetDirectoryName(File)!);
-            System.IO.File.WriteAllText(File, JsonSerializer.Serialize(
-                new Saved(r.Left, r.Top, r.Width, r.Height, w.WindowState == WindowState.Maximized)));
+            AtomicFile.TryWrite(File, JsonSerializer.Serialize(
+                new Saved(r.Left, r.Top, r.Width, r.Height, w.WindowState == WindowState.Maximized)), Log.Write);
         }
-        catch { } // Not worth failing the screen over.
+        catch (Exception e) { Log.Write($"window.json not saved: {e.Message}"); } // Not worth failing the screen over.
     }
 }

@@ -7,6 +7,9 @@ namespace Ventisol.Station.Core.Cloud;
 // A file that still can't be read is rebuilt from the journal (Rebuild) or moved to failed\.
 // A scan the server refuses the same way RefusalsBeforeAside times in a row is moved to failed\
 // and logged, not retried forever; RetryFailed puts those back (after the setup is fixed).
+// A file that can't be opened right now (a virus scanner or a backup holding it) is not a broken
+// one: it stays in line and is tried again after a wait. After OpenTriesBeforeAside tries it is
+// handled as one that can't be read, so one stuck file never holds every later scan back for good.
 public sealed class Outbox
 {
     public static IReadOnlyList<TimeSpan> Backoff { get; } =
@@ -19,9 +22,14 @@ public sealed class Outbox
     // a scan is only given up when it is refused alike this many times, with waits between.
     public const int RefusalsBeforeAside = 3;
 
-    // How long to wait after the failures-th failure in a row (counting from 0).
+    // A virus scanner or a backup lets go of a file within seconds or minutes. With the waits of
+    // Backoff this many tries are about a quarter of an hour.
+    public const int OpenTriesBeforeAside = 20;
+
+    // How long to wait after the failures-th failure in a row (counting from 0). After a wrong
+    // password: what is left of LoginBackoff since the login that failed, when the failure says.
     public static TimeSpan Wait(Exception? x, int failures) =>
-        x is OptiCloudException { IsBadLogin: true } ? LoginBackoff : Backoff[Math.Min(failures, Backoff.Count - 1)];
+        x is OptiCloudException { IsBadLogin: true } o ? o.RetryAfter ?? LoginBackoff : Backoff[Math.Min(failures, Backoff.Count - 1)];
 
     readonly string _folder, _failed;
     readonly Action<string> _log;
@@ -123,10 +131,10 @@ public sealed class Outbox
     }
 
     // Waiting now, oldest first. A file that can't be read is left for RunAsync to move aside.
-    public IReadOnlyList<ScanEvent> Peek() => [.. Waiting().Select(Read).OfType<ScanEvent>()];
+    public IReadOnlyList<ScanEvent> Peek() => [.. Waiting().Select(TryRead).OfType<ScanEvent>()];
 
     // The oldest scan waiting, by the same rule as Peek; null when none.
-    public ScanEvent? Oldest() => Waiting().Select(Read).OfType<ScanEvent>().FirstOrDefault();
+    public ScanEvent? Oldest() => Waiting().Select(TryRead).OfType<ScanEvent>().FirstOrDefault();
 
     // The ScanIds of the files waiting, also those that can't be read (from the file names).
     public IReadOnlyList<Guid> WaitingIds() => [.. Waiting().Select(IdOf).OfType<Guid>()];
@@ -168,6 +176,7 @@ public sealed class Outbox
         var failures = 0;
         var stuck = 0;
         (Guid Id, string Why, int Times) refusal = default;
+        (string? File, int Tries) held = default;
         while (!ct.IsCancellationRequested)
         {
             var nudged = NudgeToken();
@@ -190,7 +199,31 @@ public sealed class Outbox
                     continue;
                 }
 
-                if (Read(next) is not { } e)
+                ScanEvent? read;
+                try
+                {
+                    read = Read(next);
+                    held = default;
+                }
+                catch (Exception x) when (x is IOException or UnauthorizedAccessException)
+                {
+                    // Held by someone else, or gone since it was listed: not a broken file. The
+                    // scan stays where it is and is tried again; logged once per file.
+                    held = held.File == next ? held with { Tries = held.Tries + 1 } : (next, 1);
+                    if (held.Tries == 1) _log($"Outbox: {Path.GetFileName(next)} kan ikke åbnes lige nu, prøves igen: {x.Message}");
+                    if (held.Tries < OpenTriesBeforeAside)
+                    {
+                        await Pause(delay, Backoff[Math.Min(failures++, Backoff.Count - 1)], nudged, ct);
+                        continue;
+                    }
+                    // Still not after all those tries: the scans behind it have waited long enough.
+                    // It goes the way of a file that can't be read, from the journal or to failed\.
+                    // (If that fails too, the catch below waits and this is tried again.)
+                    _log($"Outbox: {Path.GetFileName(next)} kunne ikke åbnes i {held.Tries} forsøg, behandles som ulæselig: {x.Message}");
+                    read = null;
+                }
+
+                if (read is not { } e)
                 {
                     if (IdOf(next) is { } id && Rebuild?.Invoke(id) is { } found && found.ScanId == id)
                     {
@@ -291,13 +324,19 @@ public sealed class Outbox
         return dash >= 0 && Guid.TryParseExact(name[(dash + 1)..], "N", out var id) ? id : null;
     }
 
-    static ScanEvent? Read(string path)
+    // The scan in the file; null when what is in it is no scan. Throws when the file can't be
+    // opened or read (IOException, UnauthorizedAccessException): that says nothing about what is in it.
+    static ScanEvent? Read(string path) => ScanJson.Read(File.ReadAllText(path));
+
+    // For looking only: a file that can't be read right now is left out.
+    static ScanEvent? TryRead(string path)
     {
-        try { return ScanJson.Read(File.ReadAllText(path)); }
+        try { return Read(path); }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    // A .tmp left by a crash between write and move is finished if it reads as a scan.
+    // A .tmp left by a crash between write and move is finished if it reads as a scan, else
+    // dropped. One that can't be opened is left as it is, for the next start.
     void Recover()
     {
         foreach (var tmp in Directory.EnumerateFiles(_folder, "*.json.tmp").ToList())
@@ -307,7 +346,7 @@ public sealed class Outbox
                 if (Read(tmp) is not null) File.Move(tmp, tmp[..^4], overwrite: true);
                 else File.Delete(tmp);
             }
-            catch (IOException x) { _log($"Outbox: {Path.GetFileName(tmp)}: {x.Message}"); }
+            catch (Exception x) when (x is IOException or UnauthorizedAccessException) { _log($"Outbox: {Path.GetFileName(tmp)}: {x.Message}"); }
         }
     }
 

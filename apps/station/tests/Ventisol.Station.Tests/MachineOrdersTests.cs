@@ -48,11 +48,14 @@ public sealed class MachineOrdersTests : IDisposable
         // The set gets in, but the answer is lost (a timeout after the request went out).
         public bool LoseAnswer;
 
-        public Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
+        // Machines the read answers with no data at all for.
+        public HashSet<Guid> NoData { get; } = [];
+
+        public Task<string?> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
         {
             Reads++;
             if (FailRead is { } x) throw x;
-            return Task.FromResult(Current.GetValueOrDefault(machineId, ""));
+            return Task.FromResult(NoData.Contains(machineId) ? null : Current.GetValueOrDefault(machineId, ""));
         }
 
         public Task SetOrderToMachineAsync(Guid machineId, MachineOrder order, CancellationToken ct = default)
@@ -707,6 +710,113 @@ public sealed class MachineOrdersTests : IDisposable
         Assert.Empty(changes);
     }
 
+    // Two verify reads, one verify apart: what it takes for a stop in OptiPeople to count.
+    async Task VerifyTwice(MachineOrderSync worker)
+    {
+        _now += Verify;
+        await Drain(worker);
+        _now += Verify;
+        await Drain(worker);
+    }
+
+    [Fact]
+    public async Task One_odd_verify_read_does_not_end_the_element()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+
+        // OptiPeople answers "no order" once, and then has the element again.
+        api.Current[M1] = "";
+        _now += Verify;
+        Assert.Equal(1, await Drain(worker));
+        Assert.Empty(changes);
+        Assert.Null(orders.StoppedOn(M1));
+        Assert.Equal(A, orders.Snapshot()[M1].Known);
+        api.Current[M1] = A;
+        _now += Verify;
+        await Drain(worker);
+
+        // Odd again later: that is one read once more, not the second in a row.
+        api.Current[M1] = "";
+        _now += Verify;
+        await Drain(worker);
+        Assert.Empty(changes);
+
+        // Two reads that differ from each other are not two that agree either.
+        api.Current[M1] = C;
+        _now += Verify;
+        await Drain(worker);
+        Assert.Empty(changes);
+        Assert.Equal([(M1, A)], api.Sets);
+
+        // The next read finds C too: now it is so.
+        _now += Verify;
+        await Drain(worker);
+        Assert.Equal([new MachineOrderChange(M1, A, C)], changes);
+        Assert.Equal([(M1, A)], api.Sets);
+    }
+
+    [Fact]
+    public async Task Verify_reads_with_no_data_never_end_the_element()
+    {
+        var changes = new List<MachineOrderChange>();
+        var (orders, api, worker) = await InStepOnA(changes);
+
+        // No data at all, read after read: nothing is decided and nothing is set.
+        api.NoData.Add(M1);
+        for (var i = 0; i < 5; i++)
+        {
+            _now += Verify;
+            Assert.Equal(1, await Drain(worker));
+        }
+        Assert.Empty(changes);
+        Assert.Null(orders.StoppedOn(M1));
+        Assert.Equal(A, orders.Snapshot()[M1].Known);
+        Assert.Equal([(M1, A)], api.Sets);
+        // Said once, not on every read.
+        Assert.Single(_log, l => l.Contains("svaret var tomt"));
+
+        // "No order", then no data, then "no order": the two that agree are not in a row.
+        api.NoData.Clear();
+        api.Current[M1] = "";
+        _now += Verify;
+        await Drain(worker);
+        api.NoData.Add(M1);
+        _now += Verify;
+        await Drain(worker);
+        api.NoData.Clear();
+        _now += Verify;
+        await Drain(worker);
+        Assert.Empty(changes);
+
+        // And the next one makes two in a row.
+        _now += Verify;
+        await Drain(worker);
+        Assert.Equal([new MachineOrderChange(M1, A, "")], changes);
+    }
+
+    [Fact]
+    public async Task A_read_with_no_data_does_not_keep_an_order_off_the_machine()
+    {
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        api.NoData.Add(M1);
+        var worker = Worker(orders, api);
+
+        orders.Want(M1, E(A), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        Assert.Equal([(M1, A)], api.Sets);
+        Assert.Equal(A, orders.Snapshot()[M1].Known);
+
+        // And the next element too.
+        orders.Want(M1, E(B), _now);
+        _now += Settle;
+        await Drain(worker);
+        Assert.Equal([(M1, A), (M1, B)], api.Sets);
+    }
+
     [Fact]
     public async Task An_order_stopped_in_OptiPeople_is_reported_and_never_set_back()
     {
@@ -715,8 +825,7 @@ public sealed class MachineOrdersTests : IDisposable
 
         // "Start New Order" on the dashboard: OptiPeople runs its hidden default order, read as "".
         api.Current[M1] = "";
-        _now += Verify;
-        await Drain(worker);
+        await VerifyTwice(worker);
 
         Assert.Equal([new MachineOrderChange(M1, A, "")], changes);
         Assert.Equal([(M1, A)], api.Sets);
@@ -739,8 +848,7 @@ public sealed class MachineOrdersTests : IDisposable
         var (orders, api, worker) = await InStepOnA(changes);
 
         api.Current[M1] = C;
-        _now += Verify;
-        await Drain(worker);
+        await VerifyTwice(worker);
         Assert.Equal([new MachineOrderChange(M1, A, C)], changes);
 
         // Ended at the station, and someone's order C runs on: the app does not touch it.
@@ -765,8 +873,7 @@ public sealed class MachineOrdersTests : IDisposable
         var changes = new List<MachineOrderChange>();
         var (orders, api, worker) = await InStepOnA(changes);
         api.Current[M1] = "";
-        _now += Verify;
-        await Drain(worker);
+        await VerifyTwice(worker);
         orders.Want(M1, MachineOrder.None, _now);
 
         orders.Want(M1, E(A), _now);
@@ -779,7 +886,7 @@ public sealed class MachineOrdersTests : IDisposable
     // The station scans in another element while the verify read is on its way.
     sealed class ScanDuringRead(FakeApi inner, Action during) : IMachineOrderApi
     {
-        public async Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
+        public async Task<string?> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
         {
             var current = await inner.GetCurrentOrderAsync(machineId, ct);
             during();
@@ -921,10 +1028,13 @@ public sealed class MachineOrdersTests : IDisposable
         await Drain(worker);
         Assert.Equal(A, orders.Snapshot()[M1].Known);
 
-        // Stopped in OptiPeople meanwhile: the next good read still counts as a stop.
+        // Stopped in OptiPeople meanwhile: the next good reads still count as a stop.
         api.FailRead = null;
         api.Current[M1] = "";
         _now += TimeSpan.FromMinutes(1);
+        await Drain(worker);
+        Assert.Empty(changes);
+        _now += Verify;
         await Drain(worker);
 
         Assert.Equal([(M1, A)], api.Sets);
@@ -1007,8 +1117,12 @@ public sealed class MachineOrdersTests : IDisposable
         // "Start New Order" on the dashboard.
         api.Override = (method, path, body) =>
             path.Contains("GetCurrentOrderActiveByMachineId") ? FakeOptiCloud.Json(new { data = new { partInformationId = Guid.NewGuid(), partOrderNumberId = Guid.NewGuid(), number = "", isDefaultPartInfo = true }, errors = Array.Empty<object>(), meta = new { } }) : null;
-        _now += MachineOrders.DefaultVerify;
-        await Until(() => { lock (changes) return changes.Count == 1; });
+        // Two verify reads in a row must say so: the clock moves on until they have.
+        await Until(() =>
+        {
+            _now += MachineOrders.DefaultVerify;
+            lock (changes) return changes.Count == 1;
+        });
 
         Assert.Equal(new MachineOrderChange(machine, A, ""), changes[0]);
         // The app ends the element; nothing is set on the machine.

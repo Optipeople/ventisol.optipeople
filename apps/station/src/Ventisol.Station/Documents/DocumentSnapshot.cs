@@ -44,7 +44,8 @@ static class DocumentSnapshot
 
             await Until(() => vm.State != DocumentState.Loading && (vm.Drawing is not null || vm.DrawingNote is "" or "Ingen tegning fundet" or "Tegningen kan ikke vises" || vm.ShowingPages));
             if (pages && !vm.ShowingPages) vm.ShowPdfCommand.Execute(null);
-            if (vm.ShowingPages) await Until(() => vm.Pages.Take(vm.StartPage + 2).All(p => p.Image is not null || p.Failed));
+            // Only the pages on screen and their neighbours are drawn; the start page is the one to wait for.
+            if (vm.ShowingPages) await Until(() => vm.Pages.Skip(vm.StartPage).Take(1).All(p => p.Image is not null || p.Failed));
             await Task.Delay(900); // the overlay's slide in, and a layout pass for the pages
 
             var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);

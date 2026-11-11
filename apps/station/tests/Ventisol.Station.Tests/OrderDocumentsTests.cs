@@ -347,4 +347,29 @@ public sealed class OrderDocumentsTests : IDisposable
         Assert.Empty(sheet.Facts);
         Assert.Empty(sheet.Cutting.Rows);
     }
+
+    [Fact]
+    public async Task A_file_over_the_size_limit_is_not_read()
+    {
+        // Its size is all there is to it: no bytes are written or read.
+        var path = Path.Combine(_root, "58721_20261022.pdf");
+        using (var f = new FileStream(path, FileMode.CreateNew)) f.SetLength(OrderDocuments.MaxPdfBytes + 1);
+        var log = new List<string>();
+        var reads = 0;
+        var docs = new OrderDocuments(new OrderDocumentLocator(_root), p => { reads++; return File.ReadAllBytes(p); }) { Log = m => { lock (log) log.Add(m); } };
+
+        var load = await docs.LoadAsync(Code("058721010101"));
+
+        Assert.Equal(OrderDocumentLoadStatus.Unreadable, load.Status);
+        Assert.Equal("Filen er for stor (over 50 MB)", load.Error);
+        Assert.Equal(0, reads);
+        lock (log) Assert.Single(log, l => l.Contains("for stor"));
+
+        // The reader the app and the upload use has the same limit, and reads a file under it whole.
+        var e = Assert.Throws<OrderDocumentTooLargeException>(() => OrderDocuments.ReadPdf(path));
+        Assert.Equal(OrderDocuments.MaxPdfBytes + 1, e.Size);
+        var small = Path.Combine(_root, "small.pdf");
+        File.WriteAllBytes(small, [1, 2, 3]);
+        Assert.Equal([1, 2, 3], OrderDocuments.ReadPdf(small));
+    }
 }

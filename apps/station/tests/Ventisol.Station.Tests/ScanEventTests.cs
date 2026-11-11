@@ -42,6 +42,19 @@ public class ScanEventTests
         Assert.Equal("", v["MachineId"]);
     }
 
+    // Rows already in OptiCloud are read as they always were, whatever rule new scans must pass.
+    [Theory]
+    [InlineData("057999050103", 57999)]
+    [InlineData("042117030201", 42117)]
+    public void A_stored_row_for_an_older_order_is_still_read(string barcode, int order)
+    {
+        var e = Out(barcode, 3, T0);
+
+        Assert.True(ScanEvent.TryFromValues(AsRead(e), out var back));
+        Assert.Equal(e, back);
+        Assert.Equal(order, back.Barcode.Order);
+    }
+
     [Fact]
     public void Survives_a_round_trip_through_the_table()
     {

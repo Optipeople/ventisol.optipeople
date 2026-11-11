@@ -14,6 +14,9 @@ public partial class OrderDocumentView : UserControl
         DependencyProperty.Register(nameof(Actions), typeof(object), typeof(OrderDocumentView));
 
     OrderDocumentViewModel? _vm;
+    // False from the pages opening until they are scrolled to the start page, so the top pages,
+    // which are on screen for a moment before that, are not drawn for nothing.
+    bool _pagesPlaced;
 
     public OrderDocumentView()
     {
@@ -42,6 +45,7 @@ public partial class OrderDocumentView : UserControl
                 break;
             // The pages open at the position's page, once they are laid out.
             case nameof(OrderDocumentViewModel.ShowingPages) when _vm!.ShowingPages:
+                _pagesPlaced = false;
                 Dispatcher.BeginInvoke(DispatcherPriority.Loaded, ScrollToStartPage);
                 break;
         }
@@ -51,9 +55,34 @@ public partial class OrderDocumentView : UserControl
     {
         if (_vm is null) return;
         PagesScroller.UpdateLayout();
-        if (PagesList.ItemContainerGenerator.ContainerFromIndex(_vm.StartPage) is FrameworkElement page)
-            PagesScroller.ScrollToVerticalOffset(page.TranslatePoint(new Point(), PagesList).Y);
-        else
-            PagesScroller.ScrollToTop();
+        var target = PagesList.ItemContainerGenerator.ContainerFromIndex(_vm.StartPage) is FrameworkElement page
+            ? page.TranslatePoint(new Point(), PagesList).Y
+            : 0;
+        PagesScroller.ScrollToVerticalOffset(target);
+        PagesScroller.UpdateLayout();
+        _pagesPlaced = true;
+        // A scroll that moves nothing raises no ScrollChanged, so say what is on screen here.
+        // One that is still on its way reports when it lands.
+        if (Math.Abs(PagesScroller.VerticalOffset - target) < 1) ReportPagesInView();
+    }
+
+    void OnPagesScrolled(object sender, ScrollChangedEventArgs e) => ReportPagesInView();
+
+    // Tells the view model which pages are on screen, so it draws those and lets the others go.
+    void ReportPagesInView()
+    {
+        if (!_pagesPlaced || _vm is not { ShowingPages: true } vm || PagesScroller.ViewportHeight <= 0) return;
+        double top = PagesScroller.VerticalOffset, bottom = top + PagesScroller.ViewportHeight;
+        int first = -1, last = -1;
+        for (var i = 0; i < PagesList.Items.Count; i++)
+        {
+            if (PagesList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement page) continue;
+            var y = page.TranslatePoint(new Point(), PagesList).Y;
+            if (y + page.ActualHeight <= top) continue;
+            if (y >= bottom) break;
+            if (first < 0) first = i;
+            last = i;
+        }
+        if (first >= 0) vm.PagesInView(first, last);
     }
 }

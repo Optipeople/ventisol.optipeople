@@ -29,13 +29,14 @@ public static class ReleaseFeed
             foreach (var a in assets.EnumerateArray())
             {
                 if (a.ValueKind != JsonValueKind.Object) continue;
-                if (!a.TryGetProperty("Type", out var type) || type.GetString() != "Full") continue;
-                if (!a.TryGetProperty("Version", out var v) || ParseVersion(v.GetString()) is not { } version) continue;
+                // GetString throws on anything but a string or null: a feed with a number there is just not read.
+                if (!a.TryGetProperty("Type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "Full") continue;
+                if (!a.TryGetProperty("Version", out var v) || v.ValueKind != JsonValueKind.String || ParseVersion(v.GetString()) is not { } version) continue;
                 if (best is null || version > best) best = version;
             }
             return best;
         }
-        catch (JsonException) { return null; }
+        catch (Exception x) when (x is JsonException or InvalidOperationException) { return null; }
     }
 
     // "1.0.6" -> 1.0.6. A pre-release ("1.3.0-beta1") is never one the stations take, so it is null.

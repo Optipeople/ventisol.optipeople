@@ -82,6 +82,8 @@ public sealed class CloudSync : IDisposable
     CancellationTokenSource _wake = new();
     // Judges again now and then: an age passing a limit is no event.
     Timer? _tick;
+    // The local day the journal was last pruned on. Under _gate.
+    DateTimeOffset? _pruned;
     CloudStatus _status;
 
     // monotonic: a test's, else clock (also a test's), else the Stopwatch.
@@ -150,7 +152,7 @@ public sealed class CloudSync : IDisposable
             // Scans waiting from before count from now: the first tries get their chance first.
             _startedMono = _mono();
             // Under the lock with _disposed, so a Dispose meanwhile can't miss it.
-            if (!_disposed) _tick = new Timer(_ => Publish(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+            if (!_disposed) _tick = new Timer(_ => Tick(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         }
         Publish();
 
@@ -159,8 +161,7 @@ public sealed class CloudSync : IDisposable
             // Before any network: the screen is back at once, also when OptiCloud can't be reached.
             var now = _clock();
             var since = WindowStart(now);
-            // A scan still waiting keeps its day, so an outbox file a power cut emptied can be rebuilt.
-            _journal.Prune(now, _outbox.WaitingIds());
+            PruneJournal(now);
             Raise(Local(since), since);
         }
 
@@ -172,11 +173,36 @@ public sealed class CloudSync : IDisposable
                 _log($"OptiCloud: ikke sat op, scanninger gemmes på PC'en ({_outbox.Pending} venter)");
                 return;
             }
+            // The network back (a cable, the Wi-Fi, the VPN): try at once, not after the backoff.
+            // Under the lock with _disposed: the events are static, so a Dispose that came between
+            // would have taken off handlers not on yet, and they would hold this object for good.
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailability;
+            NetworkChange.NetworkAddressChanged += OnNetworkAddress;
             _run = Task.Run(() => RunAsync(_stop.Token));
         }
-        // The network back (a cable, the Wi-Fi, the VPN): try at once, not after the backoff.
-        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailability;
-        NetworkChange.NetworkAddressChanged += OnNetworkAddress;
+    }
+
+    void Tick()
+    {
+        Publish();
+        if (_disposed) return;
+        // The app runs for weeks: the journal's old days go at each new day, not only at a start.
+        try { PruneJournal(_clock()); }
+        catch (Exception x) { _log($"OptiCloud: journalen kunne ikke ryddes op: {x.Message}"); }
+    }
+
+    // Once per local day (and at the start): days older than the journal keeps go.
+    void PruneJournal(DateTimeOffset now)
+    {
+        if (_journal is null) return;
+        var today = Midnight(now);
+        lock (_gate)
+        {
+            if (_pruned == today) return;
+            _pruned = today;
+        }
+        // A scan still waiting keeps its day, so an outbox file a power cut emptied can be rebuilt.
+        _journal.Prune(now, _outbox.WaitingIds());
     }
 
     void OnNetworkAvailability(object? sender, NetworkAvailabilityEventArgs e)
@@ -262,9 +288,21 @@ public sealed class CloudSync : IDisposable
 
     async Task RunAsync(CancellationToken ct)
     {
+        // Settings saved before the rule: the password is not sent over plain http. Nothing is
+        // tried again, so this is said once, in the log and as the status on the screen
+        // ("Fejl: API-adressen skal begynde med https://"). Scans stay in the outbox until the
+        // address is put right in the setup.
+        if (SetupRules.ApiUrlProblem(_settings.ApiBaseUrl) is { } url)
+        {
+            _log($"OptiCloud: {url}. Der forbindes ikke, scanninger gemmes på PC'en til adressen er rettet i opsætningen");
+            lock (_gate) _fatal = url;
+            Publish();
+            return;
+        }
         try
         {
-            using var client = new OptiCloudClient(_settings.ApiBaseUrl, _settings.Username!, _password!, _handler);
+            // On _mono: the wait after a wrong password is the client's, and tests move that clock.
+            using var client = new OptiCloudClient(_settings.ApiBaseUrl, _settings.Username!, _password!, _handler) { Clock = _mono };
             lock (_gate) _client = client;
             var table = new ScanTable(client, _log);
             // The sender and the machine orders use the client too: whatever ends this, they are
@@ -385,7 +423,10 @@ public sealed class CloudSync : IDisposable
                 var now = _clock();
                 var start = WindowStart(now);
                 var full = polls % FullReadEvery == 0 || cache.Count == 0;
-                var since = full ? start : Max(start, cache.Values.Max(e => e.At) - RecentWindow);
+                // The newest scan read, but never after now: one stamped in the future (a PC with
+                // a wrong clock) would push the short reads past the scans made since.
+                var newest = full ? now : cache.Values.Max(e => e.At);
+                var since = full ? start : Max(start, (newest < now ? newest : now) - RecentWindow);
                 var events = await table.ReadSinceAsync(since, ct);
 
                 // What was read is the whole truth from since on.
@@ -394,6 +435,7 @@ public sealed class CloudSync : IDisposable
                 polls++;
                 failures = 0;
                 ReadOk();
+                PruneJournal(now);
 
                 // A new day changes what is done today even when no scan changed.
                 var today = Midnight(now);
@@ -609,7 +651,7 @@ public sealed class CloudSync : IDisposable
     // Otherwise the Danish reason.
     public static async Task<string?> TestConnectionAsync(StationSettings settings, string password, CancellationToken ct = default, HttpMessageHandler? handler = null)
     {
-        if (!SetupRules.IsValidApiUrl(settings.ApiBaseUrl)) return "API-adressen er ikke en webadresse";
+        if (SetupRules.ApiUrlProblem(settings.ApiBaseUrl) is { } url) return url;
         if (string.IsNullOrWhiteSpace(settings.Username) || string.IsNullOrEmpty(password)) return "Skriv brugernavn og adgangskode";
         try
         {
@@ -626,7 +668,7 @@ public sealed class CloudSync : IDisposable
     // The account's machines, by name. Throws OptiCloudException with the Danish reason.
     public static async Task<IReadOnlyList<(Guid Id, string Name)>> LoadMachinesAsync(StationSettings settings, string password, CancellationToken ct = default, HttpMessageHandler? handler = null)
     {
-        if (!SetupRules.IsValidApiUrl(settings.ApiBaseUrl)) throw new OptiCloudException("API-adressen er ikke en webadresse");
+        if (SetupRules.ApiUrlProblem(settings.ApiBaseUrl) is { } url) throw new OptiCloudException(url);
         if (string.IsNullOrWhiteSpace(settings.Username) || string.IsNullOrEmpty(password)) throw new OptiCloudException("Skriv brugernavn og adgangskode");
         using var client = new OptiCloudClient(settings.ApiBaseUrl, settings.Username.Trim(), password, handler);
         var (account, _) = await AccountAsync(client, settings, ct);

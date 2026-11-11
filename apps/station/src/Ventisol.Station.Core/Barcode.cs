@@ -16,10 +16,24 @@ public sealed record OrderHints(Func<int, bool>? Exists = null, int? Recent = nu
 public sealed record Barcode(string Raw, int Order, int Position, int SubPosition, int Piece)
 {
     // Orders in production in November 2026 were 587xx-588xx, and order numbers only grow. When a label
-    // could be read both ways, a reading with an order below this was never the right one.
+    // could be read both ways, a reading with an order below this was never the right one. A new scan
+    // (TryParseScan) with an order below it is not an element at all, unless the order is known.
     public const int OldestOrder = 58000;
 
-    public static bool TryParse(string? text, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null)
+    // A barcode that is already stored: an outbox file, a journal line, a row in OptiCloud. Anything
+    // with the digits of an element is read, whatever its order: it was a scan once, and a rule made
+    // later must not drop it.
+    public static bool TryParse(string? text, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null) =>
+        TryParse(text, out barcode, hints, incoming: false);
+
+    // A scan coming in from a scanner. What else gets scanned on a factory floor is the retail code
+    // on a box (EAN-13 and UPC-A are 13 and 12 digits too), so here 12 digits must begin with the 0,
+    // and the order must be OldestOrder or later, or one the documents folder knows (hints.Exists):
+    // a remake of an older order is still an element.
+    public static bool TryParseScan(string? text, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null) =>
+        TryParse(text, out barcode, hints, incoming: true);
+
+    static bool TryParse(string? text, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints, bool incoming)
     {
         barcode = null;
         var raw = text?.Trim();
@@ -35,10 +49,17 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
             raw = element;
         }
         if (raw.Length != 12) return false;
+        var order = int.Parse(raw.AsSpan(1, 5));
+        if (incoming)
+        {
+            // The order has five digits, not six.
+            if (raw[0] != '0') return false;
+            if (order < OldestOrder && hints?.Exists?.Invoke(order) != true) return false;
+        }
 
         barcode = new Barcode(
             raw,
-            Order: int.Parse(raw.AsSpan(1, 5)),
+            Order: order,
             Position: int.Parse(raw.AsSpan(6, 2)),
             SubPosition: int.Parse(raw.AsSpan(8, 2)),
             Piece: int.Parse(raw.AsSpan(10, 2)));

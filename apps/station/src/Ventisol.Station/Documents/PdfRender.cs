@@ -8,10 +8,11 @@ using WinRect = Windows.Foundation.Rect;
 
 namespace Ventisol.Station.Documents;
 
-// Renders order PDF pages to bitmaps with Windows' own PDF engine (Windows.Data.Pdf), so the vector
+// Renders order PDFs to bitmaps with Windows' own PDF engine (Windows.Data.Pdf), so the vector
 // drawing comes out sharp at the size it is shown, with no PDF viewer on the kiosk PC. Rendering runs
-// in the background, one page at a time, and the last results are kept by file version, page, crop and
-// size, so a drawing pre-rendered at scan-in shows at once when the station is tapped.
+// in the background, one page at a time. The last drawings are kept by file version, page, crop and
+// colours, so a drawing pre-rendered at scan-in shows at once when the station is tapped. Whole pages
+// ("Vis hele PDF") are not kept here: they go through PdfPages, which holds its own few.
 static class PdfRender
 {
     // The drawing's longer side in pixels: sharp on a full-height panel of a 1080p or 1440p screen.
@@ -19,9 +20,10 @@ static class PdfRender
     // A whole page's width in pixels, for "Vis hele PDF".
     public const int PagePixels = 1600;
     const int MaxCached = 32;
-    static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
+    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
 
-    static readonly SemaphoreSlim OneAtATime = new(1, 1);
+    // One render at a time in the whole app, drawings and pages alike.
+    public static readonly SemaphoreSlim OneAtATime = new(1, 1);
     static readonly object Gate = new();
     // Newest last.
     static readonly List<(string Key, Task<BitmapSource> Task)> Cache = [];
@@ -31,10 +33,6 @@ static class PdfRender
     public static Task<BitmapSource> DrawingAsync(OrderDocumentLoad load, OrderPosition position, Color ground, Color ink) =>
         Cached($"{load.FileKey}|d{position.PageIndex}|{position.Drawing}|{ground}|{ink}", load.Pdf!,
             pdf => Render(pdf, position.PageIndex, position.Drawing, DrawingPixels, (ground, ink)));
-
-    // A whole page as printed, black on white.
-    public static Task<BitmapSource> PageAsync(OrderDocumentLoad load, int pageIndex) =>
-        Cached($"{load.FileKey}|p{pageIndex}", load.Pdf!, pdf => Render(pdf, pageIndex, null, PagePixels, null));
 
     static Task<BitmapSource> Cached(string key, byte[] pdf, Func<byte[], Task<BitmapSource>> render)
     {
@@ -63,19 +61,38 @@ static class PdfRender
         }
     }
 
-    // Renders page pageIndex (0-based), or the part of it in crop, so its longer side (a whole page:
-    // its width) is about pixels wide. With colours, white becomes ground and black becomes ink.
+    // The PDF opened for rendering. The stream must live as long as the document is used.
+    public static async Task<(PdfDocument Document, InMemoryRandomAccessStream Stream)> OpenAsync(byte[] pdf)
+    {
+        var input = new InMemoryRandomAccessStream();
+        try
+        {
+            using (var writer = new DataWriter(input.GetOutputStreamAt(0)))
+            {
+                writer.WriteBytes(pdf);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+                writer.DetachStream();
+            }
+            return (await PdfDocument.LoadFromStreamAsync(input), input);
+        }
+        catch
+        {
+            input.Dispose();
+            throw;
+        }
+    }
+
     static async Task<BitmapSource> Render(byte[] pdf, int pageIndex, PdfBox? crop, int pixels, (Color Ground, Color Ink)? colours)
     {
-        using var input = new InMemoryRandomAccessStream();
-        using (var writer = new DataWriter(input.GetOutputStreamAt(0)))
-        {
-            writer.WriteBytes(pdf);
-            await writer.StoreAsync();
-            await writer.FlushAsync();
-            writer.DetachStream();
-        }
-        var doc = await PdfDocument.LoadFromStreamAsync(input);
+        var (doc, input) = await OpenAsync(pdf);
+        using (input) return await Render(doc, pageIndex, crop, pixels, colours);
+    }
+
+    // Renders page pageIndex (0-based), or the part of it in crop, so its longer side (a whole page:
+    // its width) is about pixels wide. With colours, white becomes ground and black becomes ink.
+    public static async Task<BitmapSource> Render(PdfDocument doc, int pageIndex, PdfBox? crop, int pixels, (Color Ground, Color Ink)? colours)
+    {
         if (pageIndex < 0 || pageIndex >= doc.PageCount) throw new ArgumentOutOfRangeException(nameof(pageIndex));
 
         using var page = doc.GetPage((uint)pageIndex);

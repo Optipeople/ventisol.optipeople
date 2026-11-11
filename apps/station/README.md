@@ -15,7 +15,9 @@ Develop: `./dev.ps1` (or `./dev.ps1 -Empty`). It rebuilds and restarts the app o
 `.cs`, `.xaml` or `.csproj`, about 2 seconds. A failed build keeps the old window and prints the errors.
 
 Run once: `dotnet run --project src/Ventisol.Station`. Options after `--`: `--kiosk` for full screen,
-`--showcase` to start with sample scans on the screen.
+`--showcase` to start with sample scans on the screen. The installed app is a kiosk on every start
+while its Run key says `--kiosk` (see Release and updates); `--window` opens it as a window anyway.
+A dev build is always a window unless given `--kiosk`.
 
 Scans come from the cradles (and, for a demo, from `DemoScanner`: tap a tile, or press 1 to 7;
 Shift+number scans a different element, Ctrl+number unplugs that scanner). With OptiCloud set up,
@@ -29,11 +31,37 @@ saved in %LOCALAPPDATA%\Ventisol\Station\layout.json.
 
 Next, working down: COM port scanner reader (`IScanSource`), setup screen, then the OptiPeople API.
 
+## Setup (Opsætning)
+
+- PIN: optional, 4 to 8 digits, set under "PIN-KODE" in Opsætning. With one, it must be typed to
+  open Opsætning (and, in a kiosk, "Åbn log" and "Luk" in the tray). Only a hash is kept, in
+  `setup-pin.json` in the data folder (`%LOCALAPPDATA%\Ventisol\Station`). Forgotten: delete that
+  file and there is no PIN. Wrong tries make the next one wait, longer each time.
+- The saved password only goes to the address and user it was saved for. Change the API address
+  or the username and it must be typed again ("Skriv adgangskoden igen").
+- The API address must begin with `https://`. Plain `http://` is taken only for this PC itself
+  (`localhost`, `127.0.0.1`), for FakeOptiCloud. A PC with an older `http://` address saved does
+  not connect: the menu says `Fejl: API-adressen skal begynde med https://`, and its scans wait
+  on the PC until the address is put right.
+
+## Which barcodes count as an element
+
+A new scan is an element when it has the 12 digits of a label (or 11 with the leading 0 lost, or
+the 14 of a profile label), begins with 0, and its order is 58000 or later (`Barcode.OldestOrder`).
+That keeps the retail codes on boxes out (EAN-13 and UPC-A are 13 and 12 digits too). An older
+order is still read when its PDF is in the documents folder, so a remake can be scanned.
+The rule is only for new scans (`Barcode.TryParseScan`). Scans already stored (the outbox, the
+journal, rows in OptiCloud) are read whatever their order (`Barcode.TryParse`).
+
 ## Scanner at your desk
 
 A Zebra cradle ships in USB keyboard mode, and that works out of the box: plug it in and scan.
 The app tells a scanner from a person by speed (a fast burst ended by Enter). It is one scanner,
 known as `keyboard`, so it scans for whichever station is set to scanner `keyboard`.
+
+In COM port mode the app only opens Zebra cradles (USB vendor id 05E0): other USB serial devices
+on a station PC are machines. To try another USB serial scanner on a dev PC, set
+`VENTISOL_STATION_ANY_SERIAL=1` before starting the app. Never on a station PC.
 
 Adding a scanner on site is meant to be plug and play, with no other scanner settings:
 1. Plug the cradle into a free port on the USB hub.
@@ -56,12 +84,18 @@ before this hold a serial number and show as "ikke tilsluttet" until the station
 
 ## Release and updates
 
-Every push to main that touches `apps/station` makes `station-release.yml` build, test and publish
-version `1.0.<run number>` (it can also be started by hand from the Actions tab):
+Every push to main that touches what goes into the app (`apps/station/src`, `Directory.Build.props`,
+`Ventisol.Station.slnx` or the workflow itself) makes `station-release.yml` build, test and publish
+version `1.0.<run number>`. A change to the tests, the tools or this README alone ships nothing.
+It can also be started by hand from the Actions tab, from main only. What it does:
 self-contained win-x64, packaged with [Velopack](https://velopack.io), uploaded as a GitHub Release to
 the public repo `Optipeople/ventisol.station.updates` (repo variable `UPDATE_REPO`). Public, because
 this repo is private and we don't want a token on every PC. `station-ci.yml` builds and tests every
 push to main and every pull request that touches `apps/station`.
+
+Packages are pinned in `packages.lock.json` beside each project, and both workflows restore in
+locked mode: a restore that does not match the lock files fails. After adding or updating a
+package, run a normal `dotnet restore Ventisol.Station.slnx` and commit the lock files.
 
 Secrets: `RELEASE_TOKEN` (Contents read and write on the updates repo). Code signing with Azure
 Trusted Signing runs when `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT_SECRET` are set, with
@@ -70,16 +104,28 @@ Without it the installer is unsigned and Defender may flag it.
 
 Install a station once with [`VentisolStation-win-Setup.exe`](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-Setup.exe) from the latest release. It installs for
 the Windows user in `%LOCALAPPDATA%\VentisolStation` and adds the app to that user's startup
-(`HKCU\...\Run`, `--kiosk`). Uninstalling removes it again. Let the station PC log in a local
+(`HKCU\...\Run`, `--kiosk`). While that entry says `--kiosk`, every start of the installed app is
+a kiosk: the first after the install, a restart, the start after an update. `--window` opens it as
+a window for once; take `--kiosk` out of the entry to make it a window for good.
+Uninstalling removes it again. Let the station PC log in a local
 Windows user automatically (netplwiz, or Sysinternals Autologon), so a power cut ends with the app
 on the screen, not at a login prompt. That is set up by hand per PC, not by the installer.
 
 After that the app updates itself (`Updates/UpdateService.cs`): it looks for a new release every
 minute (the latest release's `releases.win.json` from its download link, so no GitHub API limit),
 downloads in the background, and installs and restarts only when no scan has come in for 10 minutes, or between
-22:00 and 05:00. A dev run is "Ikke installeret" and never updates. If a new version fails to start
+22:00 and 05:00. The looking starts before the window is built, so a version whose window can't be
+built still gets the next one. A dev run is "Ikke installeret" and never updates. If a new version fails to start
 three times in a row, the app goes back to the version before and skips the bad one until a newer
-release is out (`Updates/StartupGuard.cs`). Logs in `%LOCALAPPDATA%\Ventisol\Station\logs`.
+release is out (`Updates/StartupGuard.cs`). Closing to install an update, a restart someone asked
+for and Windows shutting down are not failed starts. Logs in `%LOCALAPPDATA%\Ventisol\Station\logs`.
+
+When the app restarts itself after an error (a window that can't be built, three errors in a
+minute, a fatal error), it notes it in `restarts.json` in the data folder. The more restarts in the
+last hour, the longer the next start waits before it builds its window: 10 s, 30 s, 2 min, 5 min,
+then 10 min. While it waits it looks for a newer version and installs it at once. From the third
+restart the saved layout is set aside and the default one used. If the new app can't be started,
+the old one stays up.
 
 ## Try it without OptiCloud
 

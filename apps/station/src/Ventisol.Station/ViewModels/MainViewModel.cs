@@ -80,7 +80,8 @@ public sealed partial class MainViewModel : ObservableObject
         if (station is null) return;
         LastScanAt = now;
 
-        if (Barcode.TryParse(raw, out var barcode, Hints))
+        // A new scan: the strict reading, so a retail code on a box is not taken for an element.
+        if (Barcode.TryParseScan(raw, out var barcode, Hints))
         {
             if (_lastOrder != barcode.Order)
             {

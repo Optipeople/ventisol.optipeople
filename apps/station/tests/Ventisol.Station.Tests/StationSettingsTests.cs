@@ -116,4 +116,31 @@ public class StationSettingsTests
         Assert.Equal("Station 1 mangler et navn", p[1]);
         Assert.Equal("Samme scanner er sat på Station 20 og Station 40", p[2]);
     }
+
+    [Theory]
+    [InlineData("https://api.optipeople.dk", null)]
+    [InlineData(" https://api.optipeople.dk/ ", null)]
+    [InlineData("http://localhost:5099", null)]
+    [InlineData("http://127.0.0.1:5099", null)]
+    [InlineData("http://api.optipeople.dk", SetupRules.HttpsOnly)]
+    [InlineData("http://192.168.1.20:5099", SetupRules.HttpsOnly)]
+    [InlineData("http://localhost.example.com", SetupRules.HttpsOnly)]
+    [InlineData("ftp://api.optipeople.dk", SetupRules.NotAnAddress)]
+    [InlineData("api.optipeople.dk", SetupRules.NotAnAddress)]
+    [InlineData("", SetupRules.NotAnAddress)]
+    [InlineData(null, SetupRules.NotAnAddress)]
+    public void The_api_address_is_https_or_this_pc(string? url, string? problem)
+    {
+        Assert.Equal(problem, SetupRules.ApiUrlProblem(url));
+        Assert.Equal(problem is null, SetupRules.IsValidApiUrl(url));
+    }
+
+    [Fact]
+    public void Plain_http_to_another_machine_stops_a_save()
+    {
+        var p = SetupRules.Problems(StationSettings.Default with { ApiBaseUrl = "http://api.optipeople.dk" });
+
+        Assert.Equal([SetupRules.HttpsOnly], p);
+        Assert.Empty(SetupRules.Problems(StationSettings.Default with { ApiBaseUrl = "http://localhost:5099" }));
+    }
 }

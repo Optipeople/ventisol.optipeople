@@ -14,7 +14,8 @@ public enum DocumentState { Empty, Loading, Message, Ready }
 // What a station's element is: in progress there now, or the last one done there.
 public sealed record DocumentTarget(string StationName, Barcode? Barcode, bool InProgress, DateTimeOffset? At);
 
-// A page of "Vis hele PDF": filled in when it has been rendered.
+// A page of "Vis hele PDF": it has its picture while it is on screen or next to it, and lets it go
+// when it is scrolled away, so a long PDF never holds more than a few pages' pictures.
 public sealed partial class PdfPageViewModel(int index, int count, bool isPosition, double width, double height) : ObservableObject
 {
     public int Index => index;
@@ -34,7 +35,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     // Shown after the status line when the document is a copy kept on this PC.
     public const string CopyNote = "Gemt kopi · mappen kan ikke nås lige nu";
     // The same when the copy is an older version than the file the folder last listed for the order.
-    public const string OlderCopyNote = "Gemt kopi – ældre udgave · mappen kan ikke nås lige nu";
+    public const string OlderCopyNote = "Gemt kopi, ældre udgave · mappen kan ikke nås lige nu";
 
     readonly OrderDocuments documents;
 
@@ -48,8 +49,15 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     // Under this, a load shows nothing new, so a pre-fetched document doesn't flash "Henter".
     static readonly TimeSpan LoadingDelay = TimeSpan.FromMilliseconds(250);
 
+    // Pages kept drawn above and below the ones on screen.
+    const int PagesAround = 1;
+
     CancellationTokenSource? _cts;
     OrderDocumentLoad? _load;
+    // The PDF held open while its pages are shown, and the one the render loop is working on.
+    PdfPages? _pdf, _rendering;
+    // The pages on screen, as the view last said.
+    int _viewFirst, _viewLast;
 
     public DocumentTarget? Target { get; private set; }
 
@@ -191,7 +199,26 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         if (CanLeavePages) ClosePages();
     }
 
+    // Fire and forget from Show, so nothing may escape: whatever goes wrong on the way is logged and
+    // shown with "Prøv igen", never left as "Henter produktionsliste" for good.
     async Task LoadAsync(Barcode barcode, CancellationToken ct)
+    {
+        try { await LoadDocumentAsync(barcode, ct); }
+        catch (Exception ex)
+        {
+            // A newer Show or a Close took over; this load has nothing to say any more.
+            if (ct.IsCancellationRequested) return;
+            Log.Write($"Order document for {barcode.Raw} failed: {ex}");
+            try
+            {
+                ClosePages();
+                Message("Produktionslisten kunne ikke hentes", ex.Message, retry: true, "Produktionslisten kunne ikke hentes");
+            }
+            catch (Exception again) { Log.Write($"Showing the failure for {barcode.Raw} failed: {again.Message}"); }
+        }
+    }
+
+    async Task LoadDocumentAsync(Barcode barcode, CancellationToken ct)
     {
         var loading = Task.Delay(LoadingDelay, ct).ContinueWith(_ => { }, TaskScheduler.Default);
         var task = documents.LoadAsync(barcode, ct);
@@ -201,16 +228,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
             ShortMessage = "Henter produktionsliste";
         }
 
-        OrderDocumentLoad load;
-        try { load = await task; }
-        catch (OperationCanceledException) { return; }
-        catch (Exception ex)
-        {
-            if (ct.IsCancellationRequested) return;
-            Log.Write($"Order document for {barcode.Raw} failed: {ex}");
-            Message("Produktionslisten kunne ikke hentes", ex.Message, retry: true, "Produktionslisten kunne ikke hentes");
-            return;
-        }
+        var load = await task;
         if (ct.IsCancellationRequested) return;
         _load = load;
 
@@ -290,7 +308,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 
     void OpenPages(int start, bool canLeave = true)
     {
-        if (!ShowsPages || _load is not { Pdf: not null, Document: { } doc } load || _cts is not { } cts) return;
+        if (!ShowsPages || _load is not { Pdf: { } pdf, Document: { } doc } load || _cts is null) return;
         CanLeavePages = canLeave;
         if (Pages.Count == 0)
         {
@@ -303,27 +321,77 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
                 var isPosition = position is not null && i >= position.PageIndex && i < position.PageIndex + position.PageCount;
                 Pages.Add(new PdfPageViewModel(i, doc.PageCount, isPosition, w, h));
             }
-            _ = RenderPagesAsync(load, start, cts.Token);
         }
         StartPage = Math.Clamp(start, 0, Math.Max(0, Pages.Count - 1));
+        _pdf ??= new PdfPages(pdf);
         ShowingPages = true;
+        // The start page is drawn at once; the view then says which pages are on screen as it scrolls.
+        PagesInView(StartPage, StartPage);
     }
 
-    void ClosePages() => ShowingPages = false;
-
-    // From the position's page on, then the pages before it.
-    async Task RenderPagesAsync(OrderDocumentLoad load, int start, CancellationToken ct)
+    // Hides the pages and lets go of their pictures and of the open PDF.
+    void ClosePages()
     {
-        var pages = Pages.ToList();
-        foreach (var page in pages.Skip(start).Concat(pages.Take(start)))
+        ShowingPages = false;
+        _pdf?.Dispose();
+        _pdf = null;
+        foreach (var page in Pages)
         {
-            if (ct.IsCancellationRequested) return;
-            try { page.Image = await PdfRender.PageAsync(load, page.Index); }
-            catch (Exception ex)
+            page.Image = null;
+            page.Failed = false;
+        }
+    }
+
+    // From the view: pages first to last (0-based) are on screen now. They and their neighbours get
+    // their pictures; every other page gives its picture up.
+    public void PagesInView(int first, int last)
+    {
+        if (!ShowingPages || Pages.Count == 0) return;
+        _viewFirst = Math.Clamp(first, 0, Pages.Count - 1);
+        _viewLast = Math.Clamp(last, _viewFirst, Pages.Count - 1);
+        foreach (var page in Pages)
+            if (!IsNear(page.Index)) page.Image = null;
+        _ = RenderPagesAsync();
+    }
+
+    bool IsNear(int index) => index >= _viewFirst - PagesAround && index <= _viewLast + PagesAround;
+
+    // The next page to draw: one on screen before a neighbour, top first.
+    PdfPageViewModel? NextPage() => Pages
+        .Where(p => IsNear(p.Index) && p.Image is null && !p.Failed)
+        .OrderBy(p => p.Index >= _viewFirst && p.Index <= _viewLast ? 0 : 1)
+        .ThenBy(p => p.Index)
+        .FirstOrDefault();
+
+    // Draws the pages wanted right now, one at a time, until none is missing. One loop per open PDF;
+    // it ends when the pages close or another document takes over.
+    async Task RenderPagesAsync()
+    {
+        if (_pdf is not { } pdf || _rendering == pdf) return;
+        _rendering = pdf;
+        try
+        {
+            while (_pdf == pdf && NextPage() is { } page)
             {
-                Log.Write($"Page {page.Index + 1} of {load.Path} failed: {ex.Message}");
-                page.Failed = true;
+                try
+                {
+                    var image = await pdf.PageAsync(page.Index);
+                    if (_pdf != pdf) return;
+                    // Scrolled away while it was drawn: PdfPages keeps it for a while, the page doesn't.
+                    if (IsNear(page.Index)) page.Image = image;
+                }
+                catch (Exception ex)
+                {
+                    if (_pdf != pdf) return;
+                    Log.Write($"Page {page.Index + 1} of {_load?.Path} failed: {ex.Message}");
+                    page.Failed = true;
+                }
             }
+        }
+        catch (Exception ex) { Log.Write($"Drawing the pages failed: {ex.Message}"); }
+        finally
+        {
+            if (_rendering == pdf) _rendering = null;
         }
     }
 

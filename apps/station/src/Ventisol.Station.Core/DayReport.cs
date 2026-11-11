@@ -60,21 +60,33 @@ public static class DayReport
     }
 
     // Per station: elements done, average time per element, and how much of the day so far
-    // it has been working. The day starts at the first scan anywhere.
-    public static IReadOnlyList<StationLine> Stations(IEnumerable<WorkRecord> done, IEnumerable<StationState> stations, DateTimeOffset now)
+    // it has been working. The day so far starts at the first scan inside today (local midnight of
+    // now unless given): an element counts from its scan in, or from its scan out when it was
+    // scanned in before today (from now, when it is still in progress). Only the time worked since
+    // that first scan counts. So one element left in over night neither stretches the day back to
+    // midnight for every station nor gets the night as work. The average is of the elements' whole time.
+    public static IReadOnlyList<StationLine> Stations(IEnumerable<WorkRecord> done, IEnumerable<StationState> stations, DateTimeOffset now, DateTimeOffset? today = null)
     {
         var finished = done.ToList();
         var all = stations.ToList();
-        var starts = finished.Select(r => r.Start).Concat(all.Where(s => s.StartedAt is not null).Select(s => s.StartedAt!.Value)).ToList();
-        var day = starts.Count > 0 ? now - starts.Min() : TimeSpan.Zero;
+        var midnight = today ?? Cloud.CloudSync.Midnight(now);
+        var scans = finished.Select(r => r.Start >= midnight ? r.Start : r.End)
+            .Concat(all.Where(s => s.StartedAt is not null).Select(s => s.StartedAt!.Value >= midnight ? s.StartedAt!.Value : now)).ToList();
+        var first = scans.Count > 0 ? Later(scans.Min(), midnight) : now;
+        var day = Positive(now - first);
 
         return all.Select(s =>
         {
             var mine = finished.Where(r => r.Station == s.Station).ToList();
-            var busy = mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) + s.Elapsed(now);
+            var busy = mine.Aggregate(TimeSpan.Zero, (t, r) => t + Positive(r.End - Later(r.Start, first)))
+                     + (s.StartedAt is { } since ? Positive(now - Later(since, first)) : TimeSpan.Zero);
             TimeSpan? average = mine.Count > 0 ? mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) / mine.Count : null;
             var utilization = day > TimeSpan.Zero ? Math.Clamp(busy / day, 0, 1) : 0;
             return new StationLine(s.Station, mine.Count, average, utilization);
         }).ToList();
     }
+
+    static DateTimeOffset Later(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
+
+    static TimeSpan Positive(TimeSpan t) => t > TimeSpan.Zero ? t : TimeSpan.Zero;
 }

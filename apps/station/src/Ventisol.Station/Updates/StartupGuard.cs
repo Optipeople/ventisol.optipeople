@@ -7,7 +7,8 @@ namespace Ventisol.Station.Updates;
 
 // Rolls back an update that keeps crashing on startup. Velopack has no rollback of its own and keeps only the
 // newest package, so UpdateService saves the running version's package before it updates (KeepForRollback).
-// A start is good when the app has run for a minute or closed normally. After MaxFailedStarts bad starts in a
+// A start is good when the app has run for a minute without an error, or when someone closed it (App says
+// which). A start that ends in a restart, a crash or an exit code is not. After MaxFailedStarts bad starts in a
 // row on a version we just updated to, the saved package is put back and applied, and the version is marked
 // bad so UpdateService won't install it again. A newer release clears that. Never throws.
 static class StartupGuard
@@ -63,7 +64,22 @@ static class StartupGuard
             s.Proven = true;
             Save(s);
         }
-        catch { } // Worst case the next start counts one too many.
+        catch (Exception ex) { Log.Write($"Startup guard: good start not saved: {ex.Message}"); } // Worst case the next start counts one too many.
+    }
+
+    // This start ended for a reason that says nothing about the version (Windows shutting down, or a
+    // restart someone asked for, within the first minute): take it out of the count again, without
+    // calling the version proven.
+    public static void NotCounted()
+    {
+        try
+        {
+            var s = Load();
+            if (s.Version == "" || s.Proven || s.FailedStarts == 0) return;
+            s.FailedStarts--;
+            Save(s);
+        }
+        catch { }
     }
 
     public static bool IsBad(string version)
@@ -120,15 +136,18 @@ static class StartupGuard
 
     static State Load()
     {
-        try { return JsonSerializer.Deserialize<State>(File.ReadAllText(StateFile)) ?? new(); }
-        catch { return new(); } // First start, or unreadable.
+        try
+        {
+            // Null on a first start: nothing saved yet.
+            return AtomicFile.TryRead(StateFile, Log.Write) is { } text ? JsonSerializer.Deserialize<State>(text) ?? new() : new();
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"Startup guard: guard.json could not be read, starting its count over: {ex.Message}");
+            return new();
+        }
     }
 
-    static void Save(State s)
-    {
-        Directory.CreateDirectory(Folder);
-        var tmp = StateFile + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(s));
-        File.Move(tmp, StateFile, overwrite: true);
-    }
+    // Throws when it could not be written; every caller catches.
+    static void Save(State s) => AtomicFile.Write(StateFile, JsonSerializer.Serialize(s));
 }

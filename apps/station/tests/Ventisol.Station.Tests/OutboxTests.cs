@@ -468,4 +468,121 @@ public sealed class OutboxTests : IDisposable
         Assert.Empty(Directory.GetFiles(_folder, "*.tmp"));
         Assert.Equal([a], new Outbox(_folder).Peek());
     }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_file_held_by_another_program_waits_and_is_sent_when_it_is_let_go()
+    {
+        var a = In("058556050103", 1, T0);
+        var b = Out("058556050103", 1, T0.AddMinutes(1));
+        var log = new List<string>();
+        var box = new Outbox(_folder, m => { lock (log) log.Add(m); }) { Rebuild = _ => null };
+        box.Add(a);
+        box.Add(b);
+        var first = Directory.GetFiles(_folder, "*.json").Order(StringComparer.Ordinal).First();
+        var sent = new List<ScanEvent>();
+        var waits = 0;
+        using var stop = new CancellationTokenSource();
+
+        // A virus scanner or a backup has the oldest file open.
+        var held = new FileStream(first, FileMode.Open, FileAccess.Read, FileShare.None);
+        Task run;
+        try
+        {
+            run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token,
+                async (_, ct) => { Interlocked.Increment(ref waits); await Task.Delay(1, ct); });
+            await Until(() => Volatile.Read(ref waits) >= 3);
+
+            // Not a broken file: nothing is moved aside, and the scan behind it waits its turn.
+            Assert.False(Directory.Exists(Path.Combine(_folder, "failed")));
+            Assert.Equal((2, 0), (box.Pending, box.Failed));
+            lock (sent) Assert.Empty(sent);
+        }
+        finally { held.Dispose(); }
+
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([a, b], sent);
+        Assert.Equal(0, box.Failed);
+        lock (log) Assert.Single(log, l => l.Contains("kan ikke åbnes"));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_file_that_never_opens_is_moved_aside_after_a_set_number_of_tries_and_the_rest_go_on()
+    {
+        var a = In("058556050103", 1, T0);
+        var b = Out("058556050103", 1, T0.AddMinutes(1));
+        var log = new List<string>();
+        var box = new Outbox(_folder, m => { lock (log) log.Add(m); }) { Rebuild = _ => null };
+        box.Add(a);
+        box.Add(b);
+        var first = Directory.GetFiles(_folder, "*.json").Order(StringComparer.Ordinal).First();
+        var sent = new List<ScanEvent>();
+        var waits = new List<TimeSpan>();
+        using var stop = new CancellationTokenSource();
+
+        // Held for good, by something that lets the file be moved but not read.
+        using var held = new FileStream(first, FileMode.Open, FileAccess.Read, FileShare.Delete);
+        var run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token, Record(waits));
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([b], sent);
+        Assert.Equal(1, box.Failed);
+        Assert.Single(Directory.GetFiles(Path.Combine(_folder, "failed"), "*.json"));
+        // A wait between the tries, none after the last one.
+        Assert.Equal(Outbox.OpenTriesBeforeAside - 1, waits.Count);
+        lock (log)
+        {
+            Assert.Single(log, l => l.Contains("kan ikke åbnes"));
+            Assert.Single(log, l => l.Contains("behandles som ulæselig"));
+        }
+    }
+
+    // A rule made later for new scans (Barcode.TryParseScan) must not drop a scan already waiting.
+    [Fact(Timeout = 10000)]
+    public async Task A_waiting_scan_for_an_older_order_is_still_sent_after_a_restart()
+    {
+        var a = In("057999050103", 1, T0);
+        var b = Out("042117030201", 2, T0.AddMinutes(1));
+        var first = new Outbox(_folder);
+        first.Add(a);
+        first.Add(b);
+        var box = new Outbox(_folder);
+        var sent = new List<ScanEvent>();
+        using var stop = new CancellationTokenSource();
+
+        Assert.Equal([a, b], box.Peek());
+        var run = box.RunAsync((e, _) => { lock (sent) sent.Add(e); return Task.CompletedTask; }, stop.Token, Record([]));
+        await Until(() => box.Pending == 0);
+        stop.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([a, b], sent);
+        Assert.Equal(0, box.Failed);
+        Assert.False(Directory.Exists(Path.Combine(_folder, "failed")));
+    }
+
+    [Fact]
+    public void A_tmp_file_that_is_held_at_the_start_is_left_for_the_next_start()
+    {
+        var first = new Outbox(_folder);
+        first.Add(In("058556050103", 1, T0));
+        var file = Directory.GetFiles(_folder, "*.json").Single();
+        var tmp = file + ".tmp";
+        File.Move(file, tmp);
+        var log = new List<string>();
+
+        using (new FileStream(tmp, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var box = new Outbox(_folder, log.Add);
+            Assert.Equal(0, box.Pending);
+        }
+
+        Assert.True(File.Exists(tmp));
+        Assert.Single(log);
+        Assert.Equal(1, new Outbox(_folder).Pending);
+    }
 }

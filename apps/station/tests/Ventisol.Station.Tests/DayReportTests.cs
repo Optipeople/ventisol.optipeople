@@ -79,4 +79,76 @@ public class DayReportTests
         Assert.Null(lines[1].Average);
         Assert.Equal(0, lines[1].Utilization);
     }
+
+    [Fact]
+    public void The_day_starts_at_the_first_scan_today_not_at_midnight_and_not_yesterday()
+    {
+        var midnight = new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.FromHours(2));
+        // In progress since 22:00 yesterday at Station 10; Station 20 ended one at 01:00 that began at 23:00.
+        var s10 = new StationState(S10);
+        s10.Restore(Code("058556050103"), midnight.AddHours(-2));
+        var done = new[] { new WorkRecord(S20, Code("058556050102"), midnight.AddHours(-1), midnight.AddHours(1)) };
+
+        var lines = DayReport.Stations(done, [s10, new StationState(S20)], midnight.AddHours(4), midnight);
+
+        // The first scan today is Station 20's scan out at 01:00, so the day so far is 3 hours.
+        // Station 10 worked all of them.
+        Assert.Equal(1, lines[0].Utilization, 3);
+        // Station 20's hour after midnight lies before that first scan; its average is still the
+        // element's whole two hours.
+        Assert.Equal(0, lines[1].Utilization, 3);
+        Assert.Equal(TimeSpan.FromHours(2), lines[1].Average);
+    }
+
+    [Fact]
+    public void One_element_left_in_over_night_does_not_thin_out_the_other_stations()
+    {
+        var midnight = new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.FromHours(2));
+        var done = new[]
+        {
+            // In at 15:00 yesterday, out at 07:10 today.
+            new WorkRecord(S10, Code("058556050103"), midnight.AddHours(-9), midnight.AddHours(7).AddMinutes(10)),
+            // Station 20 worked 07:00 to 14:00.
+            new WorkRecord(S20, Code("058556050102"), midnight.AddHours(7), midnight.AddHours(14)),
+        };
+
+        var lines = DayReport.Stations(done, [new StationState(S10), new StationState(S20)], midnight.AddHours(15), midnight);
+
+        // The day so far is 07:00 to 15:00: 7 of 8 hours, not 7 of 15.
+        Assert.Equal(7.0 / 8, lines[1].Utilization, 3);
+        // The night is not Station 10's work: 10 minutes of the 8 hours.
+        Assert.Equal(10.0 / 480, lines[0].Utilization, 3);
+        Assert.Equal(TimeSpan.FromHours(16).Add(TimeSpan.FromMinutes(10)), lines[0].Average);
+    }
+
+    [Fact]
+    public void An_element_in_progress_since_yesterday_and_nothing_else_today_gives_no_day_yet()
+    {
+        var midnight = new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.FromHours(2));
+        var s10 = new StationState(S10);
+        s10.Restore(Code("058556050103"), midnight.AddHours(-2));
+
+        var lines = DayReport.Stations([], [s10, new StationState(S20)], midnight.AddHours(4), midnight);
+
+        Assert.All(lines, l => Assert.Equal(0, l.Utilization));
+    }
+
+    [Fact]
+    public void Without_today_given_the_day_is_the_local_day_of_now()
+    {
+        var now = new DateTimeOffset(DateTime.Today.AddHours(4));
+        var midnight = Ventisol.Station.Core.Cloud.CloudSync.Midnight(now);
+        // One over midnight, out at 01:00, and one from 02:00 to 03:00.
+        var done = new[]
+        {
+            new WorkRecord(S10, Code("058556050103"), midnight.AddHours(-2), midnight.AddHours(1)),
+            new WorkRecord(S10, Code("058556050102"), midnight.AddHours(2), midnight.AddHours(3)),
+        };
+
+        var lines = DayReport.Stations(done, [new StationState(S10)], now);
+
+        // The day so far is 01:00 to 04:00, with one hour worked in it. Had today been taken for
+        // another day, both elements would count whole.
+        Assert.Equal(1.0 / 3, lines[0].Utilization, 3);
+    }
 }

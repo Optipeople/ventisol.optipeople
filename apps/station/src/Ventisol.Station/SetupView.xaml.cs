@@ -7,9 +7,10 @@ using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
 
-// The setup screen as an overlay: put it last in the window's root grid, spanning every row, and call
-// Open with a fresh SetupViewModel. It closes itself when the view model saves or cancels; what
-// happens to the settings is up to whoever listens to the view model's Saved.
+// The setup screen as an overlay: put it late in the window's root grid, spanning every row, and call
+// Open with a fresh SetupViewModel. It closes itself when the view model has saved or cancels; a save
+// that could not be written leaves it open (the view model says why). What happens to the settings
+// is up to whoever gave the view model its Persist and listens to its Saved.
 public partial class SetupView : UserControl
 {
     const double MaxSheetWidth = 1180;
@@ -87,6 +88,10 @@ public partial class SetupView : UserControl
 
     void UpdatePasswordHint() =>
         PasswordHint.Visibility = PasswordInput.Password.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    // The PIN is digits only.
+    void OnPinTextInput(object sender, TextCompositionEventArgs e) =>
+        e.Handled = !e.Text.All(c => c is >= '0' and <= '9');
 
     // A scanner in keyboard mode types its scan: make sure it doesn't land in a field.
     void OnIdentify(object sender, RoutedEventArgs e) => FocusWindow();

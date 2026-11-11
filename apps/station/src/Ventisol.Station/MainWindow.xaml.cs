@@ -11,7 +11,6 @@ using Ventisol.Station.Core.Cloud;
 using Ventisol.Station.Core.Documents;
 using Ventisol.Station.Documents;
 using Ventisol.Station.Scanning;
-using Ventisol.Station.Updates;
 using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
@@ -22,6 +21,10 @@ public partial class MainWindow : Window
     static readonly TimeSpan ReportIdle = TimeSpan.FromSeconds(60);
     // An open document goes back to the stations after this long without a touch.
     static readonly TimeSpan DocumentIdle = TimeSpan.FromMinutes(3);
+    // The PIN prompt closes after this long without a touch.
+    static readonly TimeSpan PinIdle = TimeSpan.FromSeconds(60);
+    // An update waits for this long without a scan, and for a setup screen or layout mode nobody has touched for as long.
+    static readonly TimeSpan UpdateQuiet = TimeSpan.FromMinutes(10);
 
     readonly StationSettings _settings = SettingsStore.Load();
     readonly MainViewModel _vm;
@@ -29,7 +32,6 @@ public partial class MainWindow : Window
     readonly KeyboardScanSource _keyboard = new();
     readonly ScanSources _scans;
     readonly CloudSync _cloud;
-    readonly UpdateService _updates;
     readonly OrderDocuments _documents;
     readonly OrderDocumentViewModel _document;
     // The scans this screen sent in the last 36 hours, so a load from OptiCloud never drops one.
@@ -59,7 +61,7 @@ public partial class MainWindow : Window
     public MainWindow(bool kiosk, bool showcase)
     {
         InitializeComponent();
-        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder));
+        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder)) { Log = Log.Write };
         _documents.Warm();
         _vm = new MainViewModel(_settings.Stations.Select(s => s.Config))
         {
@@ -111,7 +113,8 @@ public partial class MainWindow : Window
 
         Menu.CloseRequested += (_, _) => CloseMenu();
         Menu.ArrangeRequested += (_, _) => { CloseMenu(); StartEditing(); };
-        Menu.SetupRequested += (_, _) => { CloseMenu(); OpenSetup(); };
+        Menu.SetupRequested += (_, _) => { CloseMenu(); AskPin("Opsætning", OpenSetup); };
+        Pin.Closed += (_, _) => Keyboard.Focus(this);
 
         // A scan always brings the stations back, so its answer is seen. An open document stays open
         // (its strip shows the answer) and follows its station to a new element.
@@ -129,7 +132,12 @@ public partial class MainWindow : Window
         _scans.OnError = (_, ex) => Log.Write($"Scanner source failed: {ex.Message}");
         _scans.Scanned += (_, scan) => Dispatcher.BeginInvoke(() => OnRawScan(scan));
         _scans.ConnectionChanged += (_, _) => Dispatcher.BeginInvoke(OnScannersChanged);
-        _keyboard.Typed += (_, c) => { if (_demoInput && c is >= '1' and <= '7') _demo.Scan(c - '0'); };
+        // Keys that turned out not to be a scan: digits for the PIN prompt while it is open, else the demo's.
+        _keyboard.Typed += (_, c) =>
+        {
+            if (Pin.IsOpen) Pin.Type(c);
+            else if (_demoInput && c is >= '1' and <= '7') _demo.Scan(c - '0');
+        };
         _scans.Start();
         OnScannersChanged();
 
@@ -152,14 +160,24 @@ public partial class MainWindow : Window
         _cloud.Start();
         Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
 
-        // An update restarts the app, so it waits until no scan has come in for 10 minutes (or night).
-        _updates = new UpdateService(UpdateService.DefaultUrl, () => DateTimeOffset.Now - _vm.LastScanAt > TimeSpan.FromMinutes(10), Log.Write);
-        _updates.StatusChanged += (_, text) => _vm.UpdateText = text;
-        _updates.Start();
-        _vm.UpdateText = _updates.Status;
+        // The update service is the app's (started before this window, so it runs even when the
+        // window can't be built); the menu shows what it says.
+        if (App.Updates is { } updates)
+        {
+            updates.StatusChanged += (_, text) => _vm.UpdateText = text;
+            _vm.UpdateText = updates.Status;
+        }
 
-        Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); _updates.Dispose(); };
+        Closed += (_, _) => { _scans.Dispose(); _cloud.Dispose(); };
     }
+
+    // For the update service, from its own thread. An update restarts the app, so it waits until no
+    // scan has come in for 10 minutes (or night) ...
+    public bool IsQuiet => DateTimeOffset.Now - _vm.LastScanAt > UpdateQuiet;
+
+    // ... and never goes in under someone's hands: the setup screen, the layout mode or a PIN prompt
+    // holds it back, until they have been left untouched for 10 minutes.
+    public bool InUse => (_editing || Setup.IsOpen || Pin.IsOpen) && DateTimeOffset.Now - _lastTouch < UpdateQuiet;
 
     // What OptiCloud (or, before the network is there, this PC's journal) holds, plus every scan this
     // screen took since. Worked out here on the UI thread, so a scan that came in while the load was
@@ -302,17 +320,11 @@ public partial class MainWindow : Window
     // right from the first scan after a restart too.
     static readonly string LastOrderFile = System.IO.Path.Combine(AppPaths.Data, "last-order.txt");
 
-    static int? ReadLastOrder()
-    {
-        try { return int.TryParse(System.IO.File.ReadAllText(LastOrderFile).Trim(), out var o) ? o : null; }
-        catch { return null; }
-    }
+    static int? ReadLastOrder() =>
+        AtomicFile.TryRead(LastOrderFile, Log.Write) is { } text && int.TryParse(text.Trim(), out var o) ? o : null;
 
-    static void SaveLastOrder(int order)
-    {
-        try { System.IO.File.WriteAllText(LastOrderFile, order.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
-        catch (Exception e) { Log.Write($"Last order not saved: {e.Message}"); }
-    }
+    static void SaveLastOrder(int order) =>
+        AtomicFile.TryWrite(LastOrderFile, order.ToString(System.Globalization.CultureInfo.InvariantCulture), Log.Write);
 
     static string Visible(string raw) =>
         string.Concat(raw.Select(c => char.IsControl(c) || c > '~' ? $"<{(int)c:X2}>" : c.ToString()));
@@ -334,6 +346,19 @@ public partial class MainWindow : Window
 
     // ===== Setup =====
 
+    // Runs then at once when no setup PIN is set; otherwise asks for the PIN first, and runs it when
+    // the PIN is right. For the setup screen, and for the tray's ways out of a kiosk.
+    public void AskPin(string title, Action then)
+    {
+        if (!App.Pin.IsSet) { then(); return; }
+        CloseMenu();
+        CloseStop();
+        _lastTouch = DateTimeOffset.Now;
+        // Out of any field, so the keys reach the prompt and not a text box behind it.
+        Keyboard.Focus(this);
+        Pin.Ask(title, App.Pin, then);
+    }
+
     void OpenSetup()
     {
         if (_editing || Setup.IsOpen) return;
@@ -341,15 +366,29 @@ public partial class MainWindow : Window
             testConnection: (s, pw, ct) => CloudSync.TestConnectionAsync(s, pw, ct),
             loadMachines: (s, pw, ct) => CloudSync.LoadMachinesAsync(s, pw, ct),
             connectedScanners: () => _scans.Connected,
-            scannerPort: id => _scans.Sources.OfType<ComPortScanSource>().FirstOrDefault()?.PortOf(id));
-        vm.Saved += (settings, newPassword) =>
+            scannerPort: id => _scans.Sources.OfType<ComPortScanSource>().FirstOrDefault()?.PortOf(id))
         {
-            SettingsStore.Save(settings);
-            if (newPassword is not null) SettingsStore.SavePassword(newPassword);
-            // Stations, mode and the OptiCloud login are read at start, so start again with the new ones.
-            Restart();
+            HasPin = App.Pin.IsSet,
+            Persist = SaveSetup,
         };
+        // Stations, mode and the OptiCloud login are read at start, so start again with the new ones.
+        // Only once they are on the disk: a save that failed leaves the setup open, and says so.
+        vm.Saved += (_, _) => Restart();
         Setup.Open(vm);
+    }
+
+    // The password first: if the settings then can't be written, the old address is left with the
+    // new password, never a new address with the old one.
+    static bool SaveSetup(StationSettings settings, string? newPassword, string? newPin)
+    {
+        if (newPassword is not null && !SettingsStore.SavePassword(newPassword)) return false;
+        if (!SettingsStore.Save(settings)) return false;
+        return newPin switch
+        {
+            null => true,
+            "" => App.Pin.Clear(),
+            _ => App.Pin.Set(newPin),
+        };
     }
 
     void Restart()
@@ -367,6 +406,7 @@ public partial class MainWindow : Window
         // A viewer's data grows stale with time alone.
         if (_settings.Mode == StationMode.Viewer) ShowCloudStatus();
         if (_stopping is { } stop && stop.Station.Current?.Raw != stop.Barcode.Raw) CloseStop();
+        if (Pin.IsOpen && now - _lastTouch > PinIdle) Pin.Cancel();
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
         if (Document.IsOpen)
         {
@@ -893,9 +933,42 @@ public partial class MainWindow : Window
         Scrim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)));
     }
 
-    void OnScrim(object sender, MouseButtonEventArgs e) => CloseMenu();
+    // A tap beside the menu closes it on the release, so the release is not a tap on the tile below.
+    bool _scrimPressed;
+
+    void OnScrimDown(object sender, MouseButtonEventArgs e)
+    {
+        _scrimPressed = true;
+        e.Handled = true;
+    }
+
+    void OnScrimUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (!_scrimPressed) return;
+        _scrimPressed = false;
+        CloseMenu();
+    }
 
     // ===== Window =====
+
+    // Up from minimized, behind something or off screen. A kiosk comes back full screen.
+    public void BringUp()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = _kiosk ? WindowState.Maximized : WindowState.Normal;
+        Show();
+        Activate();
+    }
+
+    // A kiosk closes only through the app (the tray's "Luk", a restart, an update): Alt+F4 and the
+    // like are turned down. Outside kiosk mode, closing the window is someone closing the app.
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (e.Cancel || App.Exiting) return;
+        if (_kiosk) { e.Cancel = true; Log.Write("Close turned down: a kiosk closes from the tray"); }
+        else App.NoteClosedByUser();
+    }
 
     // No title bar: outside kiosk mode the empty space moves the window, a double click maximizes.
     void OnPageMouseDown(object sender, MouseButtonEventArgs e)
@@ -923,12 +996,22 @@ public partial class MainWindow : Window
         {
             // Esc on an open dropdown closes just the dropdown, not the setup with everything typed in it.
             if (Ui.IsDropDownOpen()) return;
+            if (Pin.IsOpen) { Pin.Cancel(); return; }
             if (Setup.IsOpen) { Setup.Cancel(); return; }
             if (_stopping is not null) { CloseStop(); return; }
             if (Document.IsOpen) { CloseDocument(); return; }
             if (MenuLayer.Visibility == Visibility.Visible) CloseMenu();
             else if (_editing) StopEditing();
             else if (!_kiosk) Close();
+            return;
+        }
+        // The PIN prompt takes the keyboard: its digits come through _keyboard.Typed, once it is
+        // clear they were typed and not scanned.
+        if (Pin.IsOpen)
+        {
+            if (e.Key == Key.Enter) Pin.Submit();
+            else if (e.Key == Key.Back) Pin.Back();
+            e.Handled = true;
             return;
         }
         if (Setup.IsOpen) return;

@@ -68,8 +68,12 @@ public sealed record MachineOrderChange(Guid MachineId, string Stopped, string C
 // an element is read again every verify. When it no longer runs that element, it is not set back
 // (a set starts a new run and splits the time); the change is reported (Verified), so the app ends
 // the element at its station, and the machine is left alone until its station wishes another
-// element. Only an order the app knew the machine to run counts: the first read and the read after
+// element. One read is not enough for that: only when two verify reads in a row find the same
+// other order (or none) is it a stop, so one odd answer from OptiPeople never ends an element. Only an order the app knew the machine to run counts: the first read and the read after
 // a failure still set what is wished. Without verify (null) a machine in step is never read again.
+// An answer with no data at all (null) says nothing about the machine. As a verify read it decides
+// nothing, and the two reads that must agree start over. As the read before a set it counts as no
+// order, so what is wished is still set: an odd answer never keeps an order off a machine.
 // The app only ever clears an order of its own: one whose number is an element barcode. A machine
 // found running anything else while its station has nothing in progress is left as it is.
 // No I/O and no clock of its own, so it can be tested; MachineOrderSync does the calls.
@@ -103,6 +107,9 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         public int VerifyFailures;
         // The element stopped in OptiPeople: the machine is left alone until another is wished.
         public string? Stopped;
+        // What the last verify read found when it was not the element wished ("" for none); null:
+        // it found the element. The next verify read must find the same for it to count as a stop.
+        public string? Differs;
         // Counts every change of the wished Number, so a read can tell the wish moved on meanwhile,
         // also when it came back to the same Number (an Out and In of the same element).
         public int Wish;
@@ -168,6 +175,7 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
                     e.Wish++;
                     e.ChangedAt = now;
                     e.VerifyAt = DateTimeOffset.MinValue;
+                    e.Differs = null;
                 }
                 else if (!e.Desired.SameFields(o))
                 {
@@ -227,9 +235,10 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         }
     }
 
-    // What OptiPeople has on the machine now ("" for none). True when that is what is wished, or
-    // nothing is wished and the order there is not one of ours (left alone).
-    public bool Read(Guid machine, string current)
+    // What OptiPeople has on the machine now ("" for none; null, an answer with no data, counts as
+    // none here, so an element wished is set). True when that is what is wished, or nothing is
+    // wished and the order there is not one of ours (left alone).
+    public bool Read(Guid machine, string? current)
     {
         lock (_gate)
         {
@@ -247,28 +256,49 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
     public TimeSpan ReadFailed(Guid machine, DateTimeOffset now, Exception x) => Failed(machine, now, x);
 
     // A verify read of order asked found current on the machine. Still the same: read again one
-    // verify from now. Something else, while the station still wishes asked: OptiPeople stopped or
-    // changed it, so that is what is known, nothing is set, the machine is left alone until another
-    // element is wished, and the change is returned for the app to end the element. When the wish
+    // verify from now. Something else, while the station still wishes asked: remembered, and read
+    // again one verify from now. Only when that read finds the same is it taken as true: OptiPeople
+    // stopped or changed the order, so that is what is known, nothing is set, the machine is left
+    // alone until another element is wished, and the change is returned for the app to end the
+    // element. A read between that finds asked again, or yet another order, starts over. When the wish
     // changed while the read was under way (wish is not the machine's wish any more, even if it came
     // back to the same Number), it is an ordinary read: the new wish is sent as usual.
-    public MachineOrderChange? Verified(Guid machine, string asked, int wish, string current, DateTimeOffset now)
+    // current null (an answer with no data): not known. Nothing is decided and what is known
+    // stands; the next two reads must agree on their own.
+    public MachineOrderChange? Verified(Guid machine, string asked, int wish, string? current, DateTimeOffset now)
     {
         lock (_gate)
         {
             if (!_machines.TryGetValue(machine, out var e)) return null;
-            current = current?.Trim() ?? "";
             e.VerifyFailures = 0;
             e.VerifyAt = _verify is { } every ? now + every : DateTimeOffset.MinValue;
+            if (current is null)
+            {
+                e.Differs = null;
+                return null;
+            }
+            current = current.Trim();
             if (e.Stopped is not null) return null;
             if (asked.Length == 0 || e.Wish != wish || e.Desired.Number != asked || e.Known != asked)
             {
                 // The wish (or what was known) moved on meanwhile.
                 if (e.Known is not null) e.Known = current;
+                e.Differs = null;
                 return null;
             }
+            if (current == asked)
+            {
+                e.Differs = null;
+                return null;
+            }
+            if (e.Differs != current)
+            {
+                // The first read to say so: what is known stands until the next one agrees.
+                e.Differs = current;
+                return null;
+            }
+            e.Differs = null;
             e.Known = current;
-            if (current == asked) return null;
             e.Stopped = asked;
             return new MachineOrderChange(machine, asked, current);
         }
@@ -389,14 +419,15 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         if (e.FieldFailures == 0) e.FailingSince = null;
         e.RetryAt = DateTimeOffset.MinValue;
         e.VerifyAt = DateTimeOffset.MinValue;
+        e.Differs = null;
     }
 }
 
 // The OptiPeople calls the worker needs. OptiCloudClient is the real one.
 public interface IMachineOrderApi
 {
-    // The machine's current order number, "" when it has none.
-    Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default);
+    // The machine's current order number, "" when it has none, null when the answer did not say.
+    Task<string?> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default);
 
     // Makes order the machine's current order, ending the run of the one before; an empty Number
     // clears it. The order's Fields go with it.
@@ -457,6 +488,7 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             try
             {
                 var current = await api.GetCurrentOrderAsync(step.MachineId, ct);
+                if (current is null) Note(NoData, "maskinens ordre kunne ikke læses");
                 if (orders.Verified(step.MachineId, step.Number, step.Wish, current, clock()) is { } change)
                 {
                     log($"OptiCloud: maskine {step.MachineId} kører ikke længere {name} ({(change.Current.Length > 0 ? $"nu ordre {change.Current}" : "nu ingen ordre")}), sættes ikke tilbage");
@@ -477,7 +509,9 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
             try
             {
                 // In step with nothing to send counts as working again; a read before a set does not.
-                if (orders.Read(step.MachineId, await api.GetCurrentOrderAsync(step.MachineId, ct))) _logged = null;
+                var current = await api.GetCurrentOrderAsync(step.MachineId, ct);
+                if (orders.Read(step.MachineId, current)) _logged = null;
+                if (current is null) Note(NoData, "maskinens ordre kunne ikke læses, regnes som ingen ordre");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception x)
@@ -506,11 +540,15 @@ public sealed class MachineOrderSync(MachineOrders orders, IMachineOrderApi api,
 
     static string Message(Exception x) => x is OptiCloudException ? x.Message : $"{x.GetType().Name}: {x.Message}";
 
+    // An answer with no data about the machine's order.
+    const string NoData = "svaret var tomt";
+
     // The same failure on every retry is logged once, until a machine is in step again. Keyed on the error
     // alone, so a read and a set failing alike in turn log once too.
-    void Note(Exception x, string what)
+    void Note(Exception x, string what) => Note(Message(x), what);
+
+    void Note(string message, string what)
     {
-        var message = Message(x);
         if (message == _logged) return;
         _logged = message;
         log($"OptiCloud: {what}: {message}");

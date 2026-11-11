@@ -35,15 +35,18 @@ static class Motion
         var d = duration ?? Normal;
         var wait = delay ?? TimeSpan.Zero;
         e.Opacity = 1;
-        e.BeginAnimation(UIElement.OpacityProperty, From(0, 1, wait, d, hold: false));
+        e.BeginAnimation(UIElement.OpacityProperty, From(0, 1, wait, d));
+        // The slide ends at rest and lets go: the value underneath is set to 0 first, so when the
+        // animation stops nothing jumps, and a later set of X or Y (a drag in "Tilpas layout") takes.
         var t = Shift(e);
-        if (fromX != 0) t.BeginAnimation(TranslateTransform.XProperty, From(fromX, 0, wait, d, hold: true));
-        if (fromY != 0) t.BeginAnimation(TranslateTransform.YProperty, From(fromY, 0, wait, d, hold: true));
+        if (fromX != 0) { t.X = 0; t.BeginAnimation(TranslateTransform.XProperty, From(fromX, 0, wait, d)); }
+        if (fromY != 0) { t.Y = 0; t.BeginAnimation(TranslateTransform.YProperty, From(fromY, 0, wait, d)); }
     }
 
-    static AnimationTimeline From(double from, double to, TimeSpan wait, TimeSpan d, bool hold)
+    // Never held at its end: a held animation would override every value set on the property after it.
+    static AnimationTimeline From(double from, double to, TimeSpan wait, TimeSpan d)
     {
-        var a = new DoubleAnimationUsingKeyFrames { FillBehavior = hold ? FillBehavior.HoldEnd : FillBehavior.Stop };
+        var a = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
         a.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
         if (wait > TimeSpan.Zero) a.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(wait)));
         a.KeyFrames.Add(new EasingDoubleKeyFrame(to, KeyTime.FromTimeSpan(wait + d), Out));
@@ -63,15 +66,16 @@ static class Motion
     }
 
     // Glide from an offset back to rest. Used when a block has already moved in the layout,
-    // so it travels from where it was instead of jumping.
+    // so it travels from where it was instead of jumping. The rest value (0) is set underneath and
+    // the animation lets go when it ends, so the next drag's own X and Y are not overridden.
     public static void Glide(TranslateTransform t, Vector from)
     {
         t.BeginAnimation(TranslateTransform.XProperty, null);
         t.BeginAnimation(TranslateTransform.YProperty, null);
         (t.X, t.Y) = (0, 0);
         if (!On || from.Length < 1) return;
-        t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from.X, 0, Normal) { EasingFunction = Out });
-        t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(from.Y, 0, Normal) { EasingFunction = Out });
+        t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(from.X, 0, Normal) { EasingFunction = Out, FillBehavior = FillBehavior.Stop });
+        t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(from.Y, 0, Normal) { EasingFunction = Out, FillBehavior = FillBehavior.Stop });
     }
 
     public static void FadeIn(UIElement e, TimeSpan? duration = null)

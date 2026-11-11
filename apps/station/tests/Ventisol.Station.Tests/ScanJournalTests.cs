@@ -84,4 +84,35 @@ public sealed class ScanJournalTests : IDisposable
         Assert.Null(new ScanJournal(_folder).Find(Guid.NewGuid()));
         Assert.Null(new ScanJournal(Path.Combine(_folder, "none")).Find(today.ScanId));
     }
+
+    [Fact]
+    public void Days_long_before_since_are_not_opened()
+    {
+        var journal = new ScanJournal(_folder);
+        var recent = In("058556050103", 1, Noon.AddHours(-1));
+        journal.Append(recent);
+        // A day kept for the outbox's sake. A line of now in it shows whether it was read.
+        var stray = Out("058556050103", 1, Noon);
+        journal.Append(stray);
+        var today = Path.Combine(_folder, $"{Noon:yyyy-MM-dd}.jsonl");
+        var lines = File.ReadAllLines(today);
+        File.WriteAllLines(today, lines[..1]);
+        File.WriteAllLines(Path.Combine(_folder, $"{Noon.AddDays(-5):yyyy-MM-dd}.jsonl"), lines[1..]);
+
+        Assert.Equal([recent], journal.ReadSince(Noon.AddHours(-3)));
+        // Since far enough back, it is read; and Find still looks in every day.
+        Assert.Equal([recent, stray], journal.ReadSince(Noon.AddDays(-5)));
+        Assert.Equal(stray, journal.Find(stray.ScanId));
+    }
+
+    [Fact]
+    public void The_day_before_since_is_still_read()
+    {
+        var journal = new ScanJournal(_folder);
+        var late = In("058556050103", 1, Noon.AddHours(-13));
+        journal.Append(late);
+
+        Assert.Equal([late], journal.ReadSince(Noon.AddHours(-14)));
+        Assert.Equal([late], journal.ReadSince(DateTimeOffset.MinValue));
+    }
 }

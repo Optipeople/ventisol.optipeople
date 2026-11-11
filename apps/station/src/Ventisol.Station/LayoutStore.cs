@@ -18,7 +18,9 @@ static class LayoutStore
     {
         try
         {
-            var saved = JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(File));
+            // None saved yet: the default, and nothing to say.
+            if (AtomicFile.TryRead(File, Log.Write) is not { } text) return (StationLayout.Default(stationIds), [], []);
+            var saved = JsonSerializer.Deserialize<Saved>(text);
             if (saved is { Tiles: not null, Widgets: not null } &&
                 StationLayout.Restore(saved.Tiles, stationIds, saved.Hidden ?? [], saved.Widgets.Select(w => w.Id)) is { } r)
             {
@@ -27,8 +29,9 @@ static class LayoutStore
                 if (widgets.Count < saved.Widgets.Count) Log.Write($"Layout: no room for {saved.Widgets.Count - widgets.Count} widget(s), dropped");
                 return (r.Layout, widgets, r.Hidden);
             }
+            Log.Write("Layout: layout.json is not a layout this screen can use (an older format, or blocks that overlap), starting from the default layout");
         }
-        catch { } // None saved yet, an older format, or unreadable: start from the default.
+        catch (Exception e) { Log.Write($"Layout: layout.json could not be read, starting from the default layout: {e.Message}"); }
         return (StationLayout.Default(stationIds), [], []);
     }
 
@@ -42,16 +45,17 @@ static class LayoutStore
             System.IO.File.Move(File, Path.ChangeExtension(File, ".bad.json"), overwrite: true);
             return true;
         }
-        catch { return false; }
+        catch (Exception e)
+        {
+            Log.Write($"Layout: layout.json could not be set aside: {e.Message}");
+            return false;
+        }
     }
 
     public static void Save(StationLayout layout, IEnumerable<WidgetSpec> widgets, IEnumerable<string> hidden)
     {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(File)!);
-            System.IO.File.WriteAllText(File, JsonSerializer.Serialize(new Saved([.. layout.Tiles], [.. widgets], [.. hidden])));
-        }
-        catch { } // The layout still holds until the app restarts.
+        // A layout that could not be written (logged) still holds until the app restarts.
+        try { AtomicFile.TryWrite(File, JsonSerializer.Serialize(new Saved([.. layout.Tiles], [.. widgets], [.. hidden])), Log.Write); }
+        catch (Exception e) { Log.Write($"Layout: not saved: {e.Message}"); }
     }
 }

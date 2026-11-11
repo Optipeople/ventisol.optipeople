@@ -7,10 +7,15 @@ namespace Ventisol.Station.Scanning;
 
 // Reads the real scanners: every cradle in CDC mode is a COM port, read in the background
 // whatever window has focus. Scans and plug events come on worker threads.
-// Plugging in or out is seen from Windows device events, with a poll every 2 s in case one is missed.
+// Plugging in or out is seen from Windows device events. In case one is missed, the list of COM
+// port names is read every 2 s (cheap), and Windows is only asked what the devices are (a WMI query)
+// when a device event came, that list changed, a port was lost, or a minute has passed.
 public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
 {
     static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    // The longest the devices go unasked. Shorter when there are no device events to rely on.
+    static readonly TimeSpan FindInterval = TimeSpan.FromMinutes(1);
+    static readonly TimeSpan FindIntervalNoEvents = TimeSpan.FromSeconds(10);
     // A new COM port shows up a moment after the device event.
     static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
     // How long a barcode with no line end may pause before it counts as whole.
@@ -18,6 +23,14 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
 
     readonly Dictionary<string, OpenPort> _open = [];
     readonly Dictionary<string, string> _lastError = [];
+    // The cradles Windows last listed, the COM port names seen then, and when that was.
+    Dictionary<string, Cradle> _found = [];
+    string _portNames = "";
+    DateTime _foundAt = DateTime.MinValue;
+    // Set when a port was lost or a device event came: ask Windows again on the next round.
+    volatile bool _findAgain = true;
+    // The cradles last logged as sharing an id, so it is said when it changes, not every round.
+    string _sameId = "";
     readonly SemaphoreSlim _wake = new(0);
     readonly CancellationTokenSource _cts = new();
     ManagementEventWatcher? _watcher;
@@ -45,7 +58,7 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
         try
         {
             _watcher = new ManagementEventWatcher(new WqlEventQuery("SELECT * FROM Win32_DeviceChangeEvent"));
-            _watcher.EventArrived += (_, _) => Wake();
+            _watcher.EventArrived += (_, _) => { _findAgain = true; Wake(); };
             _watcher.Start();
         }
         catch (Exception e)
@@ -66,10 +79,20 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
 
     async Task RunAsync(CancellationToken ct)
     {
+        // Tried again every round; said once, not every 2 s.
+        string? failure = null;
         while (!ct.IsCancellationRequested)
         {
-            try { Rescan(); }
-            catch (Exception e) { Log($"Finding scanners failed: {e.Message}"); }
+            try
+            {
+                Rescan();
+                failure = null;
+            }
+            catch (Exception e)
+            {
+                if (e.Message != failure) Log($"Finding scanners failed: {e.Message}");
+                failure = e.Message;
+            }
 
             try
             {
@@ -85,9 +108,22 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
 
     void Rescan()
     {
-        var found = new Dictionary<string, Cradle>();
-        foreach (var c in CradleFinder.Find(Log))
-            if (!found.TryAdd(c.Id, c)) Log($"{c.PortName} has the same id as {found[c.Id].PortName} ({c.Id}); ignored.");
+        var portNames = PortNames();
+        var every = _watcher is null ? FindIntervalNoEvents : FindInterval;
+        if (_findAgain || portNames != _portNames || DateTime.UtcNow - _foundAt >= every)
+        {
+            // Cleared first: a device event during the query asks again next round.
+            _findAgain = false;
+            try { _found = Find(); }
+            catch
+            {
+                _findAgain = true;
+                throw;
+            }
+            _portNames = portNames;
+            _foundAt = DateTime.UtcNow;
+        }
+        var found = _found;
 
         // Gone, or moved to another COM port.
         List<OpenPort> stale;
@@ -102,6 +138,31 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
             lock (_open) isOpen = _open.ContainsKey(c.Id);
             if (!isOpen) TryOpen(c);
         }
+    }
+
+    // The COM port names Windows has now, from the registry: cheap enough to read every round.
+    static string PortNames()
+    {
+        try { return string.Join(",", SerialPort.GetPortNames().Order(StringComparer.OrdinalIgnoreCase)); }
+        catch { return ""; }
+    }
+
+    Dictionary<string, Cradle> Find()
+    {
+        var found = new Dictionary<string, Cradle>();
+        var same = new List<string>();
+        foreach (var c in CradleFinder.Find(Log))
+            if (!found.TryAdd(c.Id, c)) same.Add($"{c.PortName} has the same id as {found[c.Id].PortName} ({c.Id}); ignored.");
+
+        // Said when it starts and when it changes, not for as long as it lasts.
+        var sameId = string.Join("|", same);
+        if (sameId != _sameId)
+        {
+            foreach (var line in same) Log(line);
+            if (same.Count == 0) Log("No two scanners share an id any more.");
+            _sameId = sameId;
+        }
+        return found;
     }
 
     void TryOpen(Cradle c)
@@ -176,6 +237,8 @@ public sealed class ComPortScanSource(Action<string>? log = null) : IScanSource
             if (was) _open.Remove(port.Id);
         }
         port.Close();
+        // Unplugged, or moved: what Windows lists has changed, so ask it again.
+        _findAgain = true;
         if (was && !_disposed) Raise(ConnectionChanged, (port.Id, false));
     }
 

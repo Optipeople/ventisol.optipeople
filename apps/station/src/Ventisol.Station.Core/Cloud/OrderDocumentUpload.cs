@@ -20,8 +20,12 @@ namespace Ventisol.Station.Core.Cloud;
 // row still names it.
 // A file stored but never put in a row can't be deleted from OptiCloud, hence the order of things;
 // one stored whose row then could not be updated is remembered (on disk too) and used on the next try.
-// A file OptiCloud refuses RefusalsBeforeAside times, or that isn't a whole PDF, is left alone until
-// it is written again, so one bad file never holds up the others or is read every round.
+// A file OptiCloud refuses RefusalsBeforeAside times, or that isn't a whole PDF, or is bigger than
+// OrderDocuments.MaxPdfBytes (never read), is left alone until it is written again, so one bad file
+// never holds up the others or is read every round.
+// An upload that fails without OptiCloud refusing it (no answer, a broken connection, a 500) may
+// have stored the file all the same, and every new try may store it once more: after
+// MaxUploadTries such tries the file is left alone too, until it is written again or the app starts.
 // Not handled: a file that changes under the same name keeps its first upload.
 public sealed class OrderDocumentUpload
 {
@@ -29,6 +33,7 @@ public sealed class OrderDocumentUpload
     public const string FriendlyName = "Ventisol ordredokumenter";
     public const int PageSize = 500;
     public const int MaxPages = 50;
+    public const int MaxUploadTries = 5;
 
     public static readonly IReadOnlyList<ColumnSpec> Columns =
     [
@@ -70,6 +75,8 @@ public sealed class OrderDocumentUpload
     // Those of them that only could not be read: tried again now and then.
     readonly HashSet<string> _unread = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, (DateTime Written, int Count)> _refused = new(StringComparer.OrdinalIgnoreCase);
+    // Uploads of a file (by its content) that failed with no refusal, in a row.
+    readonly Dictionary<string, (string Sha, int Count)> _tries = new(StringComparer.OrdinalIgnoreCase);
     Guid? _tableId;
     string? _problem;
     int _rounds;
@@ -86,7 +93,7 @@ public sealed class OrderDocumentUpload
         _device = device ?? Environment.MachineName;
         _clock = clock ?? (() => DateTimeOffset.Now);
         _delay = delay ?? Task.Delay;
-        _readFile = readFile ?? File.ReadAllBytes;
+        _readFile = readFile ?? OrderDocuments.ReadPdf;
         _random = random ?? Random.Shared.NextDouble;
         _statePath = statePath;
         LoadStored();
@@ -184,6 +191,14 @@ public sealed class OrderDocumentUpload
                     Refused(f, x);
                     continue;
                 }
+                catch (OptiCloudException x) when (!x.IsRejected && _tries.TryGetValue(f.Name, out var tried) && tried.Count >= MaxUploadTries)
+                {
+                    // Each try may have left a file in OptiCloud that no row points to: no more of them.
+                    Skip(f);
+                    _tries.Remove(f.Name);
+                    _log($"Ordredokumenter: {f.Name} kunne ikke lægges op i {tried.Count} forsøg ({x.Message}) og prøves ikke igen");
+                    continue;
+                }
                 if (outcome == Outcome.Lost) break;
                 _refused.Remove(f.Name);
                 if (outcome == Outcome.Done) uploaded++;
@@ -248,6 +263,13 @@ public sealed class OrderDocumentUpload
     {
         byte[] bytes;
         try { bytes = await Task.Run(() => _readFile(f.Entry.Path), CancellationToken.None).WaitAsync(ReadTimeout, ct); }
+        catch (OrderDocumentTooLargeException x)
+        {
+            // Not one of 3E's order documents, whatever its name: not read again until it is written again.
+            Skip(f);
+            _log($"Ordredokumenter: {x.Message}, lægges ikke op");
+            return null;
+        }
         catch (Exception x) when (x is IOException or UnauthorizedAccessException)
         {
             Skip(f);
@@ -321,7 +343,15 @@ public sealed class OrderDocumentUpload
         var sha = Sha(bytes);
         if (!_stored.TryGetValue(name, out var kept) || kept.Sha != sha)
         {
-            var file = await _client.UploadFileAsync(table, name, bytes, "application/pdf", ct);
+            CloudFile file;
+            try { file = await _client.UploadFileAsync(table, name, bytes, "application/pdf", ct); }
+            catch (OptiCloudException x) when (!x.IsRejected && !x.IsAuth)
+            {
+                // The file may be stored though the answer never came: counted, see MaxUploadTries.
+                _tries[name] = (sha, _tries.TryGetValue(name, out var before) && before.Sha == sha ? before.Count + 1 : 1);
+                throw;
+            }
+            _tries.Remove(name);
             kept = new Kept(file.Name, file.ContentType, file.Reference, sha);
             _stored[name] = kept;
             SaveStored();

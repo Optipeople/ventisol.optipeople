@@ -259,7 +259,13 @@ public sealed class CloudSyncTests : IDisposable
     public async Task A_wrong_password_is_an_error_and_is_tried_again_every_quarter_of_an_hour()
     {
         var api = new FakeOptiCloud();
-        using var sync = Sync(api, password: "forkert");
+        // Each wait moves the clock on by what was waited: the client itself holds a wrong password back.
+        var mono = new Ticking();
+        using var sync = new CloudSync(FakeOptiCloud.Settings(), "forkert", _folder, m => { lock (_log) _log.Add(m); }, () => Now, api, (t, ct) =>
+        {
+            mono.Add(t);
+            return Fast(t, ct);
+        }, () => mono.Now);
 
         sync.Start();
         await Until(() => sync.Status.State == CloudState.Error);
@@ -443,6 +449,99 @@ public sealed class CloudSyncTests : IDisposable
         Assert.Equal(logins, api.Count("login"));
         Assert.Equal(1, Volatile.Read(ref loginWaits));
         Assert.Equal("Fejl: " + OptiCloudException.BadLogin, sync.Status.Text);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_password_changed_in_opticloud_is_tried_once_by_all_the_loops_together()
+    {
+        var wrong = false;
+        var api = new FakeOptiCloud
+        {
+            Override = (_, path, _) => Volatile.Read(ref wrong) && path.Contains("login")
+                ? FakeOptiCloud.Json(new { errors = new[] { new { title = "Login", message = "Invalid credentials" } } })
+                : null,
+        };
+        // Every wait is 5 ms and the clock stands still: each loop comes back as often as it likes.
+        using var sync = Sync(api);
+        var loaded = Watch(sync);
+        sync.Start();
+        await Until(() => Count(loaded) > 0 && loaded.Any(l => l.FromCloud));
+        sync.SetMachineOrders(new Dictionary<Guid, MachineOrder> { [api.Machines[0].Id] = MachineOrder.From(Code(A), Now), [api.Machines[1].Id] = MachineOrder.From(Code(B), Now) }, fromCloud: true);
+        await Until(() => sync.Status.State == CloudState.Online);
+
+        // The password is changed in OptiCloud: the token runs out, and the poll, the sender and
+        // both machines' orders all find out.
+        var before = api.LoginCount("\"password\"");
+        Volatile.Write(ref wrong, true);
+        api.ExpireToken();
+        sync.Record(In(C, 3, Now));
+        await Until(() => sync.Status.State == CloudState.Error);
+        await Task.Delay(400);
+
+        Assert.Equal(1, api.LoginCount("\"password\"") - before);
+        Assert.StartsWith("Fejl: " + OptiCloudException.BadLogin, sync.Status.Text);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task The_journal_is_pruned_at_each_new_day_while_the_app_runs()
+    {
+        var api = new FakeOptiCloud();
+        var ticks = Now.UtcTicks;
+        using var sync = new CloudSync(FakeOptiCloud.Settings(), FakeOptiCloud.Password, _folder, m => { lock (_log) _log.Add(m); },
+            () => new DateTimeOffset(Interlocked.Read(ref ticks), TimeSpan.Zero), api, Fast);
+        sync.Start();
+        await Until(() => sync.Status.State == CloudState.Online && api.Count("GetRowsPaged") > 2);
+
+        // A day the journal no longer keeps, there since the start.
+        var journal = Path.Combine(_folder, "journal");
+        Directory.CreateDirectory(journal);
+        var old = Path.Combine(journal, $"{Now.AddDays(-10):yyyy-MM-dd}.jsonl");
+        File.WriteAllText(old, "");
+        var polls = api.Count("GetRowsPaged");
+        await Until(() => api.Count("GetRowsPaged") > polls + 3);
+        Assert.True(File.Exists(old));
+
+        Interlocked.Add(ref ticks, TimeSpan.FromDays(1).Ticks);
+        await Until(() => !File.Exists(old));
+    }
+
+    [Fact]
+    public async Task Plain_http_is_only_for_this_pc()
+    {
+        var api = new FakeOptiCloud();
+        var settings = FakeOptiCloud.Settings() with { ApiBaseUrl = "http://fake.opticloud.test" };
+
+        Assert.Equal(SetupRules.HttpsOnly, await CloudSync.TestConnectionAsync(settings, FakeOptiCloud.Password, handler: api));
+        var e = await Assert.ThrowsAsync<OptiCloudException>(() => CloudSync.LoadMachinesAsync(settings, FakeOptiCloud.Password, handler: api));
+        Assert.Equal(SetupRules.HttpsOnly, e.Message);
+        // The password never left the PC.
+        Assert.Empty(api.Requests);
+
+        Assert.Null(await CloudSync.TestConnectionAsync(settings with { ApiBaseUrl = "http://localhost:5099" }, FakeOptiCloud.Password, handler: api));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Settings_saved_with_plain_http_are_not_connected_with()
+    {
+        var api = new FakeOptiCloud();
+        using var sync = Sync(api, settings: FakeOptiCloud.Settings() with { ApiBaseUrl = "http://fake.opticloud.test" });
+        sync.Start();
+
+        await Until(() => sync.Status.State == CloudState.Error);
+
+        // The reason in plain Danish on the screen, and once in the log, however long it runs.
+        Assert.Equal($"Fejl: {SetupRules.HttpsOnly}", sync.Status.Text);
+        Assert.True(sync.Record(In(A, 1, Now)));
+        await Task.Delay(200);
+        Assert.StartsWith($"Fejl: {SetupRules.HttpsOnly}", sync.Status.Text);
+        lock (_log)
+        {
+            Assert.Single(_log, l => l.Contains(SetupRules.HttpsOnly));
+            Assert.DoesNotContain(_log, l => l.Contains("Exception"));
+        }
+        // The scan waits on the PC, and nothing was sent anywhere.
+        Assert.Equal(1, sync.Status.Pending);
+        Assert.Empty(api.Requests);
     }
 
     [Fact]

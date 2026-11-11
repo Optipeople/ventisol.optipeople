@@ -23,6 +23,9 @@ public sealed record ScannerOption(string? Id, string Label)
 // The setup screen: edits a copy of the settings and hands it back on "Gem", or drops it on "Annuller".
 // It never talks to OptiCloud or the scanners itself: the owner passes in how to test the connection,
 // fetch the account's machines and list the connected scanners, and feeds it scans with OnRawScan.
+// The saved password only ever goes to the address and user it was saved for: change either, and it
+// has to be typed again before anything is tested, fetched or saved. Otherwise anyone at the screen
+// could point the app at their own server and be sent the password.
 public sealed partial class SetupViewModel : ObservableObject
 {
     public const string ConnectionFailed = "Kunne ikke forbinde til OptiCloud";
@@ -37,6 +40,8 @@ public sealed partial class SetupViewModel : ObservableObject
     readonly int _uiThread = Environment.CurrentManagedThreadId;
     readonly CancellationTokenSource _closing = new();
     readonly string? _savedPassword;
+    // The address and user the saved password belongs to.
+    readonly string _savedApiUrl, _savedUsername;
     readonly Dictionary<Guid, string> _machineNames = [];
     bool _ready, _rebuilding, _closed;
 
@@ -46,7 +51,7 @@ public sealed partial class SetupViewModel : ObservableObject
     public const string KeyboardScannerLabel = "Tastatur-scanner (USB HID)";
 
     // savedPassword is the one SettingsStore holds now (null if none). It is only used to test and fetch
-    // until a new one is typed, and is never handed back. scannerPort gives the COM port a connected
+    // until a new one is typed, only against the saved address and user, and is never handed back. scannerPort gives the COM port a connected
     // scanner is on, for its label. checkDocumentsFolder looks through a documents folder for the
     // status line under it (OrderDocumentLocator.CheckFolderAsync unless given).
     public SetupViewModel(
@@ -66,6 +71,8 @@ public sealed partial class SetupViewModel : ObservableObject
         _savedPassword = string.IsNullOrEmpty(savedPassword) ? null : savedPassword;
 
         settings = StationSettingsJson.Normalize(settings);
+        _savedApiUrl = UrlKey(settings.ApiBaseUrl);
+        _savedUsername = (settings.Username ?? "").Trim();
         Stations = [.. settings.Stations.Select(s => new SetupStationViewModel(this, s))];
         Mode = settings.Mode;
         ApiBaseUrl = settings.ApiBaseUrl;
@@ -79,7 +86,12 @@ public sealed partial class SetupViewModel : ObservableObject
         UpdateProblems();
     }
 
-    // Settings that can be saved, and the password: null to keep the saved one, "" to forget it, else the new one.
+    // Writes what "Gem" hands over: the settings, the password (null to keep the saved one, "" to forget
+    // it, else the new one) and the setup PIN (null to keep it, "" to remove it, else the new one).
+    // False when it could not be written: the screen then stays open and says so. Not set: nothing to write.
+    public Func<StationSettings, string?, string?, bool>? Persist { get; init; }
+
+    // Raised after Persist went well, with the settings and the password as given to it.
     public event Action<StationSettings, string?>? Saved;
     public event Action? Cancelled;
 
@@ -114,6 +126,7 @@ public sealed partial class SetupViewModel : ObservableObject
             if (_password.Length > 0) ForgetSaved = false;
             OnPropertyChanged(nameof(PasswordHint));
             ResetConnection();
+            UpdateProblems();
         }
     }
 
@@ -125,8 +138,55 @@ public sealed partial class SetupViewModel : ObservableObject
 
     public bool CanForgetPassword => HasSavedPassword && !ForgetSaved;
 
+    // The address or the user is not the one the saved password was saved for.
+    bool LoginChanged => !string.Equals(UrlKey(ApiBaseUrl), _savedApiUrl, StringComparison.OrdinalIgnoreCase)
+                         || !string.Equals((Username ?? "").Trim(), _savedUsername, StringComparison.Ordinal);
+
+    // The saved password can't be used for what the form says now, and no other has been typed.
+    bool MustRetypePassword => HasSavedPassword && LoginChanged && !ForgetSaved && Password.Length == 0;
+
+    static string UrlKey(string? url) => (url ?? "").Trim().TrimEnd('/');
+
     // Shown in the empty password box.
-    public string PasswordHint => ForgetSaved ? "Glemmes, når du gemmer" : HasSavedPassword ? "Gemt · skriv en ny for at skifte" : "";
+    public string PasswordHint =>
+        ForgetSaved ? "Glemmes, når du gemmer"
+        : !HasSavedPassword ? ""
+        : LoginChanged ? "Skriv adgangskoden igen"
+        : "Gemt · skriv en ny for at skifte";
+
+    partial void OnForgetSavedChanged(bool value) => UpdateProblems();
+
+    // ----- PIN-kode
+
+    // True when a setup PIN is set now.
+    public bool HasPin { get; init; }
+
+    // Typed in the PIN box: blank leaves the PIN as it is.
+    [ObservableProperty]
+    public partial string NewPin { get; set; } = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PinHint), nameof(CanRemovePin))]
+    public partial bool RemovePin { get; private set; }
+
+    public bool CanRemovePin => HasPin && !RemovePin;
+
+    // Shown in the empty PIN box.
+    public string PinHint => RemovePin ? "Fjernes, når du gemmer" : HasPin ? "Sat · skriv en ny for at skifte" : "Ingen · 4 til 8 cifre";
+
+    partial void OnNewPinChanged(string value)
+    {
+        if (value.Length > 0) RemovePin = false;
+        UpdateProblems();
+    }
+
+    // What stopped the last "Gem" from being written, or null.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Notice))]
+    public partial string? SaveError { get; private set; }
+
+    // The line beside "Gem": why the last save failed, else the first thing that stops a save.
+    public string? Notice => SaveError ?? Problem;
 
     [ObservableProperty] public partial SetupStatus ConnectionStatus { get; private set; }
     [ObservableProperty] public partial string ConnectionText { get; private set; } = "";
@@ -151,10 +211,11 @@ public sealed partial class SetupViewModel : ObservableObject
     // The first thing that stops a save, or null.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(Notice))]
     public partial string? Problem { get; private set; }
 
-    partial void OnApiBaseUrlChanged(string value) { ResetConnection(); UpdateProblems(); }
-    partial void OnUsernameChanged(string value) => ResetConnection();
+    partial void OnApiBaseUrlChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); UpdateProblems(); }
+    partial void OnUsernameChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); UpdateProblems(); }
     partial void OnAccountIdTextChanged(string value) { ResetConnection(); UpdateProblems(); }
 
     // Opening the screen: fresh scanner list, and the machine names if it can already log in.
@@ -214,13 +275,34 @@ public sealed partial class SetupViewModel : ObservableObject
         ResetConnection();
     }
 
+    [RelayCommand]
+    void ForgetPin()
+    {
+        NewPin = "";
+        RemovePin = true;
+    }
+
     [RelayCommand(CanExecute = nameof(CanSave))]
     void Save()
     {
-        if (!TryBuild(out var settings) || _closed) return;
-        string? newPassword = Password.Length > 0 ? Password : ForgetSaved ? "" : null;
+        if (!TryBuild(out var settings) || _closed || Problem is not null) return;
+        // A saved password is never kept for another address or user (Problem stops that; this is the belt).
+        string? newPassword = Password.Length > 0 ? Password : ForgetSaved || LoginChanged && HasSavedPassword ? "" : null;
+        string? newPin = NewPin.Length > 0 ? NewPin : RemovePin ? "" : null;
+        settings = StationSettingsJson.Normalize(settings);
+
+        SaveError = null;
+        bool written;
+        try { written = Persist?.Invoke(settings, newPassword, newPin) ?? true; }
+        catch { written = false; }
+        if (!written)
+        {
+            // Stay open with everything as typed, so it can be tried again.
+            SaveError = "Kunne ikke gemme. Prøv igen.";
+            return;
+        }
         Close();
-        Saved?.Invoke(StationSettingsJson.Normalize(settings), newPassword);
+        Saved?.Invoke(settings, newPassword);
     }
 
     bool CanSave() => Problem is null;
@@ -321,15 +403,18 @@ public sealed partial class SetupViewModel : ObservableObject
     {
         password = "";
         if (!TryBuild(out settings)) { fail("Konto-id ser ikke rigtigt ud"); return false; }
-        if (!SetupRules.IsValidApiUrl(settings.ApiBaseUrl)) { fail("API-adressen skal være en webadresse"); return false; }
+        if (SetupRules.ApiUrlProblem(settings.ApiBaseUrl) is { } url) { fail(url == SetupRules.HttpsOnly ? url : "API-adressen skal være en webadresse"); return false; }
         if (settings.Username is null) { fail("Skriv brugernavnet"); return false; }
         if (settings.AccountId is null) { fail("Skriv konto-id"); return false; }
-        if (CurrentPassword() is not { } p) { fail("Skriv adgangskoden"); return false; }
+        if (CurrentPassword() is not { } p) { fail(MustRetypePassword ? RetypePassword : "Skriv adgangskoden"); return false; }
         password = p;
         return true;
     }
 
-    string? CurrentPassword() => Password.Length > 0 ? Password : ForgetSaved ? null : _savedPassword;
+    const string RetypePassword = "Skriv adgangskoden igen: adressen eller brugernavnet er ændret";
+
+    // The password to log in with now. The saved one only for the address and user it was saved for.
+    string? CurrentPassword() => Password.Length > 0 ? Password : ForgetSaved || LoginChanged ? null : _savedPassword;
 
     bool TryBuild(out StationSettings settings)
     {
@@ -348,7 +433,13 @@ public sealed partial class SetupViewModel : ObservableObject
     {
         if (!_ready) return;
         var ok = TryBuild(out var s);
-        Problem = ok ? SetupRules.Problems(s).FirstOrDefault() : "Konto-id ser ikke rigtigt ud";
+        Problem = !ok ? "Konto-id ser ikke rigtigt ud"
+            : SetupRules.Problems(s).FirstOrDefault()
+              ?? (MustRetypePassword ? RetypePassword + " (eller tryk Glem)"
+                  : NewPin.Length > 0 && !SetupPin.IsValid(NewPin) ? $"PIN skal være {SetupPin.MinDigits} til {SetupPin.MaxDigits} cifre"
+                  : null);
+        // A new problem is the line to show now, not an old failed save.
+        if (Problem is not null) SaveError = null;
     }
 
     void ResetConnection()

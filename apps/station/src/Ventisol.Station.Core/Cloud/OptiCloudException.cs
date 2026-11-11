@@ -15,6 +15,10 @@ public sealed class OptiCloudException(string message, int? status = null, bool 
     // The password login itself failed. Only the login answer says BadLogin.
     public bool IsBadLogin => IsAuth && Message == BadLogin;
 
+    // How long to wait before trying again, when the one who failed knows (OptiCloudClient after
+    // a wrong password: what is left of the wait since the login that failed). Null: the usual backoff.
+    public TimeSpan? RetryAfter { get; init; }
+
     public const string Unreachable = "Kan ikke nå OptiCloud";
     public const string BadLogin = "Forkert brugernavn eller adgangskode";
     public const string Unexpected = "Uventet svar fra OptiCloud";

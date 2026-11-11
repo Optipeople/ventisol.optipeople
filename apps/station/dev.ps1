@@ -15,7 +15,12 @@ $appArgs = if ($Empty) { @() } else { @("--showcase") }
 $slots = (Join-Path $project "bin\dev-a"), (Join-Path $project "bin\dev-b")
 $slot = 0
 
-function Stop-App { Get-Process VentisolStation -ErrorAction SilentlyContinue | Stop-Process -Force }
+# Only the dev build, told by where its exe is: an installed app on the same PC is left running.
+function Stop-App {
+    Get-Process VentisolStation -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and ($slots -contains (Split-Path $_.Path -Parent)) } |
+        Stop-Process -Force
+}
 
 function Restart-App {
     $dir = $slots[$script:slot]

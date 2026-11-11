@@ -51,4 +51,21 @@ public class ReleaseFeedTests
     {
         Assert.Null(ReleaseFeed.LatestFullVersion(json));
     }
+
+    [Fact]
+    public void An_asset_with_a_type_or_version_that_is_not_text_is_passed_over()
+    {
+        const string odd = """
+            {"Assets":[
+              {"Version":106,"Type":"Full"},
+              {"Version":"1.0.5","Type":5},
+              {"Version":["1.0.9"],"Type":"Full"},
+              {"Version":null,"Type":"Full"},
+              {"Version":"1.0.4","Type":"Full"}
+            ]}
+            """;
+
+        Assert.Equal(new Version(1, 0, 4), ReleaseFeed.LatestFullVersion(odd));
+        Assert.Null(ReleaseFeed.LatestFullVersion("""{"Assets":[{"Version":7,"Type":true}]}"""));
+    }
 }

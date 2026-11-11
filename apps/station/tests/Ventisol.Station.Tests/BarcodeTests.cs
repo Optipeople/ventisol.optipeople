@@ -152,4 +152,65 @@ public class BarcodeTests
     {
         Assert.False(Barcode.TryParse(text, out _));
     }
+
+    // What else gets scanned on a factory floor: the retail code on a box of screws or a bottle.
+    [Theory]
+    [InlineData("5701234567890")]  // EAN-13: with a 0 put first it would read as order 57012
+    [InlineData("4006381333931")]  // EAN-13: order 40063
+    [InlineData("036000291452")]   // UPC-A: order 36000
+    [InlineData("123456789012")]   // 12 digits with no leading 0: an order has five digits
+    [InlineData("158556050103")]
+    public void An_incoming_retail_code_is_refused(string text)
+    {
+        Assert.False(Barcode.TryParseScan(text, out _));
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(Exists: _ => false, Recent: 58830)));
+    }
+
+    [Theory]
+    [InlineData("057999050103")]   // 12 digits
+    [InlineData("57999050103")]    // 11 digits, the leading 0 lost
+    [InlineData("05799903010114")] // 14 digits, order first, the only layout that fits
+    [InlineData("12057999020116")] // 14 digits, position first, the only layout that fits
+    [InlineData("03057999010105")] // 14 digits that fit both ways, both too old
+    public void An_incoming_scan_older_than_the_oldest_order_is_refused_unless_the_order_is_known(string text)
+    {
+        Assert.False(Barcode.TryParseScan(text, out _));
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(Exists: _ => false, Recent: 57999)));
+
+        // A remake: the documents folder has the old order's PDF.
+        Assert.True(Barcode.TryParseScan(text, out var b, new OrderHints(Exists: o => o == 57999)));
+        Assert.Equal(57999, b.Order);
+    }
+
+    [Fact]
+    public void The_oldest_order_itself_is_read()
+    {
+        Assert.True(Barcode.TryParseScan($"0{Barcode.OldestOrder}010101", out var b));
+        Assert.Equal(Barcode.OldestOrder, b.Order);
+    }
+
+    // What is already stored (outbox files, journal lines, rows in OptiCloud) is read as it always was.
+    [Theory]
+    [InlineData("057999050103", 57999)]
+    [InlineData("57999050103", 57999)]
+    [InlineData("05799903010114", 57999)]
+    [InlineData("12057999020116", 57999)]
+    [InlineData("042117030201", 42117)]
+    [InlineData("158556050103", 58556)] // 12 digits with another first digit were read too
+    public void A_stored_barcode_is_read_whatever_its_order(string text, int order)
+    {
+        Assert.True(Barcode.TryParse(text, out var b));
+        Assert.Equal(order, b.Order);
+    }
+
+    [Fact]
+    public void An_incoming_scan_reads_like_a_stored_one_when_it_is_an_element()
+    {
+        foreach (var text in new[] { "058556050103", "58556050103", "05883003010114", "03058830010105" })
+        {
+            Assert.True(Barcode.TryParse(text, out var stored));
+            Assert.True(Barcode.TryParseScan(text, out var scanned));
+            Assert.Equal(stored, scanned);
+        }
+    }
 }

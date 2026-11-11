@@ -501,7 +501,10 @@
                             Visibility="{Binding CanLeavePages, Converter={StaticResource Shown}}" />
                     <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" Text="Hele produktionslisten" />
                 </DockPanel>
-                <ScrollViewer x:Name="PagesScroller" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                <!-- Every page keeps its place, but only the ones on screen and their neighbours hold a
+                     picture: the view tells the view model which those are as it scrolls. -->
+                <ScrollViewer x:Name="PagesScroller" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly"
+                              ScrollChanged="OnPagesScrolled">
                     <ItemsControl ItemsSource="{Binding Pages}" x:Name="PagesList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:PdfPageViewModel}">

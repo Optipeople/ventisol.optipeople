@@ -20,8 +20,16 @@ public static partial class CradleFinder
     // Devices already logged as having no location path, so it is said once, not every poll.
     static readonly HashSet<string> NoLocationLogged = new(StringComparer.OrdinalIgnoreCase);
 
-    // The USB serial devices present now. Zebra cradles only, if there is at least one;
-    // otherwise any USB serial device, so another scanner works on a dev PC.
+    // Set to 1 on a developer's PC to read any USB serial device as a scanner when no Zebra cradle is
+    // plugged in. Never on a station PC: there the other USB serial devices are machines, and opening
+    // one raises its DTR line.
+    public const string AnySerialVariable = "VENTISOL_STATION_ANY_SERIAL";
+
+    static readonly bool AnySerial = Environment.GetEnvironmentVariable(AnySerialVariable) is "1" or "true";
+
+    // The scanner cradles present now: USB serial devices from Zebra (USB vendor id 05E0), which is
+    // how a cradle in CDC mode says what it is. Nothing to set up; plugging one in is enough.
+    // Any other USB serial device is left unopened.
     public static IReadOnlyList<Cradle> Find(Action<string>? log = null)
     {
         var all = new List<Cradle>();
@@ -39,7 +47,8 @@ public static partial class CradleFinder
                 all.Add(new Cradle(IdOf(pnpId!, usb, log), com.Groups[1].Value, usb.IsZebra, name));
             }
         }
-        return all.Any(c => c.IsZebra) ? all.Where(c => c.IsZebra).ToList() : all;
+        if (all.Any(c => c.IsZebra) || !AnySerial) return all.Where(c => c.IsZebra).ToList();
+        return all;
     }
 
     static string IdOf(string pnpId, UsbDeviceId usb, Action<string>? log)

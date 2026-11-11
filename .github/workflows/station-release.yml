@@ -1,5 +1,9 @@
-# Every push to main that touches the station app builds, tests, packages and publishes version
+# Every push to main that touches the station app's source builds, tests, packages and publishes version
 # 1.0.<run number>. The station PCs pick it up within a minute and install it when the floor is quiet.
+# Only what goes into the app triggers it (src, the shared build props, the solution, this file):
+# a change to the tests, the tools or the README alone ships nothing. Only main can publish, also
+# when started by hand. Actions are pinned to a commit, with the version it was at beside it, and
+# packages are restored in locked mode (packages.lock.json), so what is built is what was reviewed.
 # This repo is private, so the update packages go to a public repo (UPDATE_REPO) as a GitHub Release.
 # The station PCs read that repo without a token (UpdateService.DefaultUrl must point at it).
 #
@@ -16,7 +20,11 @@ name: station-release
 on:
   push:
     branches: [main]
-    paths: ['apps/station/**', '.github/workflows/station-release.yml']
+    paths:
+      - 'apps/station/src/**'
+      - 'apps/station/Directory.Build.props'
+      - 'apps/station/Ventisol.Station.slnx'
+      - '.github/workflows/station-release.yml'
   workflow_dispatch:
 
 permissions:
@@ -36,14 +44,16 @@ env:
 
 jobs:
   release:
+    # A run started by hand from another branch must not publish to the station PCs.
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     defaults:
       run:
         shell: pwsh
         working-directory: apps/station
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.0.x
 
@@ -52,12 +62,12 @@ jobs:
         id: version
         run: '"value=1.0.${{ github.run_number }}" >> $env:GITHUB_OUTPUT'
 
-      - run: dotnet restore Ventisol.Station.slnx
+      - run: dotnet restore Ventisol.Station.slnx --locked-mode
       - run: dotnet build Ventisol.Station.slnx -c Release --no-restore -p:Version=${{ steps.version.outputs.value }}
       - run: dotnet test Ventisol.Station.slnx -c Release --no-build
 
       # Self-contained, so the PC needs no .NET installed. Version ends up in AssemblyInformationalVersion,
-      # which the menu shows.
+      # which the menu shows. Its own restore (for win-x64) is locked too: CI is set, see Directory.Build.props.
       - name: Publish
         run: >
           dotnet publish src/Ventisol.Station/Ventisol.Station.csproj -c Release -r win-x64 --self-contained

@@ -31,6 +31,10 @@ public sealed record RowsPage(IReadOnlyList<CloudRow> Rows, int? Count, int? Tot
 // token fresh: on a 401 it refreshes once (one refresh for all callers at a time) and tries
 // again once; when the refresh fails it logs in with the password. Never logs anything, so
 // the password and tokens can't end up in a log. Every failure is an OptiCloudException.
+// A password OptiCloud turned down is not sent again for Outbox.LoginBackoff, whoever asks: every
+// caller gets the same failure back (with RetryAfter) without the server hearing of it, so the
+// loops using one client make one login between them, not one each. A new password means a new
+// client (CloudSync makes one per settings), which starts afresh.
 public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
@@ -40,8 +44,13 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
     readonly bool _ownsHttp;
     readonly string _username, _password;
     readonly SemaphoreSlim _auth = new(1, 1);
-    string? _token, _refreshToken;
-    DateTimeOffset? _expires;
+    volatile string? _token;
+    string? _refreshToken;
+    // When the token runs out, as UTC ticks; 0: not known. Read outside _auth, so not a struct.
+    long _expiresTicks;
+    // The wrong password's failure and when it came (on Clock). Under _auth.
+    OptiCloudException? _badLogin;
+    DateTimeOffset _badLoginAt;
 
     public OptiCloudClient(string baseUrl, string username, string password, HttpMessageHandler? handler = null)
         : this(new HttpClient(handler ?? new HttpClientHandler(), disposeHandler: handler is null) { BaseAddress = BaseUri(baseUrl), Timeout = System.Threading.Timeout.InfiniteTimeSpan },
@@ -58,6 +67,16 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
     static Uri BaseUri(string baseUrl) => new((string.IsNullOrWhiteSpace(baseUrl) ? StationSettings.DefaultApiBaseUrl : baseUrl.Trim()).TrimEnd('/') + "/");
 
     public bool IsLoggedIn => _token is not null;
+
+    // Times the wait after a wrong password. Monotonic unless given: the PC's clock may be set.
+    public Func<DateTimeOffset> Clock { get; init; } = Monotonic();
+
+    static Func<DateTimeOffset> Monotonic()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var ticks = System.Diagnostics.Stopwatch.GetTimestamp();
+        return () => start + System.Diagnostics.Stopwatch.GetElapsedTime(ticks);
+    }
 
     // How far the PC's clock is ahead of OptiCloud's (negative: behind), from the Date header of
     // the last answer that had one; null before. To a second or so: the header has whole seconds.
@@ -146,11 +165,14 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
 
     // The machine's current order ("" for none). None comes two ways: a machine never given an
     // order has all-zero ids and number null; a cleared one runs a hidden default order
-    // (isDefaultPartInfo true, number "").
-    public async Task<string> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
+    // (isDefaultPartInfo true, number ""). Both are objects: an answer with no data at all says
+    // nothing about the machine and comes back as null (not known). Reading it as "no order" would
+    // end the element at its station; failing on it could keep an order from ever being set
+    // (see MachineOrders for what is done with it).
+    public async Task<string?> GetCurrentOrderAsync(Guid machineId, CancellationToken ct = default)
     {
         var d = await GetAsync($"api/RealtimeDashboard/GetCurrentOrderActiveByMachineId?machineId={machineId}", ct);
-        if (d.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return "";
+        if (d.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
         if (d.ValueKind != JsonValueKind.Object) throw new OptiCloudException(OptiCloudException.Unexpected);
         if (d.Str("isDefaultPartInfo") == "true" || d.Prop("partOrderNumberId") is not null && d.Guid("partOrderNumberId") is null) return "";
         return d.Str("number")?.Trim() ?? "";
@@ -310,7 +332,7 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         finally { _auth.Release(); }
     }
 
-    bool Expiring => _expires is { } e && DateTimeOffset.UtcNow > e - TimeSpan.FromMinutes(1);
+    bool Expiring => Volatile.Read(ref _expiresTicks) is var e and not 0 && DateTimeOffset.UtcNow.Ticks > e - TimeSpan.TicksPerMinute;
 
     // Single flight: whoever comes second finds the token already renewed and goes on with it.
     async Task RenewAsync(string? failed, CancellationToken ct)
@@ -339,10 +361,35 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         await PasswordLoginAsync(ct);
     }
 
-    Task PasswordLoginAsync(CancellationToken ct) => TokenAsync(new { grant_type = "password", username = _username, password = _password }, ct);
+    // Under _auth. A password turned down less than Outbox.LoginBackoff ago is not tried: tried
+    // often it can get the user locked out, and each loop would try it on a timer of its own.
+    async Task PasswordLoginAsync(CancellationToken ct)
+    {
+        if (_badLogin is { } bad)
+        {
+            var left = Outbox.LoginBackoff - (Clock() - _badLoginAt);
+            // A clock that went back counts as the whole wait over, not as a longer one.
+            if (left > TimeSpan.Zero && left <= Outbox.LoginBackoff)
+                throw new OptiCloudException(bad.Message, bad.Status, auth: true) { RetryAfter = left < MinRetry ? MinRetry : left };
+            _badLogin = null;
+        }
+
+        try { await TokenAsync(new { grant_type = "password", username = _username, password = _password }, ct); }
+        catch (OptiCloudException x) when (x.IsBadLogin)
+        {
+            _badLogin = x;
+            _badLoginAt = Clock();
+            throw;
+        }
+    }
+
+    // A caller woken a moment early waits this at least, so it can't spin.
+    static readonly TimeSpan MinRetry = TimeSpan.FromSeconds(1);
 
     // The login answer is not in the envelope. Bad credentials can be a 400, a 401, or a 200
-    // with errors and no token: it only worked if there is a token.
+    // with errors and no token: it only worked if there is a token. A 200 with neither (the
+    // login page of a guest network, a proxy's answer) says nothing about the password, so it
+    // is an unexpected answer with the usual short waits, not a quarter of an hour.
     async Task TokenAsync(object body, CancellationToken ct)
     {
         var (status, text) = await RawAsync(HttpMethod.Post, "api/Authentication/login", () => new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"), null, Timeout, ct);
@@ -356,12 +403,13 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
             _token = token;
             _refreshToken = root.Str("refresh_token") is { Length: > 0 } r ? r : null;
             var seconds = root.Int("expires_in");
-            _expires = seconds > 0 ? DateTimeOffset.UtcNow.AddSeconds(seconds.Value) : null;
+            Volatile.Write(ref _expiresTicks, seconds > 0 ? DateTimeOffset.UtcNow.AddSeconds(seconds.Value).Ticks : 0);
             return;
         }
 
         _token = null;
-        if (ok || status is 400 or 401) throw new OptiCloudException(OptiCloudException.BadLogin, status, auth: true);
+        if (status is 400 or 401 || ok && FirstError(root) is not null) throw new OptiCloudException(OptiCloudException.BadLogin, status, auth: true);
+        if (ok) throw new OptiCloudException(OptiCloudException.Unexpected, status);
         throw StatusError(status);
     }
 

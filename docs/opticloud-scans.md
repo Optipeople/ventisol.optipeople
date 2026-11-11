@@ -25,7 +25,7 @@ missing column, on first connect (`MasterData/GetTables`, `CreateTable`, `GetCol
 | Column | Type (`dataType`) | What |
 |---|---|---|
 | `ScanId` | String (0), key, unique | uuid made by the station app, so a re-send is recognised (see Writing) |
-| `Barcode` | String (0) | the 12 digits, e.g. `058556050103` |
+| `Barcode` | String (0) | the 12 digits, e.g. `058556050103` (which scans count as an element: see Writing) |
 | `OrderNo` | Int (2) | `58556` |
 | `Position` | Int (2) | `5` |
 | `SubPosition` | Int (2) | `1` (01 is the position itself, as on the label) |
@@ -75,6 +75,11 @@ Nothing in the apps uses it yet.
 
 ## Writing
 
+- Only an element is recorded. A new scan must have the digits of a label, begin with 0, and have
+  an order of 58000 or later, or an older order whose PDF is in the documents folder (a remake).
+  That keeps retail codes (EAN-13, UPC-A) out. The rule is for new scans only
+  (`Barcode.TryParseScan`): what is already in the outbox, the journal or the table is read
+  whatever its order (`Barcode.TryParse`), so nothing stored is dropped by it.
 - Scans go to an outbox on the station PC first (one file per scan) and are sent oldest first,
   with backoff when OptiCloud can't be reached. A restart or a network outage loses nothing.
 - A re-send of a scan that already got in (the app stopped between sending and crossing it off)
@@ -92,6 +97,14 @@ Nothing in the apps uses it yet.
   by its `ScanId`, as above.
 - A sent scan whose file can't be deleted (held by a virus scanner...) is remembered as sent and
   not sent again; the file is deleted later, with backoff.
+- A waiting file that can't be opened right now (held by a virus scanner or a backup) stays in
+  line and is tried again with backoff. After 20 tries (about a quarter of an hour) it is handled
+  as a file that can't be read: rebuilt from the journal, else moved to `outbox\failed`, and
+  logged, so one stuck file doesn't hold every later scan back.
+- The API address must be `https://` (plain `http://` only for `localhost` and `127.0.0.1`). A PC
+  with another `http://` address saved does not connect: the status is
+  `Fejl: API-adressen skal begynde med https://`, it is logged once, and the scans wait in the
+  outbox until the address is put right in Opsætning.
 - A PC switched from Scan to Viewer mode still sends what waits in its outbox. A viewer never
   records scans of its own.
 - A 404 on `CreateRow` means the table is gone: the app makes it again (with its columns) and
@@ -121,7 +134,11 @@ it. A viewer has no journal: it records nothing.
 - `GET /api/MasterData/GetRowsPaged/{tableId}?page=1&pageSize=500&Orderby=ScanTime&IsAscending=false`
   returns `data: { rows: [{ id, createdDate, values: {...} }], count, totalPage, ... }`.
 - There is no date filter. Read pages newest first and stop at the first row older than the period wanted.
-  If the ordering is ignored, read all pages (the app stops at 50).
+  The app stops after 50 pages. If the ordering is ignored, the newest rows may be anywhere: the
+  app then reads from the last page backwards and stops at the first row older than the period,
+  as long as those rows lie in time order, and after 50 pages at most if they don't. With no page
+  count in the answer it reads on to the last page instead, 50 more pages at most. Hitting the cap
+  is logged once (`stoppede efter 50 sider`).
 - The app reads the last 36 hours, not just today: an element scanned in before midnight and out
   in the morning must still be in progress after a restart in the night (an update, a reboot).
   What is done is then limited to today (see Rules).
@@ -156,6 +173,12 @@ its `_doc`). Change a rule there and here first.
 - Done today: the work records that end today (local midnight on). One that spans midnight counts
   for the day it ends.
 - Time per order = the sum over its elements and stations; time in progress counts up to now.
+- A station's utilisation is its time worked inside the day so far, over the day so far. The day
+  so far starts at the first scan inside the day: an element counts from its `In`, or from its
+  `Out` when its `In` was before the day (from now, while it is still in progress). So an element
+  left in over night neither stretches the day back to midnight nor gets the night as work:
+  In 15:00 yesterday and Out 07:10 at one station, another working 07:00 to 14:00, seen at 15:00,
+  gives that other station 7 of 8 hours.
 - No order is called packed or done: the scans can't tell that without the order's element count.
   An order not in progress shows the station it was last scanned out at.
 
@@ -191,6 +214,9 @@ in step with the station, so OptiCloud's order time and reports follow the scans
 - `GET /api/RealtimeDashboard/GetCurrentOrderActiveByMachineId?machineId=` reads what it has.
   No order comes two ways: a machine never given one has all-zero ids and `number: null`; a
   cleared one has `isDefaultPartInfo: true` and `number: ""`. Both count as none.
+  An answer with no `data` at all (null or missing; not seen live) says nothing about the machine.
+  It is "not known": as a verify read it decides nothing, and as the read before a set it counts
+  as none, so the element wished is still set. It is logged once (`svaret var tomt`).
 - `SetOrderToMachine` ignores custom fields, so they go by a call of their own once the machine is
   known to run the element (after a set, or when a read finds it already there, as after a
   restart): `POST /api/PartOrderNumber/ExternalSetPartOrder`
@@ -216,7 +242,9 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   as it is while the station has nothing in progress. A scan In still sets the element over it.
 - OptiPeople leads when someone stops or changes an order there ("Start New Order" on the
   dashboard): a machine in step on an element is read again every 5 seconds, and when it no
-  longer runs that element it is not set back (that would split the run). The station ends the
+  longer runs that element it is not set back (that would split the run). Two reads in a row must
+  find the same other order (or none) for that to count: one odd answer never ends an element,
+  and a read with no data starts the two over. The station ends the
   element as an Out, recorded like a scanned one (journal, outbox, `VentisolScans`), and logs
   `ordre X stoppet i OptiPeople, afsluttet på station N`. The machine is then left alone, also
   when someone started another order on it by hand, until its station scans in an element again.
@@ -230,7 +258,8 @@ in step with the station, so OptiCloud's order time and reports follow the scans
   OptiPeople after the settle, as after any Out. A viewer has no stop button.
 - Nothing is ever set while the machine's order is unknown. After a failed call (it may have got
   in) the machine is read again first. A read that fails for any reason (no network, refused, an
-  answer we can't use) is retried with backoff, never skipped.
+  answer we can't use) is retried with backoff, never skipped. The one exception is the answer
+  with no `data` above: it must not keep an order off a machine for good.
 - Failures wait 2, 5, 15, 30, then every 60 seconds (a wrong password 15 minutes), and then send
   whatever is wished by then. Settle and backoff run on a monotonic clock. Each distinct failure
   is logged once until a machine is in step again; each set is logged. Its own loop: a failure
@@ -251,6 +280,8 @@ Bearer token from `POST /api/Authentication/login` (`grant_type=password`), refr
 The account id comes from `GET /api/User/GetCurrentUser` (`data.accountId`).
 A wrong password is tried again only every 15 minutes, also when the network changes, so the
 station can't get the user locked out; other failures back off 2, 5, 15, 30, then every 60 seconds.
+The password and the tokens only go over `https://` (or to this PC itself), and the saved password
+only to the address and user it was saved for: change either in Opsætning and it is typed again.
 
 ## Open with the backend owner
 

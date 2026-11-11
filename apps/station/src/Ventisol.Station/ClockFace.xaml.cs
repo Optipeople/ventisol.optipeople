@@ -2,21 +2,39 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace Ventisol.Station;
 
 // Moves like a Swiss railway clock: the seconds hand sweeps round in 58.5 seconds, waits at 12,
-// and the minute hand jumps when the minute is full. Redrawn with the screen while it is shown.
+// and the minute hand jumps when the minute is full. Redrawn 20 times a second (a third of a degree
+// a step, which reads as a sweep), and only while it is loaded and on screen.
 public partial class ClockFace : UserControl
 {
     const double Sweep = 58.5;
+
+    // One timer for the life of the face: starting it twice is still one tick.
+    readonly DispatcherTimer _timer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(50) };
 
     public ClockFace()
     {
         InitializeComponent();
         DrawMarks();
-        Loaded += (_, _) => { CompositionTarget.Rendering += OnFrame; OnFrame(null, EventArgs.Empty); };
-        Unloaded += (_, _) => CompositionTarget.Rendering -= OnFrame;
+        _timer.Tick += (_, _) => Draw();
+        Loaded += (_, _) => Run();
+        Unloaded += (_, _) => _timer.Stop();
+        IsVisibleChanged += (_, _) => Run();
+    }
+
+    // Runs while the face is in a window and shown (not on a page or in a tile that is hidden).
+    void Run()
+    {
+        if (IsLoaded && IsVisible)
+        {
+            Draw();
+            _timer.Start();
+        }
+        else _timer.Stop();
     }
 
     // 60 marks, every fifth a thick hour bar. They go under the hands.
@@ -39,7 +57,7 @@ public partial class ClockFace : UserControl
         }
     }
 
-    void OnFrame(object? sender, EventArgs e)
+    void Draw()
     {
         var now = DateTime.Now;
         var seconds = now.Second + now.Millisecond / 1000.0;

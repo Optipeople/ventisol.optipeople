@@ -370,7 +370,7 @@
                     </StackPanel>
                 </DockPanel>
 
-                <!-- What stops a save, and the two ways out -->
+                <!-- What stops a save (or why the last one failed), and the two ways out -->
                 <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="0,20,0,0" Margin="0,8,0,0">
                     <DockPanel>
                         <Button DockPanel.Dock="Right" Style="{StaticResource BarButtonPrimary}" Height="48" MinWidth="128" Content="Gem"
@@ -381,14 +381,14 @@
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Problem}" Value="{x:Null}">
+                                        <DataTrigger Binding="{Binding Notice}" Value="{x:Null}">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
                             <Ellipse Style="{StaticResource StatusDot}" Fill="{StaticResource Alarm}" />
-                            <TextBlock Style="{StaticResource Left}" FontSize="16" Foreground="{StaticResource AlarmText}" Text="{Binding Problem}" />
+                            <TextBlock Style="{StaticResource Left}" FontSize="16" Foreground="{StaticResource AlarmText}" Text="{Binding Notice}" />
                         </StackPanel>
                     </DockPanel>
                 </Border>
@@ -576,7 +576,7 @@
 
                         <!-- ===== Ordredokumenter ===== -->
                         <TextBlock Style="{StaticResource Section}" Text="ORDREDOKUMENTER" />
-                        <StackPanel Width="880" HorizontalAlignment="Left" Margin="0,0,0,28">
+                        <StackPanel Width="880" HorizontalAlignment="Left">
                             <Border Style="{StaticResource Row}">
                                 <DockPanel>
                                     <TextBlock Style="{StaticResource Left}" Width="220" Text="Mappe med ordredokumenter" TextWrapping="Wrap" />
@@ -622,6 +622,41 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                             </StackPanel>
+                        </StackPanel>
+
+                        <!-- ===== PIN-kode ===== -->
+                        <!-- Optional. Shown as typed, not as dots: a PIN typed wrong here would lock the setup. -->
+                        <TextBlock Style="{StaticResource Section}" Text="PIN-KODE" />
+                        <StackPanel Width="880" HorizontalAlignment="Left" Margin="0,0,0,28">
+                            <Border Style="{StaticResource Row}">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource Left}" Width="220" Text="PIN til opsætning" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource BarButton}" Margin="10,0,0,0" Content="Fjern"
+                                            ToolTip="Fjern PIN-koden, når du trykker Gem"
+                                            Command="{Binding ForgetPinCommand}"
+                                            Visibility="{Binding CanRemovePin, Converter={StaticResource Shown}}" />
+                                    <Grid>
+                                        <TextBox FontFamily="{StaticResource Mono}" MaxLength="8" InputScope="Number"
+                                                 PreviewTextInput="OnPinTextInput"
+                                                 Text="{Binding NewPin, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock FontSize="17" Margin="13,0,0,0" IsHitTestVisible="False" Text="{Binding PinHint}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource Left}">
+                                                    <Setter Property="Foreground" Value="{StaticResource Quiet}" />
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding NewPin}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DockPanel>
+                            </Border>
+                            <TextBlock Style="{StaticResource Small}" Margin="220,16,0,0" TextWrapping="Wrap"
+                                       Text="Med en PIN skal den tastes for at åbne Opsætning. Uden PIN kan alle åbne den." />
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>

@@ -1,5 +1,6 @@
 <!-- Opens from the logo. Anyone may look: version, connection, updates, scanners.
-     Layout and setup are open for now; a PIN may come later. DataContext is the MainViewModel. -->
+     The layout is open to all. The setup asks for the setup PIN when one is set (in the setup itself);
+     the window does the asking. DataContext is the MainViewModel. -->
 <UserControl x:Class="Ventisol.Station.MenuPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -48,7 +49,7 @@
             <Image Source="{StaticResource OptipeopleLogoWhite}" Height="20" HorizontalAlignment="Left" VerticalAlignment="Center" />
         </DockPanel>
 
-        <!-- Setup: open for now, no PIN (the plan has no login on the floor yet) -->
+        <!-- Setup: behind the setup PIN when one is set, open until then -->
         <Button DockPanel.Dock="Bottom" Cursor="Hand" Focusable="False" Click="OnSetup" ToolTip="Opsætning">
             <Button.Template>
                 <ControlTemplate TargetType="Button">
@@ -72,7 +73,7 @@
             </Button.Template>
         </Button>
 
-        <!-- Layout: open for now, like the setup -->
+        <!-- Layout: open to all -->
         <Button DockPanel.Dock="Bottom" Margin="0,0,0,12" Cursor="Hand" Focusable="False" Click="OnArrange" ToolTip="Tilpas layout">
             <Button.Template>
                 <ControlTemplate TargetType="Button">

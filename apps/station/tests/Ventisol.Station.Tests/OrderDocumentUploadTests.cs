@@ -577,4 +577,72 @@ public sealed class OrderDocumentUploadTests : IDisposable
         Assert.Equal(2, status.Files);
         Assert.Equal(["58721_20261022.pdf", "58721_20261101.pdf"], locator.IndexedFiles!.Select(e => Path.GetFileName(e.Path)).Order());
     }
+
+    [Fact(Timeout = 10000)]
+    public async Task An_upload_that_keeps_failing_is_given_up_so_it_leaves_no_more_files_behind()
+    {
+        Put("58721_20261022.pdf");
+        var api = new FakeOptiCloud();
+        // The file may be stored each time, but the answer never says so.
+        api.Override = (_, path, _) => path.Contains("MasterDataBlob/Upload") ? new HttpResponseMessage(System.Net.HttpStatusCode.BadGateway) : null;
+        using var client = api.Client();
+        var upload = Upload(api, client);
+
+        for (var round = 1; round < OrderDocumentUpload.MaxUploadTries; round++)
+            await Assert.ThrowsAsync<OptiCloudException>(() => upload.SyncOnceAsync());
+        // The last try: the file is left alone from now on, and the round goes on.
+        Assert.Equal(0, await upload.SyncOnceAsync());
+        Assert.Equal(OrderDocumentUpload.MaxUploadTries, api.Count("MasterDataBlob/Upload"));
+        lock (_log) Assert.Single(_log, l => l.Contains("prøves ikke igen"));
+
+        // OptiCloud is fine again, but this file is not sent a sixth time.
+        api.Override = null;
+        Assert.Equal(0, await upload.SyncOnceAsync());
+        Assert.Equal(OrderDocumentUpload.MaxUploadTries, api.Count("MasterDataBlob/Upload"));
+
+        // Written again, it is a new file: it goes up.
+        Put("58721_20261022.pdf", Pdf("again"), Written.AddHours(1));
+        Assert.Equal(1, await upload.SyncOnceAsync());
+        Assert.Single(api.Stored);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task An_upload_that_fails_a_few_times_and_then_works_starts_counting_afresh()
+    {
+        Put("58721_20261022.pdf");
+        var api = new FakeOptiCloud();
+        api.Override = (_, path, _) => path.Contains("MasterDataBlob/Upload") ? new HttpResponseMessage(System.Net.HttpStatusCode.BadGateway) : null;
+        using var client = api.Client();
+        var upload = Upload(api, client);
+        for (var round = 1; round < OrderDocumentUpload.MaxUploadTries; round++)
+            await Assert.ThrowsAsync<OptiCloudException>(() => upload.SyncOnceAsync());
+
+        api.Override = null;
+
+        Assert.Equal(1, await upload.SyncOnceAsync());
+        Assert.Single(api.Stored);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_file_too_big_to_be_an_order_document_is_not_read_or_put_in_opticloud()
+    {
+        var big = Put("58721_20261022.pdf");
+        Put("58722_20261021.pdf");
+        var api = new FakeOptiCloud();
+        using var client = api.Client();
+        var reads = 0;
+        var upload = Upload(api, client, readFile: path =>
+        {
+            if (path != big) return File.ReadAllBytes(path);
+            reads++;
+            throw new OrderDocumentTooLargeException(path, OrderDocuments.MaxPdfBytes + 1);
+        });
+
+        Assert.Equal(1, await upload.SyncOnceAsync());
+        await upload.SyncOnceAsync();
+
+        Assert.Equal("58722_20261021.pdf", Assert.Single(api.Stored).Name);
+        Assert.Equal(1, reads);
+        lock (_log) Assert.Single(_log, l => l.Contains("for stor"));
+    }
 }

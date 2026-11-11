@@ -24,6 +24,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The app's own file handling, which needs no window: compiled into the tests from the app's
+         source, as the app is a Windows project and the tests are not. -->
+    <Compile Include="..\..\src\Ventisol.Station\AtomicFile.cs" Link="App\AtomicFile.cs" />
+    <Compile Include="..\..\src\Ventisol.Station\RestartLog.cs" Link="App\RestartLog.cs" />
+    <Compile Include="..\..\src\Ventisol.Station\SetupPin.cs" Link="App\SetupPin.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Ventisol.Station.Core\Ventisol.Station.Core.csproj" />
   </ItemGroup>
 

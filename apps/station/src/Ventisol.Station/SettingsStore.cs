@@ -6,7 +6,7 @@ using Ventisol.Station.Core;
 namespace Ventisol.Station;
 
 // What the setup screen sets, kept on this PC next to the layout. Never throws: with nothing saved,
-// or a file that can't be read, the app starts from StationSettings.Default.
+// or a file that can't be read, the app starts from StationSettings.Default, and the log says so.
 // The API password is kept apart, encrypted with DPAPI for this Windows user, so only this user on
 // this PC can read it back. It is never written as plain text, and never logged.
 static class SettingsStore
@@ -21,13 +21,20 @@ static class SettingsStore
 
     public static StationSettings Load()
     {
-        try { return StationSettingsJson.Deserialize(File.ReadAllText(SettingsFile)) ?? StationSettings.Default; }
-        catch { return StationSettings.Default; } // None saved yet, or unreadable.
+        // None saved yet: the defaults, and nothing to say.
+        if (AtomicFile.TryRead(SettingsFile, Log.Write) is not { } text) return StationSettings.Default;
+        try
+        {
+            if (StationSettingsJson.Deserialize(text) is { } settings) return settings;
+            Log.Write("settings.json holds no settings: starting from the defaults, with OptiCloud not set up");
+        }
+        catch (Exception e) { Log.Write($"settings.json could not be read: starting from the defaults, with OptiCloud not set up: {e.Message}"); }
+        return StationSettings.Default;
     }
 
     // False when it could not be written; the settings in memory still hold until the app restarts.
     public static bool Save(StationSettings settings) =>
-        WriteAtomic(SettingsFile, Encoding.UTF8.GetBytes(StationSettingsJson.Serialize(settings)));
+        AtomicFile.TryWrite(SettingsFile, StationSettingsJson.Serialize(settings), Log.Write);
 
     public static bool HasPassword => File.Exists(PasswordFile);
 
@@ -39,7 +46,13 @@ static class SettingsStore
             plain = ProtectedData.Unprotect(File.ReadAllBytes(PasswordFile), Entropy, DataProtectionScope.CurrentUser);
             return Encoding.UTF8.GetString(plain);
         }
-        catch { return null; } // None saved, or saved by another Windows user or PC.
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return null; } // None saved.
+        catch (Exception e)
+        {
+            // Saved by another Windows user or on another PC, or damaged. The message never holds the password.
+            Log.Write($"The saved OptiCloud password could not be read, it must be typed again in the setup: {e.Message}");
+            return null;
+        }
         finally { if (plain is not null) CryptographicOperations.ZeroMemory(plain); }
     }
 
@@ -47,28 +60,22 @@ static class SettingsStore
     {
         if (string.IsNullOrEmpty(password)) return ClearPassword();
         var plain = Encoding.UTF8.GetBytes(password);
-        try { return WriteAtomic(PasswordFile, ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser)); }
-        catch { return false; }
+        try { return AtomicFile.TryWrite(PasswordFile, ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser), Log.Write); }
+        catch (Exception e)
+        {
+            Log.Write($"The OptiCloud password could not be saved: {e.Message}");
+            return false;
+        }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
     public static bool ClearPassword()
     {
         try { File.Delete(PasswordFile); return true; }
-        catch { return false; }
-    }
-
-    // Write beside the file and move it into place, so a crash halfway never leaves half a file.
-    static bool WriteAtomic(string path, byte[] bytes)
-    {
-        try
+        catch (Exception e)
         {
-            Directory.CreateDirectory(Folder);
-            var temp = path + ".tmp";
-            File.WriteAllBytes(temp, bytes);
-            File.Move(temp, path, overwrite: true);
-            return true;
+            Log.Write($"The saved OptiCloud password could not be removed: {e.Message}");
+            return false;
         }
-        catch { return false; }
     }
 }

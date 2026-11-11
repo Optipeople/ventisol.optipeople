@@ -512,7 +512,9 @@
 
         <!-- The menu slides in from the right; a tap beside it closes it -->
         <Grid x:Name="MenuLayer" Grid.RowSpan="4" Visibility="Collapsed">
-            <Border x:Name="Scrim" Background="#99000000" MouseLeftButtonDown="OnScrim" />
+            <!-- Closes on release, and only for a press that began here: closing on the press would
+                 let the release land on the tile underneath -->
+            <Border x:Name="Scrim" Background="#99000000" MouseLeftButtonDown="OnScrimDown" MouseLeftButtonUp="OnScrimUp" />
             <Border HorizontalAlignment="Right" Width="500" Background="{StaticResource Panel}">
                 <Border.RenderTransform>
                     <TranslateTransform x:Name="MenuShift" />
@@ -521,5 +523,8 @@
             </Border>
         </Grid>
         <local:SetupView x:Name="Setup" Grid.RowSpan="4" />
+
+        <!-- Asks for the setup PIN, when one is set; over everything else -->
+        <local:PinPad x:Name="Pin" Grid.RowSpan="4" />
     </Grid>
 </Window>

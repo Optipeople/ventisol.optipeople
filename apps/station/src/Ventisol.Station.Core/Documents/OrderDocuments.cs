@@ -36,6 +36,14 @@ public sealed record OrderDocumentLoad(
     public bool OlderVersion { get; init; }
 }
 
+// A PDF bigger than OrderDocuments.MaxPdfBytes: not read. An IOException, so it is handled as a
+// file that can't be read wherever nothing more is made of it.
+public sealed class OrderDocumentTooLargeException(string path, long size)
+    : IOException($"{System.IO.Path.GetFileName(path)} er for stor ({size / (1024 * 1024)} MB, højst {OrderDocuments.MaxPdfBytes / (1024 * 1024)} MB)")
+{
+    public long Size { get; } = size;
+}
+
 // Finds and reads an element's order document in the background: the locator finds the file, then it is
 // read into memory and parsed. Parsed documents are kept by path, write time and size (the last
 // MaxCached), so the same order again, or a pre-fetch at scan-in, makes the next look instant. A file
@@ -48,6 +56,10 @@ public sealed record OrderDocumentLoad(
 public sealed class OrderDocuments
 {
     public const int MaxCached = 24;
+    // The biggest PDF read. A file is read whole into memory (here, and before it is put in
+    // OptiCloud), and 3E's order documents are a few MB: something far bigger in the folder is not
+    // one of them, and reading it could take the app down.
+    public const long MaxPdfBytes = 50L * 1024 * 1024;
     public static readonly TimeSpan DefaultReadTimeout = TimeSpan.FromSeconds(15);
     // How long a failed read waits to learn whether the folder is still there.
     static readonly TimeSpan ReachTimeout = TimeSpan.FromSeconds(3);
@@ -64,9 +76,22 @@ public sealed class OrderDocuments
     public OrderDocuments(OrderDocumentLocator locator, Func<string, byte[]>? readFile = null, OrderDocumentCache? cache = null)
     {
         _locator = locator;
-        _readFile = readFile ?? File.ReadAllBytes;
+        _readFile = readFile ?? ReadPdf;
         Cache = cache;
     }
+
+    // The file's bytes. One over MaxPdfBytes is not read: OrderDocumentTooLargeException.
+    public static byte[] ReadPdf(string path)
+    {
+        using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+        if (f.Length > MaxPdfBytes) throw new OrderDocumentTooLargeException(path, f.Length);
+        var bytes = new byte[f.Length];
+        f.ReadExactly(bytes);
+        return bytes;
+    }
+
+    // Hears of a file not read because it is too big. Any thread.
+    public Action<string>? Log { get; init; }
 
     public bool IsOn => _locator.Folder is not null;
     public string? Folder => _locator.Folder;
@@ -239,6 +264,12 @@ public sealed class OrderDocuments
         // The write time and size say whether the cached copy is still this file.
         var info = new FileInfo(path);
         if (!info.Exists) throw new FileNotFoundException(path);
+        if (info.Length > MaxPdfBytes)
+        {
+            var big = new OrderDocumentTooLargeException(path, info.Length);
+            Log?.Invoke($"Ordredokumenter: {big.Message}, læses ikke");
+            throw big;
+        }
         var key = $"{info.FullName}|{info.LastWriteTimeUtc.Ticks}|{info.Length}";
 
         lock (_gate)
@@ -277,6 +308,7 @@ public sealed class OrderDocuments
     static string Describe(Exception ex) => ex switch
     {
         FileNotFoundException or DirectoryNotFoundException => "Filen findes ikke længere",
+        OrderDocumentTooLargeException => $"Filen er for stor (over {MaxPdfBytes / (1024 * 1024)} MB)",
         UnauthorizedAccessException => "Ingen adgang til filen",
         IOException => "Filen kan ikke åbnes",
         _ => "Filen kan ikke læses",

@@ -1,4 +1,6 @@
 # Builds and tests the station app on every push to main and every pull request that touches it.
+# Actions are pinned to a commit, with the version it was at beside it: a tag can be moved, a commit can't.
+# Packages are restored in locked mode: only what packages.lock.json names, with the hashes it names.
 name: station-ci
 
 on:
@@ -22,10 +24,10 @@ jobs:
       run:
         working-directory: apps/station
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.0.x
-      - run: dotnet restore Ventisol.Station.slnx
+      - run: dotnet restore Ventisol.Station.slnx --locked-mode
       - run: dotnet build Ventisol.Station.slnx -c Release --no-restore
       - run: dotnet test Ventisol.Station.slnx -c Release --no-build

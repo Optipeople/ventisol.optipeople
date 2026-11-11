@@ -29,14 +29,20 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
         }
     }
 
-    // Oldest first. A line that can't be read is skipped.
+    // Oldest first. A line that can't be read is skipped. Only the files of the days from since
+    // on are opened (and the day before, to be on the safe side of a change of clock or time
+    // zone): Append waits meanwhile, so the days kept for the outbox's sake are not read here.
     public IReadOnlyList<ScanEvent> ReadSince(DateTimeOffset since)
     {
         var found = new List<ScanEvent>();
+        // Far back enough to have no day before it: every file.
+        var first = LocalDate(since);
+        var from = DateOnly.FromDateTime(first > DateTime.MinValue.AddDays(1) ? first.AddDays(-1) : first);
         lock (_gate)
         {
             foreach (var path in Files())
             {
+                if (DayOf(path) is { } day && day < from) continue;
                 try
                 {
                     foreach (var line in File.ReadLines(path))
@@ -78,7 +84,7 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
         {
             foreach (var path in Files())
             {
-                if (!DateOnly.TryParseExact(Path.GetFileNameWithoutExtension(path), "yyyy-MM-dd", out var day) || day >= DateOnly.FromDateTime(keepFrom)) continue;
+                if (DayOf(path) is not { } day || day >= DateOnly.FromDateTime(keepFrom)) continue;
                 try
                 {
                     if (keep is not null && Holds(path, keep)) continue;
@@ -93,6 +99,10 @@ public sealed class ScanJournal(string folder, Action<string>? log = null)
         File.ReadLines(path).Any(line => line.Length > 0 && ScanJson.Read(line) is { } e && ids.Contains(e.ScanId));
 
     string PathFor(DateTime day) => Path.Combine(folder, $"{day:yyyy-MM-dd}.jsonl");
+
+    // The day a file is for, from its name; null for a file that is not one of the journal's.
+    static DateOnly? DayOf(string path) =>
+        DateOnly.TryParseExact(Path.GetFileNameWithoutExtension(path), "yyyy-MM-dd", out var day) ? day : null;
 
     List<string> Files()
     {

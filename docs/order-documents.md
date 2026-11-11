@@ -17,6 +17,8 @@ When an operator scans an element in, the station app can show the order's produ
   without a prefix). The locator takes the newest date in the name, then the newest write time.
 - The folder is a setting on the setup screen, "Mappe med ordredokumenter" (`StationSettings.DocumentsFolder`).
   Empty turns the feature off.
+- A PDF over 50 MB (`OrderDocuments.MaxPdfBytes`) is not read: the screen says
+  "Filen er for stor (over 50 MB)", and it is not uploaded (see Uploading).
 - The samples are customer data. They live in the untracked `orderdocs/` folder at the repo root on the
   developer's PC and are never committed. Tests that read them skip when the folder is missing.
 
@@ -65,6 +67,7 @@ PDFs from the share.
 - A file OptiCloud refuses (too big, a value it won't take) is tried again on the next two rounds
   and then left alone until it is written again; the other files go up meanwhile. So is a file that
   isn't a whole PDF. One that can't be read (locked, no access) is tried again about once an hour.
+  A file over 50 MB is never read and is left alone until it is written again.
 - Other failures (no network, the share gone) are logged once
   (`Ordredokumenter: kan ikke lægges op til OptiCloud: ...`) and tried again next round; after a
   wrong password this loop waits an hour, as every try counts towards locking the user out. Each upload is logged
@@ -187,6 +190,10 @@ the 57 positions in the samples run over two pages. None runs over three.
 
 The label barcode `058556050103` is order 58556, position 05, sub-position 01, piece 03.
 
+- A new scan with an order below 58000 (`Barcode.OldestOrder`) is refused, as a retail code on a
+  box would read as one, unless the folder has a PDF for that order: a remake of an older order is
+  still an element (`OrderHints.Exists`, `Barcode.TryParseScan`). With no folder set, or the share
+  never listed, an older order is refused.
 - Position maps to the PDF's `Position:`.
 - Piece is one of the position's `Antal` elements. The PDF has one page set per position, not per piece.
 - Sub-position does not appear in any sample. All 57 positions print a whole number. The drawings'
