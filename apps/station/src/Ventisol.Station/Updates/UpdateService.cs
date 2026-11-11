@@ -1,28 +1,39 @@
 using System.ComponentModel;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Windows;
+using Ventisol.Station.Core;
 using Velopack;
 using Velopack.Sources;
 
 namespace Ventisol.Station.Updates;
 
-// Checks for a new version every hour, downloads it in the background, and installs it only when the floor
+// Looks every minute for a new version, downloads it in the background, and installs it only when the floor
 // is quiet (the caller's isQuiet) or at night, never in the middle of a shift. Installing closes the app,
 // swaps the version and starts it again with the same arguments.
 // The URL is a public GitHub repo with the releases (the code repo is private, and a token on every PC is
-// not wanted), or a plain URL or folder with a Velopack feed. Status and StatusChanged come on the thread
-// that called Start.
+// not wanted), or a plain URL or folder with a Velopack feed. The minute look reads the latest release's
+// feed file from its download link (ReleaseFeed), not GitHub's API, which allows only 60 calls an hour per
+// IP for all the PCs in the factory together. Only a new version, or the hourly fallback, makes the API call.
+// Status and StatusChanged come on the thread that called Start.
 public sealed class UpdateService(string updateUrl, Func<bool> isQuiet, Action<string> log) : INotifyPropertyChanged, IDisposable
 {
     public const string DefaultUrl = "https://github.com/Optipeople/ventisol.station.updates";
 
+    // The full check through GitHub's API, also when the minute look sees nothing new.
     static readonly TimeSpan CheckEvery = TimeSpan.FromHours(1);
-    // How often a downloaded update looks for its quiet moment.
+    // How often we look for a new version, and a downloaded update looks for its quiet moment.
     static readonly TimeSpan Poll = TimeSpan.FromMinutes(1);
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
     const int NightFrom = 22, NightTo = 5;
 
     readonly CancellationTokenSource _cts = new();
     SynchronizationContext? _context;
     bool _started;
+    readonly string? _feedUrl = ReleaseFeed.LatestFeedUrl(updateUrl ?? "");
+    // The newest version the minute look has already started a check for, so a version we skip (StartupGuard)
+    // doesn't cost an API call every minute.
+    Version? _seen;
 
     public string Status { get; private set; } = "Ikke installeret";
     public event EventHandler<string>? StatusChanged;
@@ -40,7 +51,7 @@ public sealed class UpdateService(string updateUrl, Func<bool> isQuiet, Action<s
         // A dev run, or no URL: nothing to update.
         if (manager is not { IsInstalled: true }) { SetStatus("Ikke installeret"); return; }
 
-        log($"Updates: version {manager.CurrentVersion}, checking {updateUrl} every hour");
+        log($"Updates: version {manager.CurrentVersion}, checking {updateUrl} every minute");
         _ = Task.Run(() => RunAsync(manager, _cts.Token));
     }
 
@@ -61,7 +72,7 @@ public sealed class UpdateService(string updateUrl, Func<bool> isQuiet, Action<s
         {
             while (true)
             {
-                if (DateTimeOffset.Now >= nextCheck)
+                if (DateTimeOffset.Now >= nextCheck || await NewVersionOutAsync(manager, ready, ct))
                 {
                     nextCheck = DateTimeOffset.Now + CheckEvery;
                     ready = await CheckAsync(manager, ct) ?? ready;
@@ -76,6 +87,28 @@ public sealed class UpdateService(string updateUrl, Func<bool> isQuiet, Action<s
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    // True when the latest release is newer than what is running or already downloaded. Cheap, and false
+    // on any error: the hourly check is the fallback.
+    async Task<bool> NewVersionOutAsync(UpdateManager manager, VelopackAsset? ready, CancellationToken ct)
+    {
+        if (_feedUrl is null) return false;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, _feedUrl);
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
+            using var response = await Http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return false;
+            var latest = ReleaseFeed.LatestFullVersion(await response.Content.ReadAsStringAsync(ct));
+            var have = ReleaseFeed.ParseVersion((ready?.Version ?? manager.CurrentVersion)?.ToString());
+            if (latest is null || have is null || latest <= have || latest == _seen) return false;
+            _seen = latest;
+            log($"Updates: version {latest} is out");
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception) { return false; }
     }
 
     // The newest version, downloaded and ready to install, or null when there is none (or it failed).

@@ -135,7 +135,7 @@ From the physical sample (`context/IMG_4723.jpg`, `context/IMG_4724.jpg`), a pal
 - **Packaging and updates:** [Velopack](https://velopack.io). It builds the installer and handles silent updates with delta packages.
 - **Pipeline:** GitHub Actions in the monorepo. A tag like `station-v1.2.0` builds, tests, packages and publishes a release. Path filters so each app only builds when its own folder changes.
 - **Update source:** a private GitHub repo needs a token on every PC. Better to publish update packages to a public storage location (Azure Blob or a public releases repo).
-- **When to update:** the app checks every hour but installs only when no scan has come in for 10 minutes, or at night. Never in the middle of a shift.
+- **When to update:** the app looks for a new release every minute but installs only when no scan has come in for 10 minutes, or at night. Never in the middle of a shift.
 - **Rollback:** keep the previous version. If the new one crashes on startup, roll back automatically.
 - **Code signing:** strongly recommended. SchirmerFix got a Defender false positive (Wacatac) without it. Azure Trusted Signing is cheap.
 - **Monitoring:** each PC sends a heartbeat and its app version. An alert fires if the central PC goes silent. Logs go to a file on the PC (Serilog) and errors are shipped out.

@@ -74,8 +74,9 @@ the Windows user in `%LOCALAPPDATA%\VentisolStation` and adds the app to that us
 Windows user automatically (netplwiz, or Sysinternals Autologon), so a power cut ends with the app
 on the screen, not at a login prompt. That is set up by hand per PC, not by the installer.
 
-After that the app updates itself (`Updates/UpdateService.cs`): it checks every hour, downloads in
-the background, and installs and restarts only when no scan has come in for 10 minutes, or between
+After that the app updates itself (`Updates/UpdateService.cs`): it looks for a new release every
+minute (the latest release's `releases.win.json` from its download link, so no GitHub API limit),
+downloads in the background, and installs and restarts only when no scan has come in for 10 minutes, or between
 22:00 and 05:00. A dev run is "Ikke installeret" and never updates. If a new version fails to start
 three times in a row, the app goes back to the version before and skips the bad one until a newer
 release is out (`Updates/StartupGuard.cs`). Logs in `%LOCALAPPDATA%\Ventisol\Station\logs`.

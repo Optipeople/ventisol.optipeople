@@ -1,5 +1,5 @@
 # Every push to main that touches the station app builds, tests, packages and publishes version
-# 1.0.<run number>. The station PCs pick it up within the hour and install it when the floor is quiet.
+# 1.0.<run number>. The station PCs pick it up within a minute and install it when the floor is quiet.
 # This repo is private, so the update packages go to a public repo (UPDATE_REPO) as a GitHub Release.
 # The station PCs read that repo without a token (UpdateService.DefaultUrl must point at it).
 #
