@@ -263,6 +263,8 @@ public partial class MainWindow : Window
 
     void OnRawScan(RawScan scan)
     {
+        // Exactly what the scanner sent, control characters made visible, so a misread can be traced.
+        Log.Write($"Scan from {scan.ScannerId}: \"{Visible(scan.Raw)}\"");
         // Only a station waiting in "Identificér" takes a scan from the setup; any other scan is work
         // at a station and counts, also while someone has the setup open.
         if (Setup.ViewModel is { } setup && setup.Stations.Any(s => s.IsIdentifying)) { setup.OnRawScan(scan); return; }
@@ -271,6 +273,9 @@ public partial class MainWindow : Window
         if (StationFor(scan.ScannerId) is { } n) _vm.Scan(n, scan.Raw, scan.At);
         else Log.Write($"Scan from scanner {scan.ScannerId}, which no station has: {scan.Raw}");
     }
+
+    static string Visible(string raw) =>
+        string.Concat(raw.Select(c => char.IsControl(c) || c > '~' ? $"<{(int)c:X2}>" : c.ToString()));
 
     // A station shows its scanner as missing when the scanner set up for it is not plugged in.
     // Until scanners are set up, the tiles are left as they are, so the demo works as before.
