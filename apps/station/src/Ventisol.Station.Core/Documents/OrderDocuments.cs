@@ -103,6 +103,9 @@ public sealed class OrderDocuments
     // Whether the order has a PDF in the folder as last listed; false when unknown. Never waits.
     public bool Has(int order) => _locator.Has(order);
 
+    // The highest order number with a PDF in the folder as last listed; null when unknown. Never waits.
+    public int? NewestOrder => _locator.NewestOrder;
+
     // Lists the folder in the background, so Has knows the orders before the first scan.
     public void Warm()
     {

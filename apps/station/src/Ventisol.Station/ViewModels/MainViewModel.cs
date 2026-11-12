@@ -64,11 +64,15 @@ public sealed partial class MainViewModel : ObservableObject
     // Whether an order is known to exist (an order PDF), to read a label that fits both barcode layouts.
     public Func<int, bool>? OrderExists { get; init; }
 
+    // The highest order number known to exist (the newest order PDF), or null: what keeps a retail
+    // code that reads as an order far above it from passing as an element.
+    public Func<int?>? NewestOrder { get; init; }
+
     // The order of the last element read here (kept across restarts by the window), or else of the last
     // one done today: the work going on now.
     int? _lastOrder;
     public int? LastOrder { get => _lastOrder; init => _lastOrder = value; }
-    OrderHints Hints => new(OrderExists, _lastOrder ?? History.MaxBy(r => r.End)?.Barcode.Order);
+    OrderHints Hints => new(OrderExists, _lastOrder ?? History.MaxBy(r => r.End)?.Barcode.Order, NewestOrder?.Invoke());
 
     // Raised when a scan reads an order other than the last one, so the window can keep it.
     public event EventHandler<int>? LastOrderChanged;

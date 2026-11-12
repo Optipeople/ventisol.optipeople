@@ -20,7 +20,7 @@ public partial class ClockFace : UserControl
     {
         InitializeComponent();
         DrawMarks();
-        _timer.Tick += (_, _) => Draw();
+        _timer.Tick += Ui.SafeTick(Draw);
         Loaded += (_, _) => Run();
         Unloaded += (_, _) => _timer.Stop();
         IsVisibleChanged += (_, _) => Run();

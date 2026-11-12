@@ -15,9 +15,15 @@ Develop: `./dev.ps1` (or `./dev.ps1 -Empty`). It rebuilds and restarts the app o
 `.cs`, `.xaml` or `.csproj`, about 2 seconds. A failed build keeps the old window and prints the errors.
 
 Run once: `dotnet run --project src/Ventisol.Station`. Options after `--`: `--kiosk` for full screen,
-`--showcase` to start with sample scans on the screen. The installed app is a kiosk on every start
+`--showcase` to start with sample scans on the screen (a picture for a demo, only without OptiCloud
+set up: nothing it shows is written to the journal or the outbox). The installed app is a kiosk on every start
 while its Run key says `--kiosk` (see Release and updates); `--window` opens it as a window anyway.
 A dev build is always a window unless given `--kiosk`.
+
+A kiosk fills the whole screen, over the taskbar, and closes only from its tray icon ("Luk", which
+asks first in the app's own dialog). When another program comes in front, the kiosk takes the
+foreground back after a moment, so a scanner in keyboard mode is heard again. The taskbar and the
+Start menu (press the Windows key) are left in front for 20 seconds: that is the way to the tray icon.
 
 Scans come from the cradles (and, for a demo, from `DemoScanner`: tap a tile, or press 1 to 7;
 Shift+number scans a different element, Ctrl+number unplugs that scanner). With OptiCloud set up,
@@ -36,7 +42,8 @@ Next, working down: COM port scanner reader (`IScanSource`), setup screen, then 
 - PIN: optional, 4 to 8 digits, set under "PIN-KODE" in Opsætning. With one, it must be typed to
   open Opsætning (and, in a kiosk, "Åbn log" and "Luk" in the tray). Only a hash is kept, in
   `setup-pin.json` in the data folder (`%LOCALAPPDATA%\Ventisol\Station`). Forgotten: delete that
-  file and there is no PIN. Wrong tries make the next one wait, longer each time.
+  file and there is no PIN. Wrong tries make the next one wait, longer each time. A file that can't
+  be read keeps Opsætning shut and says "PIN-filen kan ikke læses"; delete it then too.
 - The saved password only goes to the address and user it was saved for. Change the API address
   or the username and it must be typed again ("Skriv adgangskoden igen").
 - The API address must begin with `https://`. Plain `http://` is taken only for this PC itself
@@ -50,6 +57,11 @@ A new scan is an element when it has the 12 digits of a label (or 11 with the le
 the 14 of a profile label), begins with 0, and its order is 58000 or later (`Barcode.OldestOrder`).
 That keeps the retail codes on boxes out (EAN-13 and UPC-A are 13 and 12 digits too). An older
 order is still read when its PDF is in the documents folder, so a remake can be scanned.
+There is an upper limit too: an order more than 1000 (`Barcode.NewestOrderMargin`) above the newest
+order the station knows of is refused, unless its PDF is in the documents folder. The newest order
+known is the highest one with a PDF in the documents folder, or the last element scanned here
+(`last-order.txt`, dropped when it is over 30 days old). A station that knows no order at all has no
+upper limit. A retail code that happens to read as an order inside the limit still passes.
 The rule is only for new scans (`Barcode.TryParseScan`). Scans already stored (the outbox, the
 journal, rows in OptiCloud) are read whatever their order (`Barcode.TryParse`).
 
@@ -123,7 +135,8 @@ for and Windows shutting down are not failed starts. Logs in `%LOCALAPPDATA%\Ven
 When the app restarts itself after an error (a window that can't be built, three errors in a
 minute, a fatal error), it notes it in `restarts.json` in the data folder. The more restarts in the
 last hour, the longer the next start waits before it builds its window: 10 s, 30 s, 2 min, 5 min,
-then 10 min. While it waits it looks for a newer version and installs it at once. From the third
+then 10 min. While it waits it looks for a newer version and installs it at once, and a small window
+says "Starter igen om N s": its "Start nu", or starting the app by hand, ends the wait. From the third
 restart the saved layout is set aside and the default one used. If the new app can't be started,
 the old one stays up.
 

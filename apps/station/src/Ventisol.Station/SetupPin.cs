@@ -5,7 +5,8 @@ using System.Text.Json;
 
 namespace Ventisol.Station;
 
-public enum PinAnswer { Ok, Wrong, Locked }
+// Unreadable: the PIN file is there but can't be read, so no PIN can be right.
+public enum PinAnswer { Ok, Wrong, Locked, Unreadable }
 
 // The optional PIN in front of the setup screen (and, in kiosk mode, "Åbn log" and "Luk" in the tray).
 // Only a salted PBKDF2 hash is kept, in a small file of its own next to the settings; the PIN itself
@@ -56,13 +57,15 @@ sealed class SetupPin
         }
     }
 
-    // Ok with no PIN set. A try made during a wait is not looked at, and does not count.
+    // Ok with no PIN set. A try made during a wait is not looked at, and does not count. Nor does a
+    // try against a file that can't be read: no PIN is wrong then, the file is.
     public PinAnswer Check(string? pin)
     {
         if (!IsSet) return PinAnswer.Ok;
         if (LockedFor > TimeSpan.Zero) return PinAnswer.Locked;
 
-        if (Matches(pin ?? ""))
+        if (Matches(pin ?? "") is not { } right) return PinAnswer.Unreadable;
+        if (right)
         {
             SetTries(new Tries(0, null));
             return PinAnswer.Ok;
@@ -108,7 +111,8 @@ sealed class SetupPin
         }
     }
 
-    bool Matches(string pin)
+    // Null when the PIN file can't be read.
+    bool? Matches(string pin)
     {
         try
         {
@@ -120,7 +124,7 @@ sealed class SetupPin
         catch (Exception e)
         {
             _log($"Setup PIN file could not be read, the setup stays shut: {e.Message}");
-            return false;
+            return null;
         }
     }
 

@@ -235,8 +235,21 @@ public sealed class AppFilesTests : IDisposable
         var pin = Pin();
 
         Assert.True(pin.IsSet);
-        Assert.Equal(PinAnswer.Wrong, pin.Check("1234"));
+        Assert.Equal(PinAnswer.Unreadable, pin.Check("1234"));
         Assert.Contains(_log, l => l.Contains("could not be read"));
+    }
+
+    [Fact]
+    public void Tries_against_a_pin_file_that_cannot_be_read_are_not_counted()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "setup-pin.json"), "not json");
+        var pin = Pin();
+
+        for (var i = 0; i < 5; i++) Assert.Equal(PinAnswer.Unreadable, pin.Check("1234"));
+
+        Assert.Equal(TimeSpan.Zero, pin.LockedFor);
+        Assert.False(File.Exists(Path.Combine(_folder, "setup-pin-tries.json")));
     }
 
     [Fact]

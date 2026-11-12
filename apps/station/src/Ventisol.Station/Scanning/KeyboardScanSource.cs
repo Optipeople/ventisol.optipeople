@@ -31,13 +31,13 @@ public sealed class KeyboardScanSource : IScanSource
     public KeyboardScanSource()
     {
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(25) };
-        _timer.Tick += (_, _) =>
+        _timer.Tick += Ui.SafeTick(() =>
         {
             var released = _burst.Expire(DateTimeOffset.Now, out var scan);
             if (_burst.IsCapturing) return;
             _timer.Stop();
             End(released, scan);
-        };
+        });
     }
 
     public event EventHandler<RawScan>? Scanned;

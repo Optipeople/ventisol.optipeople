@@ -55,6 +55,33 @@
         <Setter Property="Foreground" Value="{StaticResource Ink2}" />
     </Style>
 
+    <!-- A confirm's buttons: big, as on the document's "Luk", for a thumb at arm's length -->
+    <Style x:Key="ConfirmButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="Background" Value="{StaticResource Rule}" />
+        <Setter Property="FontFamily" Value="{StaticResource Hanken}" />
+        <Setter Property="FontSize" Value="26" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Height" Value="76" />
+        <Setter Property="MinWidth" Value="200" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" CornerRadius="8" Background="{TemplateBinding Background}" Padding="30,0">
+                        <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.8" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ToolTip">
         <Setter Property="FontFamily" Value="{StaticResource Hanken}" />
     </Style>

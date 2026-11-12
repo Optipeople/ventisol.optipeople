@@ -126,6 +126,7 @@ public sealed partial class SetupViewModel : ObservableObject
             if (_password.Length > 0) ForgetSaved = false;
             OnPropertyChanged(nameof(PasswordHint));
             ResetConnection();
+            ClearRetype();
             UpdateProblems();
         }
     }
@@ -214,8 +215,8 @@ public sealed partial class SetupViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(Notice))]
     public partial string? Problem { get; private set; }
 
-    partial void OnApiBaseUrlChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); UpdateProblems(); }
-    partial void OnUsernameChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); UpdateProblems(); }
+    partial void OnApiBaseUrlChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); ClearRetype(); UpdateProblems(); }
+    partial void OnUsernameChanged(string value) { OnPropertyChanged(nameof(PasswordHint)); ResetConnection(); ClearRetype(); UpdateProblems(); }
     partial void OnAccountIdTextChanged(string value) { ResetConnection(); UpdateProblems(); }
 
     // Opening the screen: fresh scanner list, and the machine names if it can already log in.
@@ -440,6 +441,14 @@ public sealed partial class SetupViewModel : ObservableObject
                   : null);
         // A new problem is the line to show now, not an old failed save.
         if (Problem is not null) SaveError = null;
+    }
+
+    // "Skriv adgangskoden igen" beside "Hent maskiner" goes when it no longer holds: the address and
+    // the user are back to the saved ones, or a password has been typed.
+    void ClearRetype()
+    {
+        if (MachinesStatus != SetupStatus.Error || MachinesText != RetypePassword || MustRetypePassword) return;
+        (MachinesStatus, MachinesText) = (SetupStatus.None, "");
     }
 
     void ResetConnection()

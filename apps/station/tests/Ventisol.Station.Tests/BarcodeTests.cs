@@ -182,6 +182,96 @@ public class BarcodeTests
         Assert.Equal(57999, b.Order);
     }
 
+    // Retail codes that read as an order above the oldest one: only an upper limit keeps them out.
+    [Theory]
+    [InlineData("7310865004703", 73108)] // EAN-13: with a 0 put first, order 73108
+    [InlineData("060383123456", 60383)]  // UPC-A: begins with 0, order 60383
+    public void An_incoming_retail_code_far_above_the_newest_order_is_refused(string text, int order)
+    {
+        // The documents folder knows the orders in production, and this is not one of them.
+        var folder = new OrderHints(Exists: o => o is 58763 or 58800 or 58802, Newest: 58802);
+        Assert.False(Barcode.TryParseScan(text, out _, folder));
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(folder.Exists, Recent: 58800, Newest: 58802)));
+        // No documents folder, but an element was scanned before.
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(Recent: 58800)));
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(Exists: _ => false, Recent: 58800)));
+
+        // Stored already: read as it always was.
+        Assert.True(Barcode.TryParse(text, out var stored, folder));
+        Assert.Equal(order, stored.Order);
+    }
+
+    [Theory]
+    [InlineData("058802010101", 58802)] // the newest known order itself
+    [InlineData("058850010101", 58850)] // a little above it: its PDF is not in the folder yet
+    [InlineData("58850010101", 58850)]  // the same, the leading 0 lost
+    [InlineData("05885001010114", 58850)] // a profile label, order first
+    public void An_incoming_label_a_little_above_the_newest_order_is_read(string text, int order)
+    {
+        var folder = new OrderHints(Exists: o => o is 58763 or 58800 or 58802, Newest: 58802);
+        Assert.True(Barcode.TryParseScan(text, out var b, folder));
+        Assert.Equal(order, b.Order);
+        Assert.True(Barcode.TryParseScan(text, out b, new OrderHints(Recent: 58802)));
+        Assert.Equal(order, b.Order);
+    }
+
+    [Fact]
+    public void The_upper_limit_is_the_margin_above_the_newest_order_known()
+    {
+        var at = $"0{58802 + Barcode.NewestOrderMargin}010101";
+        var over = $"0{58802 + Barcode.NewestOrderMargin + 1}010101";
+        foreach (var hints in new[] { new OrderHints(Newest: 58802), new OrderHints(Recent: 58802), new OrderHints(Recent: 58700, Newest: 58802), new OrderHints(Recent: 58802, Newest: 58700) })
+        {
+            Assert.True(Barcode.TryParseScan(at, out _, hints));
+            Assert.False(Barcode.TryParseScan(over, out _, hints));
+        }
+    }
+
+    [Fact]
+    public void An_order_the_documents_folder_knows_is_read_however_far_above()
+    {
+        var hints = new OrderHints(Exists: o => o == 73108, Recent: 58800, Newest: 58802);
+        Assert.True(Barcode.TryParseScan("073108650047", out var b, hints));
+        Assert.Equal(73108, b.Order);
+    }
+
+    // No time bomb: a station that knows no order at all (no documents folder, or not listed yet,
+    // and nothing scanned) has no upper limit, and one that only knows old orders still reads today's.
+    [Fact]
+    public void Without_a_known_order_there_is_no_upper_limit()
+    {
+        foreach (var hints in new OrderHints?[] { null, new OrderHints(), new OrderHints(Exists: _ => false) })
+        {
+            Assert.True(Barcode.TryParseScan("099999010101", out var b, hints));
+            Assert.Equal(99999, b.Order);
+            Assert.True(Barcode.TryParseScan("7310865004703", out b, hints));
+            Assert.Equal(73108, b.Order);
+        }
+    }
+
+    [Fact]
+    public void A_known_order_older_than_the_oldest_does_not_lower_the_limit()
+    {
+        // The last scan was a remake of an old order, and the folder only holds old PDFs.
+        var hints = new OrderHints(Exists: o => o == 41000, Recent: 41000, Newest: 41000);
+        Assert.True(Barcode.TryParseScan("058830030101", out var b, hints));
+        Assert.Equal(58830, b.Order);
+        Assert.True(Barcode.TryParseScan($"0{Barcode.OldestOrder + Barcode.NewestOrderMargin}010101", out _, hints));
+        Assert.False(Barcode.TryParseScan($"0{Barcode.OldestOrder + Barcode.NewestOrderMargin + 1}010101", out _, hints));
+    }
+
+    [Fact]
+    public void The_limit_follows_the_orders_as_they_grow()
+    {
+        // Years on: each accepted scan is the next one's Recent, so the limit moves with production.
+        int? recent = 58802;
+        for (var order = 58900; order <= 99000; order += Barcode.NewestOrderMargin - 100)
+        {
+            Assert.True(Barcode.TryParseScan($"0{order}010101", out var b, new OrderHints(Recent: recent, Newest: 58802)));
+            recent = b.Order;
+        }
+    }
+
     [Fact]
     public void The_oldest_order_itself_is_read()
     {

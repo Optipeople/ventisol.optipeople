@@ -63,13 +63,19 @@ sealed class TrayIcon : IDisposable
         _window.AskPin(title, Guarded(title, action));
     }
 
+    // Asked about in the window itself, in its own look and with buttons big enough for a thumb.
     void Close()
     {
-        if (MessageBox.Show(_window, "Luk MES-skærmen? Scanninger modtages ikke, før den startes igen.", "Luk",
-                MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
-        Log.Write("Closed from the tray");
-        App.CloseByUser();
+        _window.BringUp();
+        _window.ConfirmClose(Guarded("close", () =>
+        {
+            Log.Write("Closed from the tray");
+            App.CloseByUser();
+        }));
     }
+
+    // The menu is up: a kiosk window leaves the foreground alone meanwhile.
+    public bool MenuOpen => _icon.ContextMenuStrip is { Visible: true };
 
     // WinForms shows an error dialog for an exception in a tray click, and on a kiosk PC nobody
     // is there to close it: log it and carry on instead.

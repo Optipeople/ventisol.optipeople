@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     static readonly string DataFolder = AppPaths.Data;
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly bool _kiosk;
+    // Started with sample scans (--showcase), for a demo: a picture of a screen in use. Nothing it
+    // shows is written or sent, and what this PC's journal holds is not replayed over it.
+    readonly bool _showcase;
     readonly Dictionary<string, Tile> _tiles = [];
     readonly List<Button> _dots = [];
 
@@ -67,9 +70,9 @@ public partial class MainWindow : Window
         {
             IsViewer = _settings.Mode == StationMode.Viewer,
             OrderExists = _documents.Has,
+            NewestOrder = () => _documents.NewestOrder,
             LastOrder = ReadLastOrder(),
         };
-        _vm.LastOrderChanged += (_, order) => SaveLastOrder(order);
         DataContext = _vm;
         _demo = new DemoScanner(_vm);
         _kiosk = kiosk;
@@ -97,18 +100,30 @@ public partial class MainWindow : Window
         BuildDots();
         _demoInput = !_settings.IsConnected;
         // Sample scans would be sent to OptiCloud like real ones, so only without it.
-        if (showcase && _demoInput) _demo.Showcase(DateTimeOffset.Now);
+        _showcase = showcase && _demoInput;
+        if (_showcase) _demo.Showcase(DateTimeOffset.Now);
+        // After the samples, so their orders are not kept as this PC's last one.
+        _vm.LastOrderChanged += (_, order) => { if (!_showcase) SaveLastOrder(order); };
 
         if (kiosk)
         {
             ResizeMode = ResizeMode.NoResize;
+            // Without the chrome: with it Windows does not take the window for full screen, and the
+            // taskbar stays in front of the logo and the page dots.
+            System.Windows.Shell.WindowChrome.SetWindowChrome(this, null);
             WindowState = WindowState.Maximized;
             Topmost = true;
+            // Back in front when something else has the foreground (TakeFront). It looks for as long
+            // as the kiosk is up, from the first showing on, and not when the window is deactivated:
+            // a start without the right to the foreground (a restart of the app's own, the updater)
+            // shows the window behind what is in front, and it is not told when it loses it either.
+            _front.Tick += Ui.SafeTick(TakeFront);
+            ContentRendered += (_, _) => _front.Start();
         }
         else
         {
             WindowPlacement.Track(this);
-            SourceInitialized += (_, _) => Ui.RoundCorners(this);
+            SourceInitialized += (_, _) => { Ui.RoundCorners(this); Ui.MaximizeToWorkArea(this); };
         }
 
         Menu.CloseRequested += (_, _) => CloseMenu();
@@ -122,8 +137,9 @@ public partial class MainWindow : Window
         // The document of an element scanned in is fetched now, so a tap on the station shows it at once.
         _vm.Recorded += (_, r) => { if (r.Kind == ScanKind.In) PrefetchDocument(r.Barcode); };
 
-        _clock.Tick += (_, _) => OnTick();
+        _clock.Tick += Ui.SafeTick(OnTick);
         _clock.Start();
+        _lower.Tick += Ui.SafeTick(Lower);
 
         // A viewer has no scanners; the keyboard source stays for the demo keys.
         _scans = _settings.Mode == StationMode.Scan
@@ -146,6 +162,7 @@ public partial class MainWindow : Window
         _cloud.Loaded += (_, loaded) => Dispatcher.BeginInvoke(() => ApplyLoaded(loaded));
         _vm.Recorded += (_, r) =>
         {
+            if (_showcase) return;
             var machine = _settings.Stations.FirstOrDefault(s => s.Number == r.Station.Number)?.MachineId;
             if (ScanEvent.From(r, machine) is not { } e) return;
             _recorded.Add(e);
@@ -184,6 +201,7 @@ public partial class MainWindow : Window
     // on its way is in it, never undone by it.
     void ApplyLoaded(LoadedScans loaded)
     {
+        if (_showcase) return;
         var now = DateTimeOffset.Now;
         var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
         var today = ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now));
@@ -320,8 +338,19 @@ public partial class MainWindow : Window
     // right from the first scan after a restart too.
     static readonly string LastOrderFile = System.IO.Path.Combine(AppPaths.Data, "last-order.txt");
 
-    static int? ReadLastOrder() =>
-        AtomicFile.TryRead(LastOrderFile, Log.Write) is { } text && int.TryParse(text.Trim(), out var o) ? o : null;
+    // An order noted long ago (the PC was off, or scanned nothing) says nothing about the work going
+    // on now: it is dropped, so new labels are never held to an old order number (Barcode.NewestOrderMargin).
+    static readonly TimeSpan LastOrderKeptFor = TimeSpan.FromDays(30);
+
+    static int? ReadLastOrder()
+    {
+        try
+        {
+            if (DateTime.Now - System.IO.File.GetLastWriteTime(LastOrderFile) > LastOrderKeptFor) return null;
+        }
+        catch { return null; }
+        return AtomicFile.TryRead(LastOrderFile, Log.Write) is { } text && int.TryParse(text.Trim(), out var o) ? o : null;
+    }
 
     static void SaveLastOrder(int order) =>
         AtomicFile.TryWrite(LastOrderFile, order.ToString(System.Globalization.CultureInfo.InvariantCulture), Log.Write);
@@ -407,6 +436,7 @@ public partial class MainWindow : Window
         if (_settings.Mode == StationMode.Viewer) ShowCloudStatus();
         if (_stopping is { } stop && stop.Station.Current?.Raw != stop.Barcode.Raw) CloseStop();
         if (Pin.IsOpen && now - _lastTouch > PinIdle) Pin.Cancel();
+        if (_confirmedClose is not null && now - _lastTouch > PinIdle) HideClose();
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
         if (Document.IsOpen)
         {
@@ -687,6 +717,27 @@ public partial class MainWindow : Window
     Point? _dragFrom;
     bool _dragged;
 
+    // The block on top: the one being dragged, and after its drop until the glides have ended. Put
+    // down at once, the block it traded places with would glide away over it, and a press right
+    // after the drop would grab that one instead of the block now lying there.
+    Grid? _raised;
+    readonly DispatcherTimer _lower = new() { Interval = Motion.Normal + TimeSpan.FromMilliseconds(40) };
+
+    void Raise(Grid root)
+    {
+        Lower();
+        _raised = root;
+        Panel.SetZIndex(root, 1);
+    }
+
+    void Lower()
+    {
+        _lower.Stop();
+        if (_raised is null) return;
+        Panel.SetZIndex(_raised, 0);
+        _raised = null;
+    }
+
     void StartEditing()
     {
         CloseDocument();
@@ -760,7 +811,7 @@ public partial class MainWindow : Window
         _dragFrom = e.GetPosition(StationsGrid);
         _dragged = false;
         _tiles[id].Root.CaptureMouse();
-        Panel.SetZIndex(_tiles[id].Root, 1);
+        Raise(_tiles[id].Root);
         e.Handled = true;
     }
 
@@ -792,7 +843,9 @@ public partial class MainWindow : Window
         if (_dragFrom is not { } from) return;
 
         tile.Root.ReleaseMouseCapture();
-        Panel.SetZIndex(tile.Root, 0);
+        // On top until the glide has ended (or at once, with animations off).
+        if (Motion.On) _lower.Start();
+        else Lower();
         var drop = e.GetPosition(StationsGrid);
         _dragFrom = null;
         if (!_dragged) { Motion.Glide(tile.Shift, new Vector(tile.Shift.X, tile.Shift.Y)); return; }
@@ -960,6 +1013,71 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    // A kiosk that is not the window in front hears no scanner in keyboard mode, until someone
+    // touches the screen. So when another program has the foreground, the kiosk takes it back a
+    // moment later, and keeps trying until it has it. Not while the app is closing or Windows is
+    // shutting down, and not from the app's own tray menu or another window of the app. The PIN
+    // prompt and the "Luk" confirm are part of this window, so they are never in its way.
+    // Windows' own taskbar and Start menu are left in front for longer: that is the way to the tray
+    // icon and its "Luk", the one way to close a kiosk, and it takes a person more than a moment.
+    static readonly TimeSpan ShellGrace = TimeSpan.FromSeconds(20);
+    readonly DispatcherTimer _front = new() { Interval = TimeSpan.FromMilliseconds(1500) };
+    DateTimeOffset _lostFront;
+    bool _inFront;
+
+    void TakeFront()
+    {
+        if (App.Exiting) { _front.Stop(); return; }
+        // In front as Windows sees it: IsActive alone is also true for a window that was shown
+        // without getting the foreground.
+        if (Ui.IsInFront(this)) { _inFront = true; return; }
+        if (_inFront) { _inFront = false; _lostFront = DateTimeOffset.Now; }
+        if (App.TrayMenuOpen || Application.Current.Windows.OfType<Window>().Any(w => w != this && w.IsVisible)) return;
+        if (DateTimeOffset.Now - _lostFront < ShellGrace && Ui.ShellIsInFront()) return;
+        Ui.TakeForeground(this);
+        if (!Ui.IsInFront(this)) return;
+        _inFront = true;
+        // On the window itself, so the scanner's keys are heard.
+        if (Keyboard.FocusedElement is null) Keyboard.Focus(this);
+        Log.Write("Kiosk: another program was in front, took the foreground back");
+    }
+
+    // ===== Close from the tray =====
+
+    // What the open "Luk" confirm runs when it is said yes to. Null: no confirm open.
+    Action? _confirmedClose;
+
+    // The tray's "Luk": asks first, as a slip of the mouse would stop the scans.
+    public void ConfirmClose(Action close)
+    {
+        CloseMenu();
+        CloseStop();
+        _lastTouch = DateTimeOffset.Now;
+        // Out of any field, so Esc reaches the confirm.
+        Keyboard.Focus(this);
+        _confirmedClose = close;
+        CloseLayer.Visibility = Visibility.Visible;
+        Motion.FadeIn(CloseLayer, Motion.Normal);
+        Motion.Enter(CloseCard, fromY: 16);
+    }
+
+    void OnCloseConfirm(object sender, RoutedEventArgs e)
+    {
+        var close = _confirmedClose;
+        HideClose();
+        close?.Invoke();
+    }
+
+    void OnCloseCancel(object sender, RoutedEventArgs e) => HideClose();
+
+    void OnCloseScrim(object sender, MouseButtonEventArgs e) => HideClose();
+
+    void HideClose()
+    {
+        _confirmedClose = null;
+        CloseLayer.Visibility = Visibility.Collapsed;
+    }
+
     // A kiosk closes only through the app (the tray's "Luk", a restart, an update): Alt+F4 and the
     // like are turned down. Outside kiosk mode, closing the window is someone closing the app.
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
@@ -997,6 +1115,7 @@ public partial class MainWindow : Window
             // Esc on an open dropdown closes just the dropdown, not the setup with everything typed in it.
             if (Ui.IsDropDownOpen()) return;
             if (Pin.IsOpen) { Pin.Cancel(); return; }
+            if (_confirmedClose is not null) { HideClose(); return; }
             if (Setup.IsOpen) { Setup.Cancel(); return; }
             if (_stopping is not null) { CloseStop(); return; }
             if (Document.IsOpen) { CloseDocument(); return; }

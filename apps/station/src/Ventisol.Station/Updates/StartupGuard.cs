@@ -15,8 +15,7 @@ static class StartupGuard
 {
     const int MaxFailedStarts = 3;
 
-    static readonly string Folder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ventisol", "Station", "updates");
+    static readonly string Folder = Path.Combine(AppPaths.Data, "updates");
     static readonly string StateFile = Path.Combine(Folder, "guard.json");
     static readonly string RollbackFolder = Path.Combine(Folder, "rollback");
 

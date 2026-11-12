@@ -101,6 +101,22 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     }
 
     [Fact]
+    public async Task The_newest_order_is_the_highest_five_digit_one_in_the_last_listing()
+    {
+        Touch("58721_20261022.pdf");
+        Touch(@"sub\BE_58802_20261105.pdf");
+        Touch("58763_20261101.pdf");
+        Touch("X_20261105_20261105.pdf"); // a date where the order should be: not the newest order
+
+        var locator = new OrderDocumentLocator(_root);
+        Assert.Null(locator.NewestOrder); // not listed yet
+
+        await locator.RefreshAsync();
+        Assert.Equal(58802, locator.NewestOrder);
+        Assert.Null(new OrderDocumentLocator(null).NewestOrder);
+    }
+
+    [Fact]
     public async Task A_missing_folder_is_unavailable()
     {
         var locator = new OrderDocumentLocator(Path.Combine(_root, "not-there"));

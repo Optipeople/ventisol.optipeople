@@ -83,6 +83,21 @@ public sealed partial class OrderDocumentLocator
         lock (_gate) return _index?.Best.ContainsKey(order) == true;
     }
 
+    // The highest order number with a PDF in the last index, without listing the folder; null when
+    // unknown. Only five-digit orders count: a stray file name must not pass for the newest order.
+    public int? NewestOrder
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_index is null) return null;
+                var orders = _index.Best.Keys.Where(o => o <= 99999);
+                return orders.Any() ? orders.Max() : null;
+            }
+        }
+    }
+
     public async Task<OrderDocumentLookup> FindAsync(int order, CancellationToken ct = default)
     {
         if (Folder is null) return new(order, OrderDocumentStatus.Off);

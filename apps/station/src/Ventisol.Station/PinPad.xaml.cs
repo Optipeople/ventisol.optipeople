@@ -17,7 +17,7 @@ public partial class PinPad : UserControl
     public PinPad()
     {
         InitializeComponent();
-        _wait.Tick += (_, _) => ShowWait();
+        _wait.Tick += Ui.SafeTick(ShowWait);
     }
 
     public bool IsOpen => _pin is not null;
@@ -67,7 +67,7 @@ public partial class PinPad : UserControl
             granted?.Invoke();
             return;
         }
-        Message.Text = "Forkert PIN";
+        Message.Text = answer == PinAnswer.Unreadable ? "PIN-filen kan ikke læses" : "Forkert PIN";
         ShowWait();
     }
 

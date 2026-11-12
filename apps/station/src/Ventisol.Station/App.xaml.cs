@@ -31,6 +31,10 @@ public partial class App : Application
     TrayIcon? _tray;
     IDisposable? _showListener;
     DispatcherTimer? _healthy;
+    // The start is waiting after failed ones (WaitThenOpen). Read by the update service's thread too.
+    volatile bool _waiting;
+    // Ends that wait and starts now. Null when not waiting.
+    Action? _startNow;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -40,18 +44,8 @@ public partial class App : Application
         // logged and the app keeps going; a fatal one restarts it.
         DispatcherUnhandledException += (_, x) =>
         {
-            Log.Write($"Error: {x.Exception}");
             x.Handled = true;
-            var now = DateTimeOffset.Now;
-            _lastError = now;
-            _errors.Enqueue(now);
-            while (_errors.Peek() < now.AddMinutes(-1)) _errors.Dequeue();
-            if (_errors.Count >= 3 && !Exiting)
-            {
-                Log.Write("Three errors in a minute, restarting");
-                // Not started again: this app stays, and the next three errors try once more.
-                if (!RestartAfterFailure()) _errors.Clear();
-            }
+            OnError(x.Exception);
         };
         AppDomain.CurrentDomain.UnhandledException += (_, x) =>
         {
@@ -87,13 +81,101 @@ public partial class App : Application
         // --showcase starts with sample scans on the screen.
         var showcase = e.Args.Contains("--showcase", StringComparer.OrdinalIgnoreCase);
 
+        // A second start of the app brings this one's window up instead of opening another. While
+        // this one waits before it starts (below), it starts now: someone is at the PC and wants the app.
+        _showListener = SingleInstance.ListenForShow(() => Dispatcher.BeginInvoke(OnShowAsked), Log.Write);
+
         // Before the window, so a version that can't build its window still finds the next one.
         // An update restarts the app, so it waits until no scan has come in for 10 minutes (or night),
-        // and for the setup screen and the layout mode to be left.
+        // and for the setup screen and the layout mode to be left. During the wait before a start
+        // there is no window up to disturb: it goes in at once, as a fixed release is the way out.
         Updates = new UpdateService(UpdateService.DefaultUrl,
-            isQuiet: () => _window?.IsQuiet ?? false, Log.Write, inUse: () => _window?.InUse ?? false);
+            isQuiet: () => _waiting || (_window?.IsQuiet ?? false), Log.Write, inUse: () => _window?.InUse ?? false);
         Updates.Start();
 
+        WaitThenOpen(showcase);
+    }
+
+    // After restarts because something failed, the start waits (RestartLog), longer each time, so a
+    // start that keeps failing doesn't spin. Meanwhile the update service looks for a newer version,
+    // and a small window says the app is on its way, so the PC never looks dead: its "Start nu", or
+    // starting the app by hand, ends the wait.
+    void WaitThenOpen(bool showcase)
+    {
+        var now = DateTimeOffset.Now;
+        var wait = Restarts.WaitBeforeStart(now);
+        if (wait <= TimeSpan.Zero) { Open(showcase); return; }
+        Log.Write($"Restarted {Restarts.Count(now)} times in the last hour after errors: waiting {wait.TotalSeconds:0} s before starting, and looking for a newer version meanwhile");
+
+        // An update on its way in is given time to finish; installing ends this process.
+        var until = now + wait;
+        var atLatest = until + TimeSpan.FromMinutes(10);
+        // The notice closes before the window opens: that must not end the app.
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        _waiting = true;
+
+        StartNotice? notice = null;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        void Start(string why)
+        {
+            if (!_waiting) return;
+            _waiting = false;
+            _startNow = null;
+            timer.Stop();
+            try { notice?.Close(); } catch { }
+            if (Exiting) return;
+            Log.Write(why);
+            ShutdownMode = ShutdownMode.OnLastWindowClose;
+            Open(showcase);
+        }
+        _startNow = () => Start("Started before the wait was over: someone asked for the app");
+        // A notice that fails is dropped: it must never restart the app or keep the wait from ending.
+        void Tell(Action<StartNotice> show)
+        {
+            if (notice is null) return;
+            try { show(notice); }
+            catch (Exception ex)
+            {
+                Log.Write($"The start notice failed, waiting without it: {ex.Message}");
+                try { notice.Close(); } catch { }
+                notice = null;
+            }
+        }
+        timer.Tick += Ui.SafeTick(() =>
+        {
+            var t = DateTimeOffset.Now;
+            if (t < until) Tell(n => n.ShowWait(until - t));
+            else if (Updates is { IsBusy: true } && t < atLatest) Tell(n => n.ShowUpdating());
+            else Start("The wait is over, starting");
+        });
+        timer.Start();
+
+        // The wait is what matters; it runs with or without its notice.
+        try
+        {
+            notice = new StartNotice();
+            notice.StartNow += (_, _) => _startNow?.Invoke();
+            notice.ShowWait(wait);
+            notice.Show();
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"The start notice could not be shown: {ex.Message}");
+            notice = null;
+            // A window is among the app's windows from its constructor on: a half made notice must
+            // not stay up, or stay in the way of the kiosk taking the foreground.
+            try { foreach (var half in Windows.OfType<StartNotice>().ToList()) half.Close(); } catch { }
+        }
+    }
+
+    void OnShowAsked()
+    {
+        if (_startNow is { } startNow) startNow();
+        else _window?.BringUp();
+    }
+
+    void Open(bool showcase)
+    {
         MainWindow window;
         try
         {
@@ -119,18 +201,47 @@ public partial class App : Application
         }
         _window = window;
         _tray = new TrayIcon(window, (ViewModels.MainViewModel)window.DataContext);
-        // A second start of the app brings this window up instead of opening another.
-        _showListener = SingleInstance.ListenForShow(() => Dispatcher.BeginInvoke(window.BringUp), Log.Write);
 
         // A minute up, and a minute without an error, counts as a good start (StartupGuard).
-        _healthy = new DispatcherTimer(TimeSpan.FromMinutes(1), DispatcherPriority.Background, (_, _) =>
+        _healthy = new DispatcherTimer(TimeSpan.FromMinutes(1), DispatcherPriority.Background, Ui.SafeTick(() =>
         {
             if (Exiting) { _healthy?.Stop(); return; }
             if (DateTimeOffset.Now - _lastError < TimeSpan.FromMinutes(1)) return; // Look again in a minute.
             _healthy?.Stop();
             StartupGuard.Succeeded();
-        }, Dispatcher);
+        }), Dispatcher);
     }
+
+    // An error the app carries on after: logged, and counted. Three in a minute mean something is
+    // stuck, and the app starts afresh. Brief is a timer's error that repeats (Ui.SafeTick): one line,
+    // and not counted, so a tick that fails every time can't restart the app over and over. It still
+    // keeps the start from being called a good one.
+    void OnError(Exception ex, bool brief = false)
+    {
+        Log.Write(brief ? $"Error: {ex.GetType().Name}: {ex.Message}" : $"Error: {ex}");
+        var now = DateTimeOffset.Now;
+        _lastError = now;
+        if (brief) return;
+        _errors.Enqueue(now);
+        while (_errors.Peek() < now.AddMinutes(-1)) _errors.Dequeue();
+        if (_errors.Count >= 3 && !Exiting)
+        {
+            Log.Write("Three errors in a minute, restarting");
+            // Not started again: this app stays, and the next three errors try once more.
+            if (!RestartAfterFailure()) _errors.Clear();
+        }
+    }
+
+    // An error caught on the UI thread (a timer's tick): the same log line and count as one that
+    // reached the dispatcher.
+    internal static void NoteError(Exception ex, bool brief = false)
+    {
+        if (Current is App app) app.OnError(ex, brief);
+        else Log.Write($"Error: {ex}");
+    }
+
+    // The tray menu is up (it is no window of WPF's, but it is the app's).
+    internal static bool TrayMenuOpen => Current is App { _tray.MenuOpen: true };
 
     // Windows is logging off or shutting down. That says nothing about this version, so the start is
     // neither a good one nor a failed one.
@@ -139,7 +250,8 @@ public partial class App : Application
         base.OnSessionEnding(e);
         if (e.Cancel) return;
         Exiting = true;
-        if (_window is not null) StartupGuard.NotCounted();
+        // Also during the wait before a start, when there is no window yet.
+        StartupGuard.NotCounted();
     }
 
     protected override void OnExit(ExitEventArgs e)

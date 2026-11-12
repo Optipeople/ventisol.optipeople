@@ -18,7 +18,7 @@ static class WindowPlacement
         Restore(w);
 
         var save = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        save.Tick += (_, _) => { save.Stop(); Save(w); };
+        save.Tick += Ui.SafeTick(() => { save.Stop(); Save(w); });
         void Later(object? s, EventArgs e) { save.Stop(); save.Start(); }
         w.LocationChanged += Later;
         w.SizeChanged += (s, e) => Later(s, e);

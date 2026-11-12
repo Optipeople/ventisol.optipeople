@@ -93,6 +93,23 @@ public partial class SetupView : UserControl
     void OnPinTextInput(object sender, TextCompositionEventArgs e) =>
         e.Handled = !e.Text.All(c => c is >= '0' and <= '9');
 
+    // A text field takes the mouse wheel for itself (it has a scroller of its own, with nothing to
+    // scroll), so with the pointer over one the screen stood still. Scroll the screen from here.
+    void OnScrollerWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject d || !InField(d)) return;
+        // One step, as a scroller moves of its own accord for each turn of the wheel.
+        Scroller.ScrollToVerticalOffset(Scroller.VerticalOffset + (e.Delta < 0 ? 48 : -48));
+        e.Handled = true;
+    }
+
+    static bool InField(DependencyObject d)
+    {
+        for (var x = d; x is not null; x = x is Visual ? VisualTreeHelper.GetParent(x) : LogicalTreeHelper.GetParent(x))
+            if (x is System.Windows.Controls.Primitives.TextBoxBase or PasswordBox) return true;
+        return false;
+    }
+
     // A scanner in keyboard mode types its scan: make sure it doesn't land in a field.
     void OnIdentify(object sender, RoutedEventArgs e) => FocusWindow();
 

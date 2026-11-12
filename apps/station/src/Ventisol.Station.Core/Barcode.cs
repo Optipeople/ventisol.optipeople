@@ -5,7 +5,8 @@ namespace Ventisol.Station.Core;
 // What the station knows about order numbers, to settle a 14-digit label that both layouts can read.
 // Exists: whether an order is known to exist (an order PDF in the 3E folder); false when unknown.
 // Recent: an order number from the work going on now, such as the last element scanned.
-public sealed record OrderHints(Func<int, bool>? Exists = null, int? Recent = null);
+// Newest: the highest order number known to exist (the newest order PDF); null when unknown.
+public sealed record OrderHints(Func<int, bool>? Exists = null, int? Recent = null, int? Newest = null);
 
 // The 12-digit label barcode on every element, e.g. 058556050103:
 // a leading 0, the 5-digit order number, position, sub-position and piece number.
@@ -20,6 +21,13 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // (TryParseScan) with an order below it is not an element at all, unless the order is known.
     public const int OldestOrder = 58000;
 
+    // A new scan (TryParseScan) with an order more than this above the newest order the station knows
+    // of is not an element either: a retail code with a 0 put in front reads as an order far above the
+    // ones in production (7310865004703 as order 73108). About a year of orders at the pace of 2026.
+    // The limit follows the orders as they grow, and there is none at all while the station knows no
+    // order, so it can never shut real labels out.
+    public const int NewestOrderMargin = 1000;
+
     // A barcode that is already stored: an outbox file, a journal line, a row in OptiCloud. Anything
     // with the digits of an element is read, whatever its order: it was a scan once, and a rule made
     // later must not drop it.
@@ -28,8 +36,9 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
 
     // A scan coming in from a scanner. What else gets scanned on a factory floor is the retail code
     // on a box (EAN-13 and UPC-A are 13 and 12 digits too), so here 12 digits must begin with the 0,
-    // and the order must be OldestOrder or later, or one the documents folder knows (hints.Exists):
-    // a remake of an older order is still an element.
+    // and the order must be OldestOrder or later and at most NewestOrderMargin above the newest order
+    // known (hints.Recent, hints.Newest), or one the documents folder knows (hints.Exists): a remake of
+    // an older order is still an element.
     public static bool TryParseScan(string? text, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null) =>
         TryParse(text, out barcode, hints, incoming: true);
 
@@ -54,7 +63,11 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
         {
             // The order has five digits, not six.
             if (raw[0] != '0') return false;
-            if (order < OldestOrder && hints?.Exists?.Invoke(order) != true) return false;
+            if (hints?.Exists?.Invoke(order) != true)
+            {
+                if (order < OldestOrder) return false;
+                if (NewestKnown(hints) is { } newest && order > newest + NewestOrderMargin) return false;
+            }
         }
 
         barcode = new Barcode(
@@ -65,6 +78,10 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
             Piece: int.Parse(raw.AsSpan(10, 2)));
         return true;
     }
+
+    // The newest order the hints know of, never below OldestOrder; null when they know none.
+    static int? NewestKnown(OrderHints? hints) =>
+        hints is null or { Recent: null, Newest: null } ? null : Math.Max(OldestOrder, Math.Max(hints.Recent ?? 0, hints.Newest ?? 0));
 
     // The 12-digit element of a 14-digit profile label, or null if neither layout fits.
     // Order first fits when it starts with 0 and then the order (never 0). Position first fits when the

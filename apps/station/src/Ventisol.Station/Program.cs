@@ -23,10 +23,10 @@ static class Program
         {
             // Rolling back a version that keeps crashing.
             if (StartupGuard.Begin([.. SingleInstance.ArgsToKeep(args)])) return;
-            BackOff();
 
             // Whether this start was a good one is App's to say: after a healthy minute, or when
-            // someone closes it. Not here: Run() also returns after a failed start.
+            // someone closes it. Not here: Run() also returns after a failed start. After restarts
+            // because something failed, App waits before it builds its window (App.WaitThenOpen).
             var app = new App();
             app.InitializeComponent();
             app.Run();
@@ -59,24 +59,5 @@ static class Program
         if (SingleInstance.Take(single, TimeSpan.FromSeconds(15))) return true;
         Log.Write("Another app still holds this data folder: left");
         return false;
-    }
-
-    // After restarts because something failed, the start waits (RestartLog), longer each time, so a
-    // start that keeps failing doesn't spin. While it waits it looks for a newer version and installs
-    // it at once: there is no window up to disturb, and a fixed release is the way out of the loop.
-    static void BackOff()
-    {
-        var now = DateTimeOffset.Now;
-        var wait = App.Restarts.WaitBeforeStart(now);
-        if (wait <= TimeSpan.Zero) return;
-        Log.Write($"Restarted {App.Restarts.Count(now)} times in the last hour after errors: waiting {wait.TotalSeconds:0} s before starting, and looking for a newer version meanwhile");
-
-        using var updates = new UpdateService(UpdateService.DefaultUrl, () => true, Log.Write);
-        updates.Start();
-        // An update on its way in is given time to finish; installing ends this process.
-        var until = now + wait;
-        var atLatest = until + TimeSpan.FromMinutes(10);
-        while (DateTimeOffset.Now < until || updates.IsBusy && DateTimeOffset.Now < atLatest)
-            Thread.Sleep(500);
     }
 }
