@@ -57,6 +57,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The design system ships TypeScript source, with no build step.
+  transpilePackages: ["@optipeople/ui"],
   experimental: {
     // Same as vola: keep rendered pages in the browser's client cache for a
     // short while, so the back button and moving between views do not

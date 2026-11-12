@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk } from "next/font/google";
+import { UiLabelsProvider } from "@optipeople/ui";
+import { BrandStripe } from "@optipeople/ui/blocks";
+import { UI_LABELS, UI_LOCALE } from "@/lib/ui-labels";
 import "./globals.css";
 
 const hankenGrotesk = Hanken_Grotesk({
@@ -23,14 +26,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="da" className={`h-full ${hankenGrotesk.variable}`}>
       <body className="min-h-full">
-        <div className="flex min-h-full flex-col overflow-x-hidden bg-[var(--color-background)]">
-          {children}
-          <div className="brand-stripe" aria-hidden>
-            <span />
-            <span />
-            <span />
+        <UiLabelsProvider locale={UI_LOCALE} labels={UI_LABELS}>
+          <div className="flex min-h-full flex-col overflow-x-hidden bg-[var(--color-background)]">
+            {children}
+            <BrandStripe />
           </div>
-        </div>
+        </UiLabelsProvider>
       </body>
     </html>
   );
