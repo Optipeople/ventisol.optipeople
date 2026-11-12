@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
-import { DayPicker } from "@/components/day-picker";
-import { KpiRow, KpiTile } from "@/components/kpi-tile";
-import { PageHeader, PageShell } from "@/components/page-shell";
-import { EmptyState, Note, OrdersTable, ReadFailed, SectionTitle, StationsTable } from "@/components/report-tables";
+import { AutoRefresh, DayPicker, EmptyState, KpiRow, KpiTile, Note, Notice, PageHeader, PageShell, SectionTitle } from "@optipeople/ui/blocks";
+import { OrdersTable, StationsTable } from "@/components/report-tables";
 import { ReadNotice } from "@/components/read-notice";
 import { requireUser } from "@/lib/auth";
 import { capitalize, dayKey, requestTime, formatCount, formatDuration, formatInt, formatLongDay } from "@/lib/time";
@@ -25,7 +23,7 @@ export default async function OverviewPage({
   const { kpis } = report;
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <PageHeader
         title="Dagsoverblik"
         intro={
@@ -33,14 +31,29 @@ export default async function OverviewPage({
         }
       />
 
-      <DayPicker day={day} today={today} earliest={earliestDay(today)} />
+      <DayPicker
+        day={day}
+        today={today}
+        earliest={earliestDay(today)}
+        param="dato"
+        labels={{
+          previous: "Forrige dag",
+          next: "Næste dag",
+          date: "Dato",
+          today: "I dag",
+          updating: "Opdaterer…",
+        }}
+      >
+        {/* Today's numbers move while the page is open; a past day's do not. */}
+        {day === today && <AutoRefresh />}
+      </DayPicker>
 
       {clamped && <Note>Der kan vises {MAX_LOOKBACK_DAYS} dage tilbage. Datoen er rettet.</Note>}
 
       {report.incomplete ? (
-        <ReadFailed>
+        <Notice prominent className="mt-5">
           Der er for mange scanninger til at hente denne dag, så tallene vises ikke. Vælg en nyere dag.
-        </ReadFailed>
+        </Notice>
       ) : (
         <>
           <div className="mt-5">

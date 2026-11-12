@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { logout } from "@/app/login/actions";
-import { PageShell } from "@/components/page-shell";
-import { Button } from "@/components/ui/button";
+import { PageShell, SectionCard } from "@optipeople/ui/blocks";
+import { Button } from "@optipeople/ui";
 
 export const metadata: Metadata = { title: "Ingen adgang" };
 
@@ -10,8 +10,8 @@ export const metadata: Metadata = { title: "Ingen adgang" };
 // A token refresh would not change that, so this page says so instead.
 export default function NoAccessPage() {
   return (
-    <PageShell className="py-10 sm:py-16">
-      <div className="mx-auto max-w-md rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-8 text-center shadow-sm">
+    <PageShell width="wide" className="py-10 sm:py-16">
+      <SectionCard className="mx-auto max-w-md text-center" bodyClassName="p-8">
         <h1 className="text-[18px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">
           Ingen adgang til Ventisols data
         </h1>
@@ -23,7 +23,7 @@ export default function NoAccessPage() {
         <form action={logout} className="mt-5">
           <Button type="submit">Log ind med en anden bruger</Button>
         </form>
-      </div>
+      </SectionCard>
     </PageShell>
   );
 }

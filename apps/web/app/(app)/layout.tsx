@@ -1,8 +1,20 @@
 import type { ReactNode } from "react";
-import { AppHeader } from "@/components/app-header";
-import { SectionNav } from "@/components/section-nav";
+import {
+  AppHeader,
+  AppHeaderBadge,
+  SectionNav,
+  UserMenu,
+  type SectionNavItem,
+} from "@optipeople/ui/blocks";
+import { logout } from "@/app/login/actions";
 import { getSession } from "@/lib/auth";
 import { FIXTURE_USER, fixturesEnabled } from "@/lib/fixtures-flag";
+
+// The order page belongs to the day overview it is opened from.
+const NAV_ITEMS: ReadonlyArray<SectionNavItem> = [
+  { label: "Dagsoverblik", href: "/", match: ["/", "/ordre"] },
+  { label: "Periode", href: "/periode" },
+];
 
 // App chrome for the authenticated views (as in optipeople.vola). This layout
 // only *displays* the session; access enforcement lives in requireUser(),
@@ -10,20 +22,29 @@ import { FIXTURE_USER, fixturesEnabled } from "@/lib/fixtures-flag";
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const fixtures = fixturesEnabled();
   const session = fixtures ? null : await getSession();
-  const source = fixtures ? FIXTURE_USER : session?.status === "ok" ? session.user : null;
-  const user = source
-    ? {
-        email: source.email,
-        name: source.name,
-        roleName: source.roleName,
-        accountName: source.accountName,
-      }
-    : undefined;
+  const user = fixtures ? FIXTURE_USER : session?.status === "ok" ? session.user : null;
 
   return (
     <>
-      <AppHeader user={user} fixtures={fixtures} />
-      <SectionNav />
+      <AppHeader appName="Ventisol">
+        {fixtures && <AppHeaderBadge>Eksempeldata</AppHeaderBadge>}
+        {user && (
+          <UserMenu
+            user={{ email: user.email, name: user.name }}
+            details={[
+              { label: "Rolle", value: user.roleName },
+              { label: "Konto", value: user.accountName },
+            ]}
+            logoutAction={logout}
+            labels={{
+              welcome: "Velkommen, {name}",
+              loggedInAs: "Logget ind som",
+              logout: "Log ud",
+            }}
+          />
+        )}
+      </AppHeader>
+      <SectionNav items={NAV_ITEMS} width="wide" label="Rapporter" />
       <div className="flex-1">{children}</div>
     </>
   );

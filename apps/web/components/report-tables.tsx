@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { StatusTag } from "@/components/status-tag";
 import {
   DataTable,
   DataTableBody,
@@ -7,71 +6,13 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
-} from "@/components/ui/data-table";
+} from "@optipeople/ui";
+import { DotList, MeterBar, SortHeader, TableFrame } from "@optipeople/ui/blocks";
+import { StatusTag } from "@/components/status-tag";
 import { stationKey, type ElementSummary, type OrderSortKey, type OrderSummary, type StationSummary } from "@/lib/report";
 import { formatDuration, formatInt, formatPercent, formatScanTime } from "@/lib/time";
-import { cn } from "@/lib/utils";
-
-export function TableFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="scroll-area max-h-[70vh] overflow-auto rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm">
-      {children}
-    </div>
-  );
-}
-
-export function EmptyState({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="rounded-[2px] border border-dashed border-[var(--ds-grey-light-03)] bg-[var(--color-surface)] p-8 text-center text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)]">
-      {children}
-    </p>
-  );
-}
-
-/** The read did not get everything: shown instead of numbers that would be wrong. */
-export function ReadFailed({ children }: { children: React.ReactNode }) {
-  return (
-    <p
-      role="alert"
-      className="mt-5 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] p-8 text-center text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]"
-    >
-      {children}
-    </p>
-  );
-}
-
-/** One quiet line under a filter, e.g. that a date was moved. */
-export function Note({ children }: { children: React.ReactNode }) {
-  return <p className="mt-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">{children}</p>;
-}
-
-export function SectionTitle({ title, aside }: { title: string; aside?: React.ReactNode }) {
-  return (
-    <div className="mt-8 mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-      <h2 className="text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">{title}</h2>
-      {aside && (
-        <p className="text-[14px] leading-[21px] tabular-nums text-[var(--ds-grey-medium-05)]">{aside}</p>
-      )}
-    </div>
-  );
-}
 
 const muted = <span className="text-[var(--ds-grey-light-03)]">–</span>;
-
-function StationList({ stations, active }: { stations: string[]; active: string[] }) {
-  if (stations.length === 0) return muted;
-  return (
-    <span className="text-[13px] leading-[18px]">
-      {stations.map((s, i) => (
-        // Two stations can carry the same name (they are told apart by number).
-        <span key={`${i}-${s}`}>
-          {i > 0 && <span className="text-[var(--ds-grey-light-03)]"> · </span>}
-          <span className={cn(active.includes(s) && "font-bold text-[var(--ds-orange-darkest)]")}>{s}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
 
 interface SortSpec {
   key: OrderSortKey;
@@ -97,23 +38,10 @@ function Header({
       </DataTableHeader>
     );
   }
-  const active = sort.key === sortKey;
   return (
-    <DataTableHeader
-      align={align}
-      className="whitespace-nowrap"
-      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
-    >
-      <Link
-        href={sort.href(sortKey)}
-        className={cn("hover:underline", active && "text-[var(--ds-midnight-green)]")}
-      >
-        {children}
-        <span aria-hidden className="ml-1 inline-block w-[10px] text-[11px]">
-          {active ? (sort.dir === "asc" ? "▲" : "▼") : ""}
-        </span>
-      </Link>
-    </DataTableHeader>
+    <SortHeader href={sort.href(sortKey)} active={sort.key === sortKey} direction={sort.dir} align={align}>
+      {children}
+    </SortHeader>
   );
 }
 
@@ -132,7 +60,7 @@ export function OrdersTable({
 }) {
   return (
     <TableFrame>
-      <DataTable>
+      <DataTable stickyHeader>
         <DataTableHead>
           <Header sortKey="order" sort={sort}>Ordre</Header>
           <Header sortKey="elements" sort={sort} align="right">Elementer</Header>
@@ -166,7 +94,7 @@ export function OrdersTable({
                 </DataTableCell>
               )}
               <DataTableCell>
-                <StationList stations={o.stations} active={o.activeAt} />
+                <DotList items={o.stations} active={o.activeAt} empty={muted} />
               </DataTableCell>
               {period && (
                 <DataTableCell align="right" className="tabular-nums">{o.days.length}</DataTableCell>
@@ -192,20 +120,6 @@ export function OrdersTable({
   );
 }
 
-function UtilisationBar({ ratio }: { ratio: number }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="relative inline-block h-[8px] w-[80px] overflow-hidden rounded-[2px] bg-[var(--ds-grey-light-02)]">
-        <span
-          className="absolute inset-y-0 left-0 bg-[var(--ds-midnight-green)]"
-          style={{ width: `${Math.round(ratio * 100)}%` }}
-        />
-      </span>
-      <span className="w-[38px] text-right tabular-nums">{formatPercent(ratio)}</span>
-    </span>
-  );
-}
-
 export function StationsTable({
   stations,
   showUtilisation = true,
@@ -216,7 +130,7 @@ export function StationsTable({
 }) {
   return (
     <TableFrame>
-      <DataTable>
+      <DataTable stickyHeader>
         <DataTableHead>
           <DataTableHeader>Station</DataTableHeader>
           <DataTableHeader align="right">Færdige</DataTableHeader>
@@ -237,7 +151,7 @@ export function StationsTable({
               <DataTableCell align="right" className="whitespace-nowrap tabular-nums">{formatDuration(s.busyMs)}</DataTableCell>
               {showUtilisation && (
                 <DataTableCell align="right" className="whitespace-nowrap">
-                  <UtilisationBar ratio={s.utilisation} />
+                  <MeterBar ratio={s.utilisation} label={formatPercent(s.utilisation)} />
                 </DataTableCell>
               )}
             </DataTableRow>
@@ -251,7 +165,7 @@ export function StationsTable({
 export function ElementsTable({ elements }: { elements: ElementSummary[] }) {
   return (
     <TableFrame>
-      <DataTable>
+      <DataTable stickyHeader>
         <DataTableHead>
           <DataTableHeader>Stregkode</DataTableHeader>
           <DataTableHeader>Position</DataTableHeader>
@@ -269,7 +183,7 @@ export function ElementsTable({ elements }: { elements: ElementSummary[] }) {
               <DataTableCell align="right" className="tabular-nums">{e.piece ?? "–"}</DataTableCell>
               <DataTableCell align="right" className="whitespace-nowrap font-bold tabular-nums">{formatDuration(e.totalMs)}</DataTableCell>
               <DataTableCell>
-                <StationList stations={e.stations} active={[]} />
+                <DotList items={e.stations} empty={muted} />
               </DataTableCell>
               <DataTableCell align="right" className="tabular-nums">
                 {e.reworkPasses > 0 ? (

@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { sendResetLink, type ForgotState } from "@/app/forgot-password/actions";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, Spinner } from "@optipeople/ui";
 import {
   AuthCardHeader,
   authBodyTextClasses,
@@ -12,7 +11,7 @@ import {
   authErrorClasses,
   authInputClasses,
   authLinkClasses,
-} from "@/components/auth/auth-screen";
+} from "@optipeople/ui/blocks";
 
 export function ForgotPasswordForm() {
   const [state, action, pending] = useActionState<ForgotState, FormData>(
@@ -22,7 +21,7 @@ export function ForgotPasswordForm() {
 
   return (
     <form action={action} className={authCardClasses}>
-      <AuthCardHeader title="Nulstil din adgangskode" />
+      <AuthCardHeader eyebrow="Ventisol rapporter" title="Nulstil din adgangskode" />
 
       {state && "sent" in state ? (
         <>

@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import { KpiRow, KpiTile } from "@/components/kpi-tile";
-import { PageHeader, PageShell } from "@/components/page-shell";
-import { PeriodFilter, type PeriodPreset } from "@/components/period-filter";
+import { EmptyState, KpiRow, KpiTile, Note, Notice, PageHeader, PageShell, PeriodFilter, SectionTitle, type PeriodPreset } from "@optipeople/ui/blocks";
 import { ReadNotice } from "@/components/read-notice";
-import { EmptyState, Note, OrdersTable, ReadFailed, SectionTitle } from "@/components/report-tables";
+import { OrdersTable } from "@/components/report-tables";
 import { requireUser } from "@/lib/auth";
 import { sortOrders, type OrderSortKey } from "@/lib/report";
 import {
@@ -53,7 +51,7 @@ export default async function PeriodPage({ searchParams }: { searchParams: Promi
   };
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <PageHeader
         title="Tid pr. ordre i en periode"
         intro={`${formatDisplayDay(from)} til ${formatDisplayDay(to)}. Tid fra passager der sluttede i perioden; omarbejde tæller med. Klik på en kolonne for at sortere.`}
@@ -62,18 +60,23 @@ export default async function PeriodPage({ searchParams }: { searchParams: Promi
       <PeriodFilter
         from={from}
         to={to}
-        today={today}
-        earliest={earliestDay(today)}
+        min={earliestDay(today)}
+        max={today}
         presets={presets}
-        sort={sort}
-        dir={dir}
+        required
+        fromParam="fra"
+        toParam="til"
+        preserve={{ sort, retning: dir }}
+        basePath="/periode"
+        history="push"
+        labels={{ from: "Fra", to: "Til", updating: "Opdaterer…" }}
       />
       {clamped && <Note>Der kan vises {MAX_LOOKBACK_DAYS} dage tilbage. Perioden er rettet.</Note>}
 
       {report.incomplete ? (
-        <ReadFailed>
+        <Notice prominent className="mt-5">
           Der er for mange scanninger til at hente perioden, så tallene vises ikke. Vælg en kortere eller nyere periode.
-        </ReadFailed>
+        </Notice>
       ) : (
         <>
           <div className="mt-5">

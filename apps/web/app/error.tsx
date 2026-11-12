@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { PageShell } from "@/components/page-shell";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { PageShell, SectionCard } from "@optipeople/ui/blocks";
+import { Button, buttonClasses } from "@optipeople/ui";
 
 export default function Error({
   error,
@@ -21,8 +21,8 @@ export default function Error({
   }, [error]);
 
   return (
-    <PageShell className="py-10 sm:py-16">
-      <div className="mx-auto max-w-md rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-8 text-center shadow-sm">
+    <PageShell width="wide" className="py-10 sm:py-16">
+      <SectionCard className="mx-auto max-w-md text-center" bodyClassName="p-8">
         <h1 className="text-[18px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">
           Kunne ikke hente data
         </h1>
@@ -42,7 +42,7 @@ export default function Error({
             Til forsiden
           </Link>
         </div>
-      </div>
+      </SectionCard>
     </PageShell>
   );
 }

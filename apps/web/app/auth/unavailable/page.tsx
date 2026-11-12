@@ -4,11 +4,18 @@ import {
   AuthScreen,
   authBodyTextClasses,
   authCardClasses,
-} from "@/components/auth/auth-screen";
-import { buttonClasses } from "@/components/ui/button";
+} from "@optipeople/ui/blocks";
+import { buttonClasses } from "@optipeople/ui";
 import { safeNextPath } from "@/lib/site";
 
 export const metadata: Metadata = { title: "Ingen forbindelse" };
+
+const AUTH_FOOTER_LINKS = [
+  {
+    label: "Handelsbetingelser",
+    href: "https://optipeople.com/terms-and-conditions/",
+  },
+];
 
 /**
  * Where /auth/refresh sends the user when OptiCloud cannot be reached. The
@@ -22,9 +29,9 @@ export default async function AuthUnavailablePage({
   const { next } = await searchParams;
 
   return (
-    <AuthScreen>
+    <AuthScreen footerLinks={AUTH_FOOTER_LINKS}>
       <div className={authCardClasses}>
-        <AuthCardHeader title="Ingen forbindelse til OptiCloud" />
+        <AuthCardHeader eyebrow="Ventisol rapporter" title="Ingen forbindelse til OptiCloud" />
         <p className={authBodyTextClasses}>
           OptiCloud svarer ikke lige nu. Du er stadig logget ind. Prøv igen om
           lidt.

@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { resetPassword, type ResetState } from "@/app/reset-password/actions";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, Spinner } from "@optipeople/ui";
 import {
   AuthCardHeader,
   authBodyTextClasses,
@@ -12,7 +11,7 @@ import {
   authErrorClasses,
   authInputClasses,
   authLinkClasses,
-} from "@/components/auth/auth-screen";
+} from "@optipeople/ui/blocks";
 
 export function ResetPasswordForm({
   token,
@@ -30,7 +29,7 @@ export function ResetPasswordForm({
 
   return (
     <form action={action} className={authCardClasses}>
-      <AuthCardHeader title="Vælg en ny adgangskode" />
+      <AuthCardHeader eyebrow="Ventisol rapporter" title="Vælg en ny adgangskode" />
 
       {state && "done" in state ? (
         <>

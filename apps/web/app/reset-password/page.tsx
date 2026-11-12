@@ -1,8 +1,15 @@
 import type { Metadata } from "next";
-import { AuthScreen } from "@/components/auth/auth-screen";
+import { AuthScreen } from "@optipeople/ui/blocks";
 import { ResetPasswordForm } from "@/app/reset-password/reset-form";
 
 export const metadata: Metadata = { title: "Vælg en ny adgangskode" };
+
+const AUTH_FOOTER_LINKS = [
+  {
+    label: "Handelsbetingelser",
+    href: "https://optipeople.com/terms-and-conditions/",
+  },
+];
 
 export default async function ResetPasswordPage({
   searchParams,
@@ -21,7 +28,7 @@ export default async function ResetPasswordPage({
     first(params.email) ?? first(params.Email) ?? first(params.user) ?? "";
 
   return (
-    <AuthScreen>
+    <AuthScreen footerLinks={AUTH_FOOTER_LINKS}>
       <ResetPasswordForm token={token} email={email} />
     </AuthScreen>
   );

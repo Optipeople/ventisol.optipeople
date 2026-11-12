@@ -3,15 +3,14 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { login, type LoginState } from "@/app/login/actions";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button, Spinner } from "@optipeople/ui";
 import {
   AuthCardHeader,
   authCardClasses,
   authErrorClasses,
   authInputClasses,
   authLinkClasses,
-} from "@/components/auth/auth-screen";
+} from "@optipeople/ui/blocks";
 
 export function LoginForm({ initialError, next }: { initialError?: string; next?: string }) {
   const [state, action, pending] = useActionState<LoginState, FormData>(
@@ -22,7 +21,7 @@ export function LoginForm({ initialError, next }: { initialError?: string; next?
 
   return (
     <form action={action} className={authCardClasses}>
-      <AuthCardHeader title="Log ind" />
+      <AuthCardHeader eyebrow="Ventisol rapporter" title="Log ind" />
       {next && <input type="hidden" name="next" value={next} />}
 
       <div className="flex flex-col gap-2 pb-2">

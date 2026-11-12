@@ -1,11 +1,18 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { AuthScreen } from "@/components/auth/auth-screen";
+import { AuthScreen } from "@optipeople/ui/blocks";
 import { LoginForm } from "@/app/login/login-form";
 import { getSession } from "@/lib/auth";
 import { safeNextPath } from "@/lib/site";
 
 export const metadata: Metadata = { title: "Log ind" };
+
+const AUTH_FOOTER_LINKS = [
+  {
+    label: "Handelsbetingelser",
+    href: "https://optipeople.com/terms-and-conditions/",
+  },
+];
 
 export default async function LoginPage({
   searchParams,
@@ -20,7 +27,7 @@ export default async function LoginPage({
   const showForbidden = error === "forbidden" || session.status === "forbidden";
 
   return (
-    <AuthScreen>
+    <AuthScreen footerLinks={AUTH_FOOTER_LINKS}>
       <LoginForm
         initialError={
           showForbidden

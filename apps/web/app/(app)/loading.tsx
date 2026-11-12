@@ -1,8 +1,8 @@
-import { PageHeaderSkeleton, PageShell } from "@/components/page-shell";
+import { PageHeaderSkeleton, PageShell } from "@optipeople/ui/blocks";
 
 export default function Loading() {
   return (
-    <PageShell aria-busy>
+    <PageShell width="wide" aria-busy>
       <PageHeaderSkeleton titleWidth="w-56" />
       <div className="mb-5 grid animate-pulse grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (

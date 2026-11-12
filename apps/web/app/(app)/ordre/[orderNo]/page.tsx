@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { KpiRow, KpiTile } from "@/components/kpi-tile";
-import { PageHeader, PageShell } from "@/components/page-shell";
+import { EmptyState, KpiRow, KpiTile, Notice, PageHeader, PageShell, SectionTitle } from "@optipeople/ui/blocks";
 import { ReadNotice } from "@/components/read-notice";
-import { ElementsTable, EmptyState, ReadFailed, SectionTitle, StationsTable } from "@/components/report-tables";
+import { ElementsTable, StationsTable } from "@/components/report-tables";
 import { StatusTag } from "@/components/status-tag";
 import { Timeline } from "@/components/timeline";
 import { requireUser } from "@/lib/auth";
@@ -35,7 +34,7 @@ export default async function OrderPage({
   const { summary } = report;
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <p className="mb-3 text-[14px] leading-[21px]">
         <Link href="/" className="text-[var(--ds-midnight-green)] hover:underline">
           ‹ Dagsoverblik
@@ -52,9 +51,9 @@ export default async function OrderPage({
       />
 
       {report.incomplete ? (
-        <ReadFailed>
+        <Notice prominent className="mt-5">
           Der er for mange scanninger til at hente ordren, så tallene vises ikke. Prøv igen senere.
-        </ReadFailed>
+        </Notice>
       ) : !summary ? (
         <EmptyState>
           Ingen scanninger for ordre {orderNo} de seneste {report.lookbackDays} dage.
