@@ -34,10 +34,25 @@ export const CheckIcon = svg(
   "CheckIcon",
 );
 
+export const MinusIcon = svg(
+  "0 0 16 16",
+  <path d="M3.5 8h9" />,
+  "MinusIcon",
+);
+
 export const XIcon = svg(
   "0 0 16 16",
   <path d="M4 4l8 8M12 4l-8 8" />,
   "XIcon",
+);
+
+export const CircleXIcon = svg(
+  "0 0 16 16",
+  <>
+    <circle cx="8" cy="8" r="6.5" fill="currentColor" stroke="none" />
+    <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="white" />
+  </>,
+  "CircleXIcon",
 );
 
 export const DownloadIcon = svg(
@@ -73,9 +88,27 @@ export const CircleExclamationIcon = svg(
   "CircleExclamationIcon",
 );
 
+export const TriangleExclamationIcon = svg(
+  "0 0 16 16",
+  <>
+    <path d="M8 1.6l6.5 11.4H1.5L8 1.6z" fill="currentColor" stroke="none" />
+    <path d="M8 6.2v3.4M8 11v.6" stroke="white" strokeWidth={1.4} />
+  </>,
+  "TriangleExclamationIcon",
+);
+
+export const SearchIcon = svg(
+  "0 0 16 16",
+  <>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.5 10.5l3 3" />
+  </>,
+  "SearchIcon",
+);
+
 /**
  * Outlined "i" in a ring. The filled CircleInfoIcon above reads as a solid
- * dot at the small sizes a KPI label needs — this one stays legible as an
+ * dot at the small sizes a KPI label needs. This one stays legible as an
  * "i" next to 12px uppercase text.
  */
 export const InfoIcon = svg(
@@ -87,9 +120,21 @@ export const InfoIcon = svg(
   "InfoIcon",
 );
 
+export const ChevronRightIcon = svg(
+  "0 0 16 16",
+  <path d="M6 3l5 5-5 5" />,
+  "ChevronRightIcon",
+);
+
+export const ChevronLeftIcon = svg(
+  "0 0 16 16",
+  <path d="M10 3L5 8l5 5" />,
+  "ChevronLeftIcon",
+);
+
 export const ChevronDownIcon = svg(
   "0 0 16 16",
-  <path d="M4 6.5L8 10.5L12 6.5" />,
+  <path d="M3 6l5 5 5-5" />,
   "ChevronDownIcon",
 );
 

@@ -47,14 +47,17 @@ export function DataTableHeader({
   children,
   align,
   className,
+  "aria-sort": ariaSort,
 }: {
   children?: React.ReactNode;
   align?: "right";
   className?: string;
+  "aria-sort"?: React.AriaAttributes["aria-sort"];
 }) {
   return (
     <th
       scope="col"
+      aria-sort={ariaSort}
       className={cn(
         "sticky top-0 z-[1] h-[42px] border-b border-[var(--ds-grey-light-03)] bg-[#f0f5f5] px-[10px] pt-[16px] pb-[6px] text-[14px] font-bold leading-[16px] text-[var(--ds-grey-dark-09)]",
         align === "right" && "text-right",

@@ -16,7 +16,7 @@ export const authCardClasses = cn(
 export const authInputClasses = cn(
   "h-11 w-full bg-white px-[10px] py-[6px] text-[16px] leading-[21px] text-[#212529] sm:h-[30px] sm:px-[7px] sm:text-[14px]",
   "shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_0.5px_rgba(0,0,0,0.05)]",
-  "placeholder:text-[#b9b8b7]",
+  "placeholder:text-[var(--ds-grey-medium-05)]",
   "focus:outline-none focus:shadow-[0_0.5px_2.5px_0_rgba(0,0,0,0.3),0_0_0_1px_var(--ds-midnight-green)]",
   "disabled:opacity-60"
 );
@@ -25,7 +25,7 @@ export const authLinkClasses =
   "text-[var(--ds-midnight-green)] underline decoration-solid hover:opacity-70";
 
 export const authErrorClasses =
-  "mt-3 text-[13px] leading-[18px] text-[#b00020]";
+  "mt-3 text-[13px] leading-[18px] text-[var(--color-error)]";
 
 export const authBodyTextClasses =
   "pb-3 text-[14px] leading-[21px] text-black/90";

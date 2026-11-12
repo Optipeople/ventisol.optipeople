@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { PageShell } from "@/components/page-shell";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 
 export default function Error({
   error,
@@ -35,9 +36,12 @@ export default function Error({
           </p>
         )}
         {/* retry() fetches the segment again; reset() would only re-render the failed result. */}
-        <Button className="mt-5" onClick={() => retry()}>
-          Prøv igen
-        </Button>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+          <Button onClick={() => retry()}>Prøv igen</Button>
+          <Link href="/" className={buttonClasses({ variant: "secondary" })}>
+            Til forsiden
+          </Link>
+        </div>
       </div>
     </PageShell>
   );

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { login, type LoginState } from "@/app/login/actions";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   AuthCardHeader,
   authCardClasses,
@@ -72,6 +73,7 @@ export function LoginForm({ initialError, next }: { initialError?: string; next?
 
       <div className="pt-3">
         <Button type="submit" variant="secondary" disabled={pending}>
+          {pending && <Spinner className="mr-2 h-[14px] w-[14px]" />}
           {pending ? "Logger ind…" : "Log ind"}
         </Button>
       </div>

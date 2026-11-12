@@ -26,7 +26,7 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
 
   useEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    menuRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
 
     function onDocClick(e: MouseEvent) {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
@@ -35,7 +35,25 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
       if (e.key === "Escape") {
         setOpen(false);
         triggerRef.current?.focus();
+        return;
       }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ??
+          []
+      );
+      if (items.length === 0) return;
+      e.preventDefault();
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "ArrowDown"
+          ? items[(idx + 1) % items.length]
+          : e.key === "ArrowUp"
+            ? items[(idx - 1 + items.length) % items.length]
+            : e.key === "Home"
+              ? items[0]
+              : items[items.length - 1];
+      next.focus();
     }
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
@@ -72,9 +90,20 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
         </span>
         <span
           aria-hidden
-          className="flex h-4 w-[15px] shrink-0 items-center justify-center rounded-[2px] bg-[#eaeeee]"
+          className={cn(
+            "flex h-[26px] shrink-0 items-center justify-center rounded-[2px] px-[7px] py-[3px]",
+            "shadow-[0_0.5px_1.25px_rgba(0,0,0,0.3),0_0_0_rgba(0,0,0,0.05)]"
+          )}
         >
-          <ChevronDownIcon size={10} className="text-[#134343]" strokeWidth={3} />
+          <span
+            className={cn(
+              "flex h-4 w-[15px] items-center justify-center rounded-[2px]",
+              "bg-[linear-gradient(180deg,rgba(255,255,255,0.17)_0%,rgba(255,255,255,0)_100%),linear-gradient(90deg,#eaeeee_0%,#eaeeee_100%)]",
+              "shadow-[0_1px_2.5px_rgba(0,122,255,0.24),0_0_0_0.5px_rgba(0,122,255,0.12)]"
+            )}
+          >
+            <ChevronDownIcon size={10} className="text-[#134343]" strokeWidth={3} />
+          </span>
         </span>
       </button>
 
@@ -84,40 +113,40 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
           role="menu"
           className={cn(
             "absolute right-0 top-[calc(100%+8px)] z-30 w-[min(calc(100vw-1.5rem),18rem)] overflow-hidden sm:w-64",
-            "rounded-[4px] bg-[var(--color-surface)]",
-            "border border-[var(--ds-grey-light-03)] shadow-lg"
+            "rounded-[6px] bg-[var(--color-surface)]",
+            "border border-[var(--color-hairline)] shadow-[var(--shadow-lg)]"
           )}
         >
           <div className="px-4 py-3">
-            <p className="text-[12px] uppercase tracking-wide text-[var(--ds-grey-medium-05)]">
+            <p className="text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
               Logget ind som
             </p>
-            <p className="mt-1 truncate text-[15px] font-bold text-[var(--ds-grey-dark-09)]">
+            <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
               {user.email}
             </p>
             {user.roleName && (
               <>
-                <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--ds-grey-medium-05)]">
+                <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                   Rolle
                 </p>
-                <p className="mt-1 truncate text-[15px] font-bold text-[var(--ds-grey-dark-09)]">
+                <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
                   {user.roleName}
                 </p>
               </>
             )}
             {user.accountName && (
               <>
-                <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--ds-grey-medium-05)]">
+                <p className="mt-3 text-[12px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
                   Konto
                 </p>
-                <p className="mt-1 truncate text-[15px] font-bold text-[var(--ds-grey-dark-09)]">
+                <p className="mt-1 truncate text-[15px] font-medium text-[var(--color-foreground)]">
                   {user.accountName}
                 </p>
               </>
             )}
           </div>
 
-          <div className="h-px bg-[var(--ds-grey-light-02)]" />
+          <div className="h-px bg-[var(--color-hairline)]" />
 
           <form action={logout}>
             <button
@@ -126,7 +155,7 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
               onClick={() => setOpen(false)}
               className={cn(
                 "flex w-full items-center gap-2 px-4 py-3 text-left text-[15px]",
-                "text-[var(--ds-grey-dark-09)] transition-colors hover:bg-[var(--ds-grey-light-01)]"
+                "text-[var(--color-foreground)] transition-colors hover:bg-[var(--color-muted)]"
               )}
             >
               <LogOutIcon size={16} />

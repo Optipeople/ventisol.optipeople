@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { sendResetLink, type ForgotState } from "@/app/forgot-password/actions";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   AuthCardHeader,
   authBodyTextClasses,
@@ -68,6 +69,7 @@ export function ForgotPasswordForm() {
 
           <div className="pt-3">
             <Button type="submit" variant="secondary" disabled={pending}>
+              {pending && <Spinner className="mr-2 h-[14px] w-[14px]" />}
               {pending ? "Sender…" : "Send nulstillingslink"}
             </Button>
           </div>

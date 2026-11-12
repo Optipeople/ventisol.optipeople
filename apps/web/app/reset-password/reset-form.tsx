@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { resetPassword, type ResetState } from "@/app/reset-password/actions";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   AuthCardHeader,
   authBodyTextClasses,
@@ -45,7 +46,7 @@ export function ResetPasswordForm({
         </>
       ) : linkInvalid ? (
         <>
-          <p className="pb-3 text-[14px] leading-[21px] text-[#b00020]">
+          <p className="pb-3 text-[14px] leading-[21px] text-[var(--color-error)]">
             Dette nulstillingslink er ikke gyldigt.
           </p>
           <p className="pb-3 text-[14px] leading-[21px] text-black/70">
@@ -73,10 +74,11 @@ export function ResetPasswordForm({
               type="password"
               autoComplete="new-password"
               required
-              minLength={8}
+              minLength={10}
               disabled={pending}
               placeholder="Ny adgangskode"
               aria-label="Ny adgangskode"
+              aria-describedby="password-hint"
               className={authInputClasses}
             />
             <input
@@ -92,6 +94,15 @@ export function ResetPasswordForm({
             />
           </div>
 
+          {/* Same rule as meetsPasswordPolicy in actions.ts, which enforces it. */}
+          <p
+            id="password-hint"
+            className="text-[13px] leading-[18px] text-black/70"
+          >
+            Mindst 10 tegn med et stort bogstav, et lille bogstav, et tal og et
+            specialtegn.
+          </p>
+
           {state && "error" in state && (
             <p role="alert" className={authErrorClasses}>
               {state.error}
@@ -100,6 +111,7 @@ export function ResetPasswordForm({
 
           <div className="pt-3">
             <Button type="submit" variant="secondary" disabled={pending}>
+              {pending && <Spinner className="mr-2 h-[14px] w-[14px]" />}
               {pending ? "Gemmer…" : "Gem ny adgangskode"}
             </Button>
           </div>

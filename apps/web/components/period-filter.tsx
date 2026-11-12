@@ -53,7 +53,11 @@ export function PeriodFilter({
       className="relative rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-4 shadow-sm"
     >
       {pending && (
-        <span className="absolute right-3 top-3 text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+        <span className="absolute right-3 top-3 flex items-center gap-2 text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+          <span
+            aria-hidden
+            className="h-[12px] w-[12px] animate-spin rounded-full border-2 border-[var(--ds-grey-light-03)] border-t-[var(--ds-midnight-green)]"
+          />
           Opdaterer…
         </span>
       )}
@@ -70,7 +74,7 @@ export function PeriodFilter({
               href={hrefFor(p.from, p.to)}
               aria-current={active ? "true" : undefined}
               className={cn(
-                "rounded-[2px] border px-[14px] py-[5px] text-[14px] leading-[18px] transition-colors",
+                "rounded-[2px] border px-[14px] py-[5px] text-[14px] leading-[18px] transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)]",
                 active
                   ? "border-[var(--ds-midnight-green)] bg-[var(--ds-midnight-green)] font-bold text-white"
                   : "border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] text-[var(--ds-grey-dark-09)] hover:border-[var(--ds-grey-light-03)] hover:bg-[var(--ds-blue-secondary)]"

@@ -9,7 +9,21 @@ import {
   TOO_MANY_ATTEMPTS,
 } from "@/lib/rate-limit";
 
-const MIN_PASSWORD_LENGTH = 8;
+// Mirrors the OptiCloud backend policy: at least 10 characters with a
+// lowercase letter, an uppercase letter, a digit and a special character.
+// The backend validates again, so drift here only costs a vaguer error.
+// reset-form.tsx repeats the 10 in minLength and in its hint text.
+const MIN_PASSWORD_LENGTH = 10;
+
+function meetsPasswordPolicy(password: string): boolean {
+  return (
+    password.length >= MIN_PASSWORD_LENGTH &&
+    /[a-z]/.test(password) &&
+    /[A-Z]/.test(password) &&
+    /[0-9]/.test(password) &&
+    /[^a-zA-Z0-9]/.test(password)
+  );
+}
 
 export type ResetState = { done: true } | { error: string } | undefined;
 
@@ -25,8 +39,10 @@ export async function resetPassword(
   if (!token || !email) {
     return { error: "Dette nulstillingslink er ikke gyldigt." };
   }
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return { error: `Adgangskoden skal være mindst ${MIN_PASSWORD_LENGTH} tegn.` };
+  if (!meetsPasswordPolicy(password)) {
+    return {
+      error: `Adgangskoden skal være mindst ${MIN_PASSWORD_LENGTH} tegn og indeholde et stort bogstav, et lille bogstav, et tal og et specialtegn.`,
+    };
   }
   if (password !== confirm) {
     return { error: "De to adgangskoder er ikke ens." };

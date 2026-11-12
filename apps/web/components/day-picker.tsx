@@ -6,6 +6,7 @@ import { useTransition } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DateField } from "@/components/ui/date-field";
 import { buttonClasses } from "@/components/ui/button";
+import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 
 function shift(iso: string, days: number): string {
@@ -42,17 +43,19 @@ export function DayPicker({
       {atEarliest ? (
         <span
           aria-disabled="true"
-          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "pointer-events-none opacity-50")}
+          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "pointer-events-none gap-[6px] opacity-50")}
         >
-          ‹ Forrige dag
+          <ChevronLeftIcon size={14} />
+          Forrige dag
         </span>
       ) : (
         <Link
           href={href(prev, today)}
-          className={buttonClasses({ variant: "secondary", size: "compact" })}
+          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "gap-[6px]")}
           aria-label="Forrige dag"
         >
-          ‹ Forrige dag
+          <ChevronLeftIcon size={14} />
+          Forrige dag
         </Link>
       )}
       <div className="w-[170px]">
@@ -71,17 +74,19 @@ export function DayPicker({
       {atToday ? (
         <span
           aria-disabled="true"
-          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "pointer-events-none opacity-50")}
+          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "pointer-events-none gap-[6px] opacity-50")}
         >
-          Næste dag ›
+          Næste dag
+          <ChevronRightIcon size={14} />
         </span>
       ) : (
         <Link
           href={href(next, today)}
-          className={buttonClasses({ variant: "secondary", size: "compact" })}
+          className={cn(buttonClasses({ variant: "secondary", size: "compact" }), "gap-[6px]")}
           aria-label="Næste dag"
         >
-          Næste dag ›
+          Næste dag
+          <ChevronRightIcon size={14} />
         </Link>
       )}
       {!atToday && (
@@ -92,7 +97,11 @@ export function DayPicker({
       {/* Today's numbers move while the page is open; a past day's do not. */}
       {day === today && <AutoRefresh />}
       {pending && (
-        <span className="ml-auto self-center text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+        <span className="ml-auto flex items-center gap-2 self-center text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+          <span
+            aria-hidden
+            className="h-[12px] w-[12px] animate-spin rounded-full border-2 border-[var(--ds-grey-light-03)] border-t-[var(--ds-midnight-green)]"
+          />
           Opdaterer…
         </span>
       )}

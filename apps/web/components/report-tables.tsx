@@ -99,10 +99,13 @@ function Header({
   }
   const active = sort.key === sortKey;
   return (
-    <DataTableHeader align={align} className="whitespace-nowrap">
+    <DataTableHeader
+      align={align}
+      className="whitespace-nowrap"
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+    >
       <Link
         href={sort.href(sortKey)}
-        aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
         className={cn("hover:underline", active && "text-[var(--ds-midnight-green)]")}
       >
         {children}
