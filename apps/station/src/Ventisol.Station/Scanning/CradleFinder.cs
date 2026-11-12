@@ -20,16 +20,12 @@ public static partial class CradleFinder
     // Devices already logged as having no location path, so it is said once, not every poll.
     static readonly HashSet<string> NoLocationLogged = new(StringComparer.OrdinalIgnoreCase);
 
-    // Set to 1 on a developer's PC to read any USB serial device as a scanner when no Zebra cradle is
-    // plugged in. Never on a station PC: there the other USB serial devices are machines, and opening
-    // one raises its DTR line.
-    public const string AnySerialVariable = "VENTISOL_STATION_ANY_SERIAL";
+    // Devices already logged as read without being a Zebra, so it is said once, not every poll.
+    static readonly HashSet<string> FallbackLogged = new(StringComparer.OrdinalIgnoreCase);
 
-    static readonly bool AnySerial = Environment.GetEnvironmentVariable(AnySerialVariable) is "1" or "true";
-
-    // The scanner cradles present now: USB serial devices from Zebra (USB vendor id 05E0), which is
-    // how a cradle in CDC mode says what it is. Nothing to set up; plugging one in is enough.
-    // Any other USB serial device is left unopened.
+    // The USB serial devices present now. Zebra cradles only (USB vendor id 05E0), if there is at
+    // least one; otherwise any USB serial device, so a cradle that reports another vendor id, or
+    // another scanner on a dev PC, still works. That fallback is logged, naming the device.
     public static IReadOnlyList<Cradle> Find(Action<string>? log = null)
     {
         var all = new List<Cradle>();
@@ -47,7 +43,11 @@ public static partial class CradleFinder
                 all.Add(new Cradle(IdOf(pnpId!, usb, log), com.Groups[1].Value, usb.IsZebra, name));
             }
         }
-        if (all.Any(c => c.IsZebra) || !AnySerial) return all.Where(c => c.IsZebra).ToList();
+        if (all.Any(c => c.IsZebra)) return all.Where(c => c.IsZebra).ToList();
+        foreach (var cradle in all)
+            lock (FallbackLogged)
+                if (FallbackLogged.Add(cradle.Id + "|" + cradle.PortName))
+                    log?.Invoke($"No Zebra cradle found: reading {cradle.Name} ({cradle.Id}) as a scanner.");
         return all;
     }
 

@@ -71,9 +71,10 @@ A Zebra cradle ships in USB keyboard mode, and that works out of the box: plug i
 The app tells a scanner from a person by speed (a fast burst ended by Enter). It is one scanner,
 known as `keyboard`, so it scans for whichever station is set to scanner `keyboard`.
 
-In COM port mode the app only opens Zebra cradles (USB vendor id 05E0): other USB serial devices
-on a station PC are machines. To try another USB serial scanner on a dev PC, set
-`VENTISOL_STATION_ANY_SERIAL=1` before starting the app. Never on a station PC.
+In COM port mode the app opens Zebra cradles (USB vendor id 05E0) and nothing else, when it finds
+at least one. With no Zebra cradle plugged in it reads every USB serial device as a scanner, so
+another scanner works on a dev PC. The log then says which, once per device:
+`No Zebra cradle found: reading <name> (<id>) as a scanner.`
 
 Adding a scanner on site is meant to be plug and play, with no other scanner settings:
 1. Plug the cradle into a free port on the USB hub.
