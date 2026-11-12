@@ -4,6 +4,24 @@ namespace Ventisol.Station.Tests;
 
 public class BarcodeTests
 {
+    [Theory]
+    [InlineData("057000010101")]   // An order older than OldestOrder.
+    [InlineData("158830010101")]   // Twelve digits that do not begin with 0.
+    [InlineData("099999010101")]   // An order far above the newest one known.
+    public void The_element_in_progress_is_read_whatever_its_order(string text)
+    {
+        var hints = new OrderHints(Exists: _ => false, Recent: 58830);
+        Assert.False(Barcode.TryParseScan(text, out _, hints));
+        Assert.True(Barcode.TryParse(text, out var inProgress));
+
+        Assert.True(Barcode.TryParseInProgress(text, inProgress, out var b, hints));
+        Assert.Equal(inProgress.Raw, b.Raw);
+        // Only that very element: another one is not let in this way, nor is anything with none in progress.
+        Assert.False(Barcode.TryParseInProgress("057000010102", inProgress, out _, hints));
+        Assert.False(Barcode.TryParseInProgress(text, null, out _, hints));
+        Assert.False(Barcode.TryParseInProgress("not a barcode", inProgress, out _, hints));
+    }
+
     [Fact]
     public void Parses_the_pallet_label_sample()
     {

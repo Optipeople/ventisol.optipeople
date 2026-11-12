@@ -85,9 +85,13 @@ public sealed partial class MainViewModel : ObservableObject
         LastScanAt = now;
 
         // A new scan: the strict reading, so a retail code on a box is not taken for an element.
-        if (Barcode.TryParseScan(raw, out var barcode, Hints))
+        // The element in progress at this station is read whatever its order, so it can always be
+        // scanned out; its order is not noted as the last one (the strict rules never passed it).
+        var strict = Barcode.TryParseScan(raw, out var barcode, Hints);
+        if (!strict) Barcode.TryParseInProgress(raw, station.Current, out barcode, Hints);
+        if (barcode is not null)
         {
-            if (_lastOrder != barcode.Order)
+            if (strict && _lastOrder != barcode.Order)
             {
                 _lastOrder = barcode.Order;
                 LastOrderChanged?.Invoke(this, barcode.Order);

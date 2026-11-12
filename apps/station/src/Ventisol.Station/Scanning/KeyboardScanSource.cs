@@ -63,10 +63,6 @@ public sealed class KeyboardScanSource : IScanSource
         var c = enter ? null : CharOf(e.Key, Keyboard.Modifiers);
         if (!enter && c is null) return false;
 
-        // A key held down repeats faster than a person types and would pass for a scan. A scanner
-        // sends every character as its own key press, so repeats are never part of one.
-        if (e.IsRepeat) return !enter && field is null;
-
         if (enter) return OnEnter(DateTimeOffset.Now);
         Take(c!.Value, TimeOf(e), field);
         return field is null;
