@@ -2,7 +2,7 @@
 
 All software for the Ventisol MES project lives in this monorepo. The hardware is already on site at Ventisol (Vrå): PCs, screens, and Zebra LI3678-SR scanners. Only the software remains.
 
-**The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. The station app builds no backend or database of its own. The web portal adds a Supabase read model on top (see `web-portal-plan.md`); OptiCloud stays the system of record.
+**The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. The station app builds no backend or database of its own. Whether the web portal adds its own Supabase read model on top is undecided (see `web-portal-plan.md` §3.1); OptiCloud stays the system of record either way.
 
 Updated 2026-10-23.
 

@@ -38,17 +38,37 @@ The deck's AI demo is a contract in practice. These six questions must answer co
 
 ## 3. Architecture
 
-### 3.1 The one big decision: a read model in Supabase
+### 3.1 Where the report numbers come from. **UNDECIDED**
 
-`development-plan.md` says "we build no backend or database of our own". The portal has to break that rule, and should. OptiCloud stays the **system of record** for every scan and order; the station app keeps writing there and nothing changes on the floor. The portal gets its own Supabase Postgres, which holds three things:
+The biggest open decision in this plan. §3.4, §3.5 and Phase 1 are written for option C. Under A or B they shrink as noted at the end of this section.
 
-1. **A read model.** A mirror of OptiCloud scans and order documents, plus derived facts: paired station intervals, order timelines, lead and waiting times. Every report, the chat and every agent query this, not OptiCloud directly.
-2. **Data only the portal owns.** Users and roles, master data the deck needs that OptiCloud doesn't have (normal times, calculated times per element type, shift calendar, closed days, delivery dates), report snapshots, chat history, audit log.
-3. **Search.** pgvector over the 3E production lists, so the chat can answer from them.
+**The facts that decide it**
+- `MasterData/GetRowsPaged` has **no date filter and no server-side aggregation**. It can only page backwards from the newest row, 500 rows per page. `apps/web/lib/paging.ts` is sized for about 3,000 scans a day and capped at 600 pages.
+  - One day ≈ 6 pages; a month ≈ 180 pages; a year ≈ 2,200 pages, past the cap.
+- The deck needs history: Overblik's 12-week trend with change vs last month, Ledelse month by month, calculated vs measured over 30 days, and the AI chat asking about any period.
+- No report number exists in OptiCloud as stored. Lead time, waiting time and time per station come from pairing each element's scan-in and scan-out and joining stations into a route. Direct reading redoes that per request.
+- On Vercel the in-memory cache is per server instance and lost on every deploy.
+- A chat question often makes 3–5 tool calls; each one would page OptiCloud.
+- Customer, delivery week (Lev. uge) and element type only exist inside the 3E PDFs, which would otherwise be parsed per view.
+- Some data has no home in OptiCloud: normal times, calculated times per element type, shift calendar, monthly snapshots, chat history. Most could live in OptiCloud master-data tables (the station app already creates tables there); chat history can't sensibly.
 
-Why: paging 600 pages per report is too slow and can't serve monthly trends, a forecast or an AI that runs ad-hoc questions. A Postgres read model makes every report a cheap SQL query, makes history permanent, and gives the AI one well-typed place to look. Ventisol's volume is small (a few thousand scans a day), so Supabase's smallest paid tier is enough.
+**The options**
 
-Rule that keeps us honest: **the read model can always be rebuilt from OptiCloud.** Derived tables are recomputed, never hand-edited. A `rebuild` job replays everything.
+| Option | What it is | For | Against |
+|---|---|---|---|
+| **A. Direct only** | As `apps/web` does today: page OptiCloud per request, compute in the request, cache in memory | One source of truth; no sync to keep correct; matches the original "no database of our own" rule | Daily views work; trends, Ledelse and chat get slow and hit the page cap as history grows; PDFs parsed per view |
+| **B. Improve the OptiPeople API, then read directly** | Ask the backend owner for a date filter and a "changed since" cursor on `GetRowsPaged`, possibly aggregation endpoints | It's our own platform; every customer benefits; still one source | Depends on the backend owner's time; still recomputes everything per request; chat history and portal settings still need a home |
+| **C. Supabase read model** | A sync job copies new scans and 3E documents from OptiCloud every minute (by watermark) and stores derived facts: paired intervals, order and station figures, parsed 3E data; plus portal-owned data | Every report is a cheap SQL query; history permanent; chat and pages share the same queries; PDFs parsed once | A sync job to keep correct (late offline scans, edits); a second database; reverses the original rule |
+
+**Leaning** (not decided): C in a smaller form. Supabase stores derived facts, parsed 3E data and portal-owned data. OptiCloud stays the only home of raw scans and the system of record, and the derived tables can always be rebuilt from it and are never hand-edited. Ask for B in parallel, since a "changed since" cursor makes C's sync cheaper and surer.
+
+**If the answer is A or B**, the honest version is:
+- Stations and orders views read OptiCloud directly (with B's date filter if we get it).
+- Ledelse, long trends and the chat still need some stored figures. The minimum is a cache of each finished day's numbers in a shared store (Vercel Runtime Cache or a small table). That is a small version of C.
+- Supabase, or OptiCloud master-data tables, still hold portal-owned data: roles, normal and calculated times, calendar, snapshots, chat history.
+- §3.5's `raw.*` and most of `core.*` drop out; `config.*`, `app.*`, `ai.*` and `rpt.snapshots` stay.
+
+**To decide it we need:** an answer from the OptiPeople backend owner on whether a date filter and "changed since" cursor on `GetRowsPaged` can be added, and when (§9).
 
 ### 3.2 Platform
 
@@ -81,7 +101,7 @@ Rule that keeps us honest: **the read model can always be rebuilt from OptiCloud
 - **Supabase access is server-only.** The browser never holds a Supabase key. Server code uses a client that carries a short-lived JWT minted per request with `account_id`, `opti_user_id` and `role` claims, and **RLS policies enforce role and account on every table**. The service role is used only by sync jobs and migrations. This fixes the weakness in ai.chat, where RLS is on but has no policies and one missed check leaks data.
 - Every write and every admin action goes to `audit_log`.
 
-### 3.4 Data flow
+### 3.4 Data flow (assumes option C, §3.1)
 
 ```
 Station app ──► OptiCloud (VentisolScans, PartOrderNumber, VentisolOrderDocuments)
@@ -105,7 +125,7 @@ Station app ──► OptiCloud (VentisolScans, PartOrderNumber, VentisolOrderDo
 - **3E documents.** For each new PDF: fetch through `MasterDataBlob/Get`, parse into the `OrderDocument` shape described in `docs/order-documents.md` (customer, delivery address, **Lev. uge**, positions, element system, opening type, dimensions, glass), store the JSON, derive **element type** per position (Vindue 1 fag / 2 fag / Dør / Terrassedør), chunk and embed for search. The station already has a .NET parser; we port it to TypeScript and test both against the same `context/orderfiles` fixtures. Fallback when a PDF won't parse: Claude structured extraction, flagged for review.
 - **Freshness.** Cron every minute. Live pages also call a throttled "sync now" when opened, so a scan shows within seconds when someone is looking. If that's not enough later, the station app can ping a portal webhook after each upload (a one-line change there; not needed now).
 
-### 3.5 Data model (first cut)
+### 3.5 Data model (first cut; assumes option C, §3.1)
 
 | Schema.table | Holds |
 |---|---|
@@ -290,7 +310,7 @@ For **Ventisol** (Kim, Bente):
 6. **Who gets which role**, and should a `viewer` see cost/kalkule numbers?
 
 For **OptiPeople** (backend owner):
-7. A date filter or a "changed since" cursor on `GetRowsPaged`, or a webhook on new rows. Not required (we sync by watermark) but cheaper.
+7. **Decides §3.1:** can a date filter and a "changed since" cursor be added to `GetRowsPaged` (or a webhook on new rows, or aggregation endpoints), and when?
 8. A non-expiring service credential for the sync job (today `ventisolserviceaccount@optipeople.dk` with password + refresh).
 9. MCP OAuth client for the Ventisol account.
 
@@ -303,7 +323,7 @@ Each phase ends deployed on ventisol.optipeople.dk. Work inside a phase runs in 
 - Auth on top of current `lib/auth.ts`: `portal_users`, roles, minted JWT, RLS helpers, role-aware nav with the new tab structure.
 - Deploy the current three reports as-is behind the new auth so Ventisol can log in from day one.
 
-**Phase 1: Read model** (parallel)
+**Phase 1: Read model** (parallel; shape depends on §3.1)
 - A. Sync jobs (scans, order documents), watermark, reconcile, rebuild, sync-status page.
 - B. Derive module (`core.*`) on the shared rules, with vectors and real-day tests.
 - C. 3E PDF parser in TypeScript + element-type mapping + document chunks/embeddings.
