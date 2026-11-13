@@ -2,7 +2,7 @@
 
 All software for the Ventisol MES project lives in this monorepo. The hardware is already on site at Ventisol (Vrå): PCs, screens, and Zebra LI3678-SR scanners. Only the software remains.
 
-**The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. We build no backend or database of our own.
+**The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. The station app builds no backend or database of its own. The web portal adds a Supabase read model on top (see `web-portal-plan.md`); OptiCloud stays the system of record.
 
 Updated 2026-10-23.
 
@@ -14,11 +14,11 @@ Updated 2026-10-23.
 | 2 | Scanner handling | Inside the station app | Built (COM port + keyboard mode); untested on real cradles |
 | 3 | Backend | OptiPeople API and DB | Exists |
 | 4 | Admin setup | Inside the station app | Built |
-| 5 | Reports site | Next.js app, ventisol.optipeople.dk (this repo) | Built, not deployed |
+| 5 | Reports site | Next.js app, ventisol.optipeople.dk (this repo) | Built, not deployed; full portal planned in `web-portal-plan.md` |
 | 6 | Schirmer start/stop | OptiPeople Dashboards | Exists |
 | 7 | KMW connector | With Mads Wested (IoT) | Blocked on KMW |
 | 8 | 3E connector | Inside the station app | Build last |
-| 9 | Chat interface | Opti Assist, or the reports site | To decide |
+| 9 | Chat interface | In the portal (see `web-portal-plan.md`) | Planned |
 | 10 | SchirmerFix | Done, signed off by Bente | Done |
 | 11 | CI/CD and auto-update | GitHub Actions | Built; needs the update repo and secrets |
 | 12 | Technical docs | OptiCore | Ongoing |
