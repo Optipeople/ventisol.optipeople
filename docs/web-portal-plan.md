@@ -16,7 +16,7 @@ The proposal's base subscription (12,500 kr/md) includes, for the portal:
 | Monthly report to the board on the 1st (Ledelse tab) | A frozen monthly report with PDF download; how it gets sent is an open question (§9) |
 | Værdimøde (value meeting), weekly for 3 months | Not software, but the portal must give us the numbers for it |
 
-Shown as "Inspiration / Senere" and **not sold**: the 12 agents, Webshop. Options: KMW, 3E and Schirmer connectors. Not promised anywhere: OEE, quality module, TV screens, roles. We build the sold scope fully and design so the agents and connectors plug in without rework (§6, §7).
+Shown as "Inspiration / Senere" and **not sold**: the 12 agents, Webshop. Options: KMW, 3E and Schirmer connectors. Not promised anywhere: OEE, quality module, TV screens, roles. **TV/kiosk screens: decided out of scope 2026-11-13.** We build the sold scope fully and design so the agents and connectors plug in without rework (§6, §7).
 
 **Decided 2026-11-13:** automations and AI agents are **not built for Ventisol** until they're sold. When they are, they run in a **separate central OptiPeople project** that serves all customers, not in this portal and not in Opti Assist. §6 records that design so the groundwork and decisions are in place; this portal only keeps its tools in a shape that project can call later.
 
@@ -46,7 +46,7 @@ The deck's AI demo is a contract in practice. These six questions must answer co
 2. **Data only the portal owns.** Users and roles, master data the deck needs that OptiCloud doesn't have (normal times, calculated times per element type, shift calendar, closed days, delivery dates), report snapshots, chat history, audit log.
 3. **Search.** pgvector over the 3E production lists, so the chat can answer from them.
 
-Why: paging 600 pages per report is too slow and can't serve live screens, monthly trends, a forecast or an AI that runs ad-hoc questions. A Postgres read model makes every report a cheap SQL query, makes history permanent, and gives the AI one well-typed place to look. Ventisol's volume is small (a few thousand scans a day), so Supabase's smallest paid tier is enough.
+Why: paging 600 pages per report is too slow and can't serve monthly trends, a forecast or an AI that runs ad-hoc questions. A Postgres read model makes every report a cheap SQL query, makes history permanent, and gives the AI one well-typed place to look. Ventisol's volume is small (a few thousand scans a day), so Supabase's smallest paid tier is enough.
 
 Rule that keeps us honest: **the read model can always be rebuilt from OptiCloud.** Derived tables are recomputed, never hand-edited. A `rebuild` job replays everything.
 
@@ -56,7 +56,7 @@ Rule that keeps us honest: **the read model can always be rebuilt from OptiCloud
 |---|---|---|
 | App | Keep `apps/web`, Next.js 16 App Router, `@optipeople/ui` | Shared UI goes to `optipeople.ui` per `apps/web/AGENTS.md` |
 | Hosting | New Vercel project `ventisol-optipeople` in the Optipeople team, root `apps/web`, domain `ventisol.optipeople.dk` | Fluid compute, preview per PR |
-| Database | New Supabase project, EU region (Frankfurt), installed through the Vercel Marketplace integration so env vars sync | Postgres, pgvector, Realtime, Storage, pg_cron |
+| Database | New Supabase project, EU region (Frankfurt), installed through the Vercel Marketplace integration so env vars sync | Postgres, pgvector, Storage |
 | Migrations | `supabase/` folder in repo root, Supabase CLI, applied by CI | Branching per PR if the plan allows |
 | AI | Vercel AI SDK (`ai`, `@ai-sdk/react`) through **Vercel AI Gateway**, Claude models | Gateway gives one bill, fallbacks and usage per key inside Vercel |
 | Scheduled jobs | **Vercel Cron** for sync, reconcile and the monthly snapshot | Automations and agents live in the central project (§6) |
@@ -77,7 +77,6 @@ Rule that keeps us honest: **the read model can always be rebuilt from OptiCloud
 | `ledelse` (management) | Kim, the board | All tabs incl. Ledelse, monthly reports, cost figures |
 | `planner` | Bente | Overblik, Stationer, Ordrer, master data for times and calendar, chat |
 | `viewer` | Supervisors, office | Overblik, Stationer, Ordrer, chat without cost figures |
-| `screen` | A TV or tablet | Only its assigned live screen; login by device token, no person |
 
 - **Supabase access is server-only.** The browser never holds a Supabase key. Server code uses a client that carries a short-lived JWT minted per request with `account_id`, `opti_user_id` and `role` claims, and **RLS policies enforce role and account on every table**. The service role is used only by sync jobs and migrations. This fixes the weakness in ai.chat, where RLS is on but has no policies and one missed check leaks data.
 - Every write and every admin action goes to `audit_log`.
@@ -98,7 +97,7 @@ Station app ──► OptiCloud (VentisolScans, PartOrderNumber, VentisolOrderDo
                     │
         ┌───────────┼───────────────┬─────────────────┐
         ▼           ▼               ▼                 ▼
-   Report pages   AI chat tools   (later) MCP for agents   Live screens (Realtime)
+   Report pages   AI chat tools   (later) MCP for agents
 ```
 
 - **Sync.** Read `GetRowsPaged` newest-first until we hit the last stored `ScanId`; insert idempotently. Same for the order-document list. A nightly full reconcile catches edits and late offline uploads (the station's outbox sends old scans late, with their own time, so derived facts for past days must be recomputed when a late scan lands).
@@ -126,7 +125,7 @@ Station app ──► OptiCloud (VentisolScans, PartOrderNumber, VentisolOrderDo
 | `config.normal_times` | Normal time per station per element type (manual, or learned from the baseline) |
 | `config.calendar` | Shifts per weekday, closed days, holidays |
 | `config.settings` | Schirmer assumed time per batch, buffer capacity (40), thresholds |
-| `app.portal_users`, `app.screens`, `app.audit_log` | Auth, kiosk devices, audit |
+| `app.portal_users`, `app.audit_log` | Auth, audit |
 | `ai.conversations`, `ai.messages`, `ai.tool_calls`, `ai.usage_events`, `ai.feedback` | Chat persistence, every tool call stored, cost |
 | `rpt.snapshots` | Frozen monthly reports (PDF in Storage + JSON numbers) |
 
@@ -166,17 +165,14 @@ Navigation follows the deck: **Overblik · Stationer · Ordrer · Ledelse**, plu
 ### 4.5 Chat
 See §5. Full page plus a side panel available on every page ("Spørg om denne ordre").
 
-### 4.6 Live screens (kiosk). Not in the deck; recommended
-A read-only full-screen view for a TV in assembly or the office: orders in progress with "Er nu ved", stations with status colour, today's count. Uses Supabase Realtime on `core.*`, logs in by `screen` device token, survives network drops. Small to build once the read model exists, and visible value on the floor. Build in the last phase; skip if you say so.
-
-### 4.7 Indstillinger (settings). Role `admin` (some parts `planner`)
+### 4.6 Indstillinger (settings). Role `admin` (some parts `planner`)
 - Users and roles (OptiCloud users in the Ventisol account, with portal role).
 - Stations (name, kind, machine link, order) — read from what the station app set up, extra fields here.
 - Element types and how they're recognised in the 3E PDF; calculated time per type.
 - Normal times per station and type, with a button "foreslå fra baseline" (suggest from baseline: median of the last N weeks).
 - Calendar: shifts, closed days; toggle "træk tid uden for skift fra" (deduct time outside shifts) for the lead-time calculation.
 - Thresholds: what counts as late, slow, long dwell, standstill.
-- Screens (kiosk tokens). Audit log. Sync status (last sync, lag, errors, "rebuild").
+- Audit log. Sync status (last sync, lag, errors, "rebuild").
 - Missing scans: a list on Overblik of elements scanned in but never out, and packed orders with an element missing. A list, not an alert.
 
 ## 5. AI chat
@@ -292,12 +288,11 @@ For **Ventisol** (Kim, Bente):
 4. **Board report**: is a PDF they download and send themselves enough, or do they expect it mailed automatically? Automatic sending needs the central automation project (§6), which isn't sold.
 5. **Shift calendar**: confirm shifts (sim shows 06:00–14:00) and whether lead time excludes nights and weekends by default.
 6. **Who gets which role**, and should a `viewer` see cost/kalkule numbers?
-7. Do they want a TV screen on the floor?
 
 For **OptiPeople** (backend owner):
-8. A date filter or a "changed since" cursor on `GetRowsPaged`, or a webhook on new rows. Not required (we sync by watermark) but cheaper.
-9. A non-expiring service credential for the sync job (today `ventisolserviceaccount@optipeople.dk` with password + refresh).
-10. MCP OAuth client for the Ventisol account.
+7. A date filter or a "changed since" cursor on `GetRowsPaged`, or a webhook on new rows. Not required (we sync by watermark) but cheaper.
+8. A non-expiring service credential for the sync job (today `ventisolserviceaccount@optipeople.dk` with password + refresh).
+9. MCP OAuth client for the Ventisol account.
 
 ## 10. Order of work
 
@@ -320,10 +315,7 @@ Each phase ends deployed on ventisol.optipeople.dk. Work inside a phase runs in 
 **Phase 3: AI chat** (parallel with late Phase 2)
 - Chat tools on `rpt.*`, persistence, generative charts, document search, usage/cost, evals with the six deck questions, side panel. MCP second.
 
-**Phase 4: Live screens** (if Ventisol wants them, §4.6)
-- Kiosk screens with Realtime and device tokens.
-
-**Phase 5: Hardening and go-live**
+**Phase 4: Hardening and go-live**
 - Security review, load test on a year of synthetic data, e2e green, docs, handover to the value meetings.
 
 **Not scheduled: automations and agents.** Built in the central project (§6) when sold; the portal's part then is an MCP endpoint on `lib/tools/` and an approval inbox.
