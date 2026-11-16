@@ -45,6 +45,7 @@ import {
   type PortalRole,
 } from "@/lib/portal/roles";
 import { resolvePortalUser } from "@/lib/portal/users";
+import "@/lib/fixture-seeds";
 
 /** Base URL of the Optipeople API (login and data). */
 export const API_URL = (
