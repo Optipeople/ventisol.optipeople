@@ -46,6 +46,8 @@
 //
 // Writing is one statement per page (jsonb_to_recordset), idempotent by
 // scan_id. A stored row whose values differ is updated and counts as changed.
+// A row edited in OptiCloud to another order is queued twice: for the new
+// order and for the one it left, which would otherwise keep the old pass.
 // Each page is its own short transaction, and in that same transaction the
 // new and changed rows are queued for the read model writer
 // (app.sync_private, "pending:scans"); the queue is emptied by
@@ -70,6 +72,7 @@ import {
   type ServiceAccess,
   type SourcePage,
 } from "./opticloud-service";
+import { handOver } from "./handover";
 import {
   appendPending,
   dropPending,
@@ -220,27 +223,55 @@ const VALUE_COLUMNS = SCAN_COLUMNS.filter((c) => c !== "scan_id");
 
 // One statement for a whole page. The update only happens when a value
 // differs, so a row that is the same is not written and not returned.
-// xmax = 0 tells an inserted row from an updated one.
+// xmax = 0 tells an inserted row from an updated one. The CTE "old" reads the
+// stored rows before the update (every part of the statement sees the same
+// snapshot), so a row that moved to another order also names the order it
+// left.
 const UPSERT_SQL = `
-  insert into raw.scans as s (${COLUMN_LIST}, synced_at)
-  select ${SCAN_COLUMNS.map((c) => `r.${quoted(c)}`).join(", ")}, $2::timestamptz
-    from jsonb_to_recordset($1::jsonb) as r(
+  with r as (
+    select * from jsonb_to_recordset($1::jsonb) as r(
       "scan_id" text, "barcode" text, "order_no" integer, "position" integer,
       "sub_position" integer, "piece" integer, "station" text, "station_no" integer,
       "station_kind" text, "machine_id" text, "direction" text, "scan_time" timestamptz,
       "duration_sec" integer, "device" text, "row_id" text, "created_date" timestamptz)
-  on conflict (scan_id) do update set
-    ${VALUE_COLUMNS.map((c) => `${quoted(c)} = excluded.${quoted(c)}`).join(", ")},
-    synced_at = excluded.synced_at
-  where (${VALUE_COLUMNS.map((c) => `s.${quoted(c)}`).join(", ")})
-    is distinct from (${VALUE_COLUMNS.map((c) => `excluded.${quoted(c)}`).join(", ")})
-  returning s.scan_id, (s.xmax = 0) as inserted`;
+  ),
+  old as (
+    select o.scan_id, o.barcode, o.order_no, o.station_no, o.scan_time
+      from raw.scans o
+     where o.scan_id in (select r.scan_id from r)
+  ),
+  up as (
+    insert into raw.scans as s (${COLUMN_LIST}, synced_at)
+    select ${SCAN_COLUMNS.map((c) => `r.${quoted(c)}`).join(", ")}, $2::timestamptz
+      from r
+    on conflict (scan_id) do update set
+      ${VALUE_COLUMNS.map((c) => `${quoted(c)} = excluded.${quoted(c)}`).join(", ")},
+      synced_at = excluded.synced_at
+    where (${VALUE_COLUMNS.map((c) => `s.${quoted(c)}`).join(", ")})
+      is distinct from (${VALUE_COLUMNS.map((c) => `excluded.${quoted(c)}`).join(", ")})
+    returning s.scan_id, (s.xmax = 0) as inserted
+  )
+  select up.scan_id, up.inserted,
+         old.barcode as old_barcode, old.order_no as old_order_no,
+         old.station_no as old_station_no, old.scan_time as old_scan_time
+    from up left join old on old.scan_id = up.scan_id`;
+
+/** What a changed row held before this write. */
+export interface PreviousScan {
+  scan_id: string;
+  barcode: string | null;
+  order_no: number | null;
+  station_no: number | null;
+  scan_time: Date | string | null;
+}
 
 export interface UpsertResult {
   /** scan_id of the rows that were not stored before. */
   inserted: string[];
   /** scan_id of the stored rows whose values differed. */
   changed: string[];
+  /** The changed rows as they were before, by scan_id. */
+  previous: Map<string, PreviousScan>;
 }
 
 /**
@@ -251,31 +282,74 @@ export interface UpsertResult {
 export async function upsertScans(db: Db, scans: RawScan[], now: number): Promise<UpsertResult> {
   const byId = new Map<string, RawScan>();
   for (const scan of scans) byId.set(scan.scan_id, scan);
-  if (byId.size === 0) return { inserted: [], changed: [] };
-  const rows = await db.query<{ scan_id: string; inserted: boolean }>(UPSERT_SQL, [
-    JSON.stringify([...byId.values()]),
-    new Date(now).toISOString(),
-  ]);
+  if (byId.size === 0) return { inserted: [], changed: [], previous: new Map() };
+  const rows = await db.query<{
+    scan_id: string;
+    inserted: boolean;
+    old_barcode: string | null;
+    old_order_no: number | null;
+    old_station_no: number | null;
+    old_scan_time: Date | string | null;
+  }>(UPSERT_SQL, [JSON.stringify([...byId.values()]), new Date(now).toISOString()]);
+  const previous = new Map<string, PreviousScan>();
+  for (const r of rows) {
+    if (r.inserted) continue;
+    previous.set(r.scan_id, {
+      scan_id: r.scan_id,
+      barcode: r.old_barcode,
+      order_no: r.old_order_no,
+      station_no: r.old_station_no,
+      scan_time: r.old_scan_time,
+    });
+  }
   return {
     inserted: rows.filter((r) => r.inserted).map((r) => r.scan_id),
     changed: rows.filter((r) => !r.inserted).map((r) => r.scan_id),
+    previous,
   };
+}
+
+/**
+ * What to queue for one new or changed row: the row as it is now, and, when
+ * it was moved to another order, the row as it was, so the writer derives
+ * the old order again (and removes it when it has no scans left).
+ */
+export function changesOf(scan: RawScan, previous: PreviousScan | undefined): {
+  queue: ChangedScan[];
+  unplaceable: boolean;
+} {
+  const now = toChangedScan(scan);
+  const queue = now ? [now] : [];
+  const before = previous ? toChangedScan(previous) : null;
+  if (before && before.orderNo !== now?.orderNo) queue.push(before);
+  return { queue, unplaceable: now === null };
 }
 
 // --- the read model queue ---
 
 /**
  * Hands everything queued in "pending:scans" to applyScanChanges and takes
- * it off the queue once the writer has returned. Null when nothing was
- * queued (the writer is then not called). Opens its own transactions.
+ * it off the queue once the writer has returned. An order the writer keeps
+ * failing on is set aside (handover.ts) and the rest goes on; the queue is
+ * only kept when the writer fails as a whole. Null when nothing was queued
+ * (the writer is then not called). Opens its own transactions.
  */
 export async function flushScanChanges(now: number): Promise<ApplyResult | null> {
   const pending = await withService((db) => readPending<ChangedScan>(db, PRIVATE.pendingScans));
   if (pending.length === 0) return null;
-  // The same scan queued twice (changed again before it was handed over) goes once.
-  const byId = new Map<string, ChangedScan>();
-  for (const scan of pending) byId.set(scan.scanId, scan);
-  const result = await applyScanChanges([...byId.values()], now);
+  // The same entry queued twice goes once. A scan moved to another order has
+  // two entries, one per order, and both stay.
+  const unique = new Map<string, ChangedScan>();
+  for (const scan of pending) {
+    unique.set(JSON.stringify([scan.scanId, scan.orderNo, scan.stationNo, scan.scanTime]), scan);
+  }
+  const result = await handOver({
+    source: "scans",
+    items: [...unique.values()],
+    orderOf: (scan) => scan.orderNo,
+    apply: (items) => applyScanChanges(items, now),
+    now,
+  });
   await withService((db) => dropPending(db, PRIVATE.pendingScans, pending.length));
   return result;
 }
@@ -352,9 +426,9 @@ export class ScanIntake {
       const result = await upsertScans(db, scans, this.now);
       const queue: ChangedScan[] = [];
       for (const id of [...result.inserted, ...result.changed]) {
-        const changed = toChangedScan(byId.get(id)!);
-        if (changed) queue.push(changed);
-        else this.unplaceable++;
+        const changes = changesOf(byId.get(id)!, result.previous.get(id));
+        queue.push(...changes.queue);
+        if (changes.unplaceable) this.unplaceable++;
       }
       await appendPending(db, PRIVATE.pendingScans, queue);
       this.inserted += result.inserted.length;

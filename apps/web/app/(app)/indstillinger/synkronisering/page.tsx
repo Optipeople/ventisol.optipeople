@@ -58,7 +58,7 @@ const when = (date: Date | null) => (date ? formatDateTime(date.getTime()) : "Al
 
 export default async function SyncPage() {
   const ctx = await requireCapability("/indstillinger/synkronisering", "sync.view");
-  const { configured, missing, jobs } = await getSyncStatus(ctx.claims, requestTime());
+  const { configured, missing, jobs, deadLetters } = await getSyncStatus(ctx.claims, requestTime());
 
   return (
     <SectionCard
@@ -76,6 +76,7 @@ export default async function SyncPage() {
           miljøet: {missing.join(", ")}.
         </p>
       )}
+      {deadLetters > 0 && <p role="status" className="m-4 rounded-[2px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] px-3 py-2 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]">{deadLetters === 1 ? "1 ordre" : `${deadLetters} ordrer`} kunne ikke regnes ud og er lagt til side. Deres tal er forældede, indtil der trykkes Genopbyg.</p>}
       {jobs.length === 0 ? (
         <EmptyState title="Ingen synkronisering har kørt endnu" className="m-4">
           Når den første hentning fra OptiCloud har kørt, står hvert job her med tidspunkt, forsinkelse

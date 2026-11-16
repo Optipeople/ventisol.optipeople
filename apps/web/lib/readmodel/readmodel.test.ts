@@ -19,6 +19,7 @@ import {
   REBUILD_STATE,
   rebuildAll,
   type ChangedScan,
+  type RebuildResult,
 } from "./index";
 
 // A Friday, 13:30 in Copenhagen: the day shift is running.
@@ -426,6 +427,36 @@ describe("rebuildAll", () => {
     expect(await continueRebuild(NOW)).toEqual({ orders: 0, stationDays: 0, complete: true });
   }, 120_000);
 
+  it("stops when another rebuild takes over, and leaves that one's progress alone", async () => {
+    await seedAll();
+    await rebuildAll(NOW, { restart: true });
+
+    let second: RebuildResult | null = null;
+    let chunksAfter = 0;
+    const first = await rebuildAll(NOW, {
+      restart: true,
+      chunkSize: 5,
+      onChunk: async () => {
+        if (second) {
+          chunksAfter++;
+          return;
+        }
+        second = await rebuildAll(NOW, { restart: true });
+      },
+    });
+    expect((second as RebuildResult | null)?.complete).toBe(true);
+    expect(first.complete).toBe(false);
+    expect(first.superseded).toBe(true);
+    // The first chunk only: the next transaction saw it no longer owned the rebuild.
+    expect(first.orders).toBe(5);
+    expect(chunksAfter).toBe(0);
+    const state = await one<{ detail: { status: string } }>("select detail from app.sync_state where name = $1", [
+      REBUILD_STATE,
+    ]);
+    expect(state.detail.status).toBe("done");
+    expect(await continueRebuild(NOW)).toEqual({ orders: 0, stationDays: 0, complete: true });
+  }, 120_000);
+
   it("keeps its state in its own rows of app.sync_state", async () => {
     await query(
       `insert into app.sync_state (name, watermark, detail) values
@@ -450,6 +481,30 @@ describe("rebuildAll", () => {
     }
     expect(mine[0].detail.status).toBe("ok");
     expect(mine[1].detail.status).toBe("done");
+  }, 120_000);
+});
+
+describe("a scan moved to another order", () => {
+  it("leaves no pass on the old order, and an old order without scans is removed", async () => {
+    await seedAll();
+    await rebuildAll(NOW, { restart: true });
+    const old = orderNos[2];
+    const moved = rows.filter((r) => orderOf(r) === old);
+    const NEW_ORDER = 99_001;
+    await query("update raw.scans set order_no = $2 where order_no = $1", [old, NEW_ORDER]);
+
+    // What the scan sync queues for an edited row: the new order and the old one.
+    const changed = changedOf(moved);
+    await applyScanChanges([...changed.map((c) => ({ ...c, orderNo: NEW_ORDER })), ...changed], NOW);
+
+    for (const table of ["core.orders", "core.elements", "core.station_intervals", "core.order_steps"]) {
+      const left = await one<{ n: number }>(`select count(*) as n from ${table} where order_no = $1`, [old]);
+      expect(Number(left.n), table).toBe(0);
+    }
+    const now = await one<{ n: number }>("select count(*) as n from core.station_intervals where order_no = $1", [
+      NEW_ORDER,
+    ]);
+    expect(Number(now.n)).toBeGreaterThan(0);
   }, 120_000);
 });
 

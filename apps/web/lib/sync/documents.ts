@@ -63,6 +63,7 @@ import {
   type OptiCloudSource,
   type ServiceAccess,
 } from "./opticloud-service";
+import { handOver } from "./handover";
 import { asInt, asIsoTime, asText, failureStatus, recordNoAccess, walkPages } from "./scans";
 import {
   appendPending,
@@ -430,13 +431,21 @@ async function storeParsed(
 
 /**
  * Hands the queued order numbers to applyDocumentChanges and takes them off
- * the queue once the writer has returned. Null when nothing was queued.
+ * the queue once the writer has returned. An order the writer keeps failing
+ * on is set aside (handover.ts) and the rest goes on; the queue is only kept
+ * when the writer fails as a whole. Null when nothing was queued.
  */
 export async function flushDocumentChanges(now: number): Promise<ApplyResult | null> {
   const pending = await withService((db) => readPending<number>(db, PRIVATE.pendingOrders));
   if (pending.length === 0) return null;
   const orders = [...new Set(pending)].sort((a, b) => a - b);
-  const result = await applyDocumentChanges(orders, now);
+  const result = await handOver({
+    source: "documents",
+    items: orders,
+    orderOf: (orderNo) => orderNo,
+    apply: (items) => applyDocumentChanges(items, now),
+    now,
+  });
   await withService((db) => dropPending(db, PRIVATE.pendingOrders, pending.length));
   return result;
 }

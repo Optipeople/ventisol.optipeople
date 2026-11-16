@@ -15,7 +15,7 @@ vi.mock("@/lib/readmodel", () => ({
 
 import { resetServiceMemory } from "./opticloud-service";
 import { runScanSync } from "./scans";
-import { JOBS, PRIVATE, readPending, readState } from "./state";
+import { JOBS, PRIVATE, readDeadLetters, readPending, readState } from "./state";
 import { FakeOptiCloud, HOUR, NOW, scanRow, scanRows } from "./test-fakes";
 
 let db: TestDb;
@@ -27,7 +27,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.reset();
   resetServiceMemory();
-  applyScanChanges.mockClear();
+  // Back to the default implementation as well: some tests make the writer fail.
+  applyScanChanges.mockReset();
   cloud = new FakeOptiCloud();
 });
 afterAll(() => db.close());
@@ -228,15 +229,76 @@ describe("runScanSync", () => {
 
   it("hands over next time what the writer refused this time", async () => {
     cloud.scans = scanRows(3, NOW - HOUR);
-    applyScanChanges.mockRejectedValueOnce(new Error("writer down"));
+    // The writer is down: the batch, the retry per order and the empty probe all fail.
+    applyScanChanges.mockRejectedValue(new Error("writer down"));
     const first = await runScanSync({ now: NOW, access: cloud.access });
     expect(first).toMatchObject({ status: "error", inserted: 3 });
     expect(await db.withService((q) => readPending(q, PRIVATE.pendingScans))).toHaveLength(3);
+    expect(await db.withService((q) => readDeadLetters(q))).toEqual([]);
 
+    applyScanChanges.mockReset();
     const second = await runScanSync({ now: NOW + 60_000, access: cloud.access });
     expect(second).toMatchObject({ status: "ok", inserted: 0 });
-    expect(applyScanChanges).toHaveBeenCalledTimes(2);
-    expect(applyScanChanges.mock.calls[1][0]).toHaveLength(3);
+    expect(applyScanChanges).toHaveBeenCalledTimes(1);
+    expect(applyScanChanges.mock.calls[0][0]).toHaveLength(3);
     expect(await db.withService((q) => readPending(q, PRIVATE.pendingScans))).toEqual([]);
+  });
+
+  it("retries per order once a batch fails, and sets aside an order that keeps failing", async () => {
+    cloud.scans = [
+      ...scanRows(3, NOW - HOUR),
+      scanRow(NOW - 2 * HOUR, { OrderNo: 60001, Barcode: "060001050101" }, "bad-1"),
+    ];
+    applyScanChanges.mockImplementation(async (changed: ChangedScan[]) => {
+      if (changed.some((c) => c.orderNo === 60001)) throw new Error("order 60001 is broken");
+      return { orders: 1, stationDays: 1 };
+    });
+    const result = await runScanSync({ now: NOW, access: cloud.access });
+
+    expect(result).toMatchObject({ status: "ok", inserted: 4 });
+    // The batch, then one call per order.
+    expect(applyScanChanges).toHaveBeenCalledTimes(3);
+    expect(applyScanChanges.mock.calls[1][0].map((c) => c.orderNo)).toEqual([58556, 58556, 58556]);
+    expect(await db.withService((q) => readPending(q, PRIVATE.pendingScans))).toEqual([]);
+    const dead = await db.withService((q) => readDeadLetters(q));
+    expect(dead).toEqual([
+      expect.objectContaining({
+        orderNo: 60001,
+        source: "scans",
+        error: "order 60001 is broken",
+        firstFailedAt: new Date(NOW).toISOString(),
+        failures: 1,
+      }),
+    ]);
+
+    // The next run is not blocked by it.
+    applyScanChanges.mockClear();
+    cloud.scans.push(scanRow(NOW - 30 * 60_000, {}, "good-2"));
+    const next = await runScanSync({ now: NOW + 60_000, access: cloud.access, deep: true });
+    expect(next).toMatchObject({ status: "ok", inserted: 1 });
+    expect(applyScanChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues the old order as well when a scan was moved to another order", async () => {
+    cloud.scans = scanRows(4, NOW - HOUR);
+    await runScanSync({ now: NOW, access: cloud.access });
+    applyScanChanges.mockClear();
+
+    const edited = cloud.scans[2];
+    const oldTime = Date.parse(String(edited.values.ScanTime));
+    edited.values = { ...edited.values, OrderNo: 60002, StationNo: 4, ScanTime: new Date(oldTime + 60_000).toISOString() };
+    const result = await runScanSync({ now: NOW + 60_000, access: cloud.access, deep: true });
+
+    expect(result).toMatchObject({ inserted: 0, changed: 1 });
+    expect(applyScanChanges).toHaveBeenCalledTimes(1);
+    const handed = applyScanChanges.mock.calls[0][0];
+    expect(handed).toHaveLength(2);
+    expect(handed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ scanId: edited.values.ScanId, orderNo: 60002, stationNo: 4 }),
+        // The old order, station and time: so the old pass and station day are recomputed.
+        expect.objectContaining({ scanId: edited.values.ScanId, orderNo: 58556, stationNo: 1, scanTime: oldTime }),
+      ])
+    );
   });
 });

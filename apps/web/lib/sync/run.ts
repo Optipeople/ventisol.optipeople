@@ -5,8 +5,9 @@
 //                 of an unfinished reconcile pass.
 //   runReconcile  starts or continues a reconcile pass, and reads the
 //                 document list.
-//   runRebuild    builds core.* again from raw.* (rebuildAll) and writes the
-//                 search chunks again.
+//   runRebuild    builds core.* again from raw.* (rebuildAll, always from the
+//                 start) and writes the search chunks again. Only a complete
+//                 rebuild drops the queues and the dead letters.
 //   requestSync   for pages: a throttled "sync now" that never holds up the
 //                 page.
 //
@@ -38,10 +39,12 @@ import { reconcilePending, runScanReconcile, type ReconcileResult } from "./reco
 import { flushScanChanges, runScanSync, type ScanSyncResult } from "./scans";
 import {
   acquireLease,
-  deletePrivate,
+  clearDeadLetters,
+  dropPending,
   errorText,
   JOBS,
   PRIVATE,
+  readPending,
   readState,
   releaseLease,
   writeState,
@@ -90,7 +93,14 @@ export type ReconcileRunResult =
 
 export type RebuildRunResult =
   | Skipped
-  | { status: "done"; applied: ApplyResult; chunkedFiles: number; durationMs: number }
+  | {
+      status: "done";
+      applied: ApplyResult;
+      /** False when another rebuild took over before this one was through. */
+      complete: boolean;
+      chunkedFiles: number;
+      durationMs: number;
+    }
   | { status: "error"; error: string };
 
 /**
@@ -209,7 +219,12 @@ export async function runReconcile(options: RunReconcileOptions): Promise<Reconc
   }
 }
 
-/** Builds core.* again from raw.*, and the search chunks from the stored documents. Needs no OptiCloud. */
+/**
+ * Builds core.* again from raw.*, and the search chunks from the stored
+ * documents. Needs no OptiCloud. Always from the start: resuming an
+ * unfinished rebuild would leave the orders before its cursor as they were,
+ * while the queues are dropped as if everything had been derived.
+ */
 export async function runRebuild(options: { now: number }): Promise<RebuildRunResult> {
   const { now } = options;
   try {
@@ -217,26 +232,38 @@ export async function runRebuild(options: { now: number }): Promise<RebuildRunRe
       const started = Date.now();
       let failure: string | null = null;
       let applied: ApplyResult = { orders: 0, stationDays: 0 };
+      let complete = false;
       let chunkedFiles = 0;
+      // What is queued now is covered by a rebuild that reads raw.* after
+      // this. What is queued while it runs may not be: that stays.
+      const queued = await withService(async (db) => ({
+        scans: (await readPending(db, PRIVATE.pendingScans)).length,
+        orders: (await readPending(db, PRIVATE.pendingOrders)).length,
+      }));
       try {
-        applied = await rebuildAll(now);
+        const rebuilt = await rebuildAll(now, { restart: true });
+        applied = { orders: rebuilt.orders, stationDays: rebuilt.stationDays };
+        complete = rebuilt.complete;
         chunkedFiles = await rebuildDocumentChunks();
       } catch (err) {
         failure = errorText(err);
       }
       const durationMs = Date.now() - started;
+      const status = failure !== null ? "error" : complete ? "ok" : "incomplete";
       await withService((db) =>
         writeState(db, JOBS.rebuild, {
           lastRunAt: now,
-          lastSuccessAt: failure === null ? now : undefined,
+          lastSuccessAt: status === "ok" ? now : undefined,
           lastError: failure,
-          detail: { status: failure === null ? "ok" : "error", configured: true, applied, chunkedFiles, durationMs },
+          detail: { status, configured: true, applied, chunkedFiles, durationMs },
         })
       );
       if (failure !== null) throw new Error(failure);
-      // Everything queued for the writer is covered by the rebuild.
-      await dropQueues();
-      return { status: "done" as const, applied, chunkedFiles, durationMs };
+      // Only a rebuild that derived every order from the start covers the
+      // queues and the dead letters. One that another rebuild took over
+      // (superseded) leaves them for the next run.
+      if (complete) await dropCovered(queued);
+      return { status: "done" as const, applied, complete, chunkedFiles, durationMs };
     });
   } catch (err) {
     console.error("Rebuild failed:", errorText(err));
@@ -244,10 +271,11 @@ export async function runRebuild(options: { now: number }): Promise<RebuildRunRe
   }
 }
 
-async function dropQueues(): Promise<void> {
+async function dropCovered(queued: { scans: number; orders: number }): Promise<void> {
   await withService(async (db) => {
-    await deletePrivate(db, PRIVATE.pendingScans);
-    await deletePrivate(db, PRIVATE.pendingOrders);
+    await dropPending(db, PRIVATE.pendingScans, queued.scans);
+    await dropPending(db, PRIVATE.pendingOrders, queued.orders);
+    await clearDeadLetters(db, null);
   });
 }
 

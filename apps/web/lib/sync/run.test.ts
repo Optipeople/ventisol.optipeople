@@ -7,14 +7,15 @@ import type { ServiceAccess } from "./opticloud-service";
 
 const applyScanChanges = vi.fn(async () => ({ orders: 1, stationDays: 1 }));
 const applyDocumentChanges = vi.fn(async () => ({ orders: 1, stationDays: 0 }));
-const rebuildAll = vi.fn(async (now: number) => {
+const rebuildAll = vi.fn(async (now: number, options?: { restart?: boolean }) => {
   void now;
-  return { orders: 7, stationDays: 9 };
+  void options;
+  return { orders: 7, stationDays: 9, complete: true } as { orders: number; stationDays: number; complete: boolean };
 });
 vi.mock("@/lib/readmodel", () => ({
   applyScanChanges: () => applyScanChanges(),
   applyDocumentChanges: () => applyDocumentChanges(),
-  rebuildAll: (now: number) => rebuildAll(now),
+  rebuildAll: (now: number, options?: { restart?: boolean }) => rebuildAll(now, options),
   continueRebuild: async () => ({ orders: 0, stationDays: 0, complete: true }),
 }));
 
@@ -31,10 +32,12 @@ import { refuseUnlessCron } from "./cron-auth";
 import { requestSync, resetRequestSync, runRebuild, runReconcile, runSync } from "./run";
 import {
   acquireLease,
+  addDeadLetters,
   appendPending,
   getPrivate,
   JOBS,
   PRIVATE,
+  readDeadLetters,
   readPending,
   readState,
   type JobName,
@@ -53,7 +56,7 @@ beforeEach(async () => {
   resetRequestSync();
   applyScanChanges.mockClear();
   applyDocumentChanges.mockClear();
-  rebuildAll.mockClear();
+  rebuildAll.mockReset();
   cloud = new FakeOptiCloud();
   cloud.hasDocumentTable = false;
   cloud.scans = scanRows(12, NOW - HOUR);
@@ -166,9 +169,44 @@ describe("runReconcile and runRebuild", () => {
     await db.withService((q) => appendPending(q, PRIVATE.pendingOrders, [58556]));
     const result = await runRebuild({ now: NOW });
     expect(result).toMatchObject({ status: "done", applied: { orders: 7, stationDays: 9 }, chunkedFiles: 0 });
-    expect(rebuildAll).toHaveBeenCalledWith(NOW);
+    expect(rebuildAll).toHaveBeenCalledWith(NOW, { restart: true });
     expect(await db.withService((q) => readPending(q, PRIVATE.pendingOrders))).toEqual([]);
     expect((await job(JOBS.rebuild))?.detail).toMatchObject({ status: "ok" });
+  });
+
+  it("starts from the beginning, never resuming an unfinished rebuild", async () => {
+    await runRebuild({ now: NOW });
+    expect(rebuildAll).toHaveBeenCalledTimes(1);
+    expect(rebuildAll.mock.calls[0][1]).toMatchObject({ restart: true });
+  });
+
+  it("keeps the queues when the rebuild did not finish", async () => {
+    await db.withService(async (q) => {
+      await appendPending(q, PRIVATE.pendingOrders, [58556]);
+      await appendPending(q, PRIVATE.pendingScans, [{ scanId: "s-1", orderNo: 58556 }]);
+    });
+    // Another rebuild took over half way.
+    rebuildAll.mockResolvedValueOnce({ orders: 5, stationDays: 0, complete: false });
+    const result = await runRebuild({ now: NOW });
+    expect(result).toMatchObject({ status: "done", complete: false });
+    expect(await db.withService((q) => readPending(q, PRIVATE.pendingOrders))).toEqual([58556]);
+    expect(await db.withService((q) => readPending(q, PRIVATE.pendingScans))).toHaveLength(1);
+  });
+
+  it("drops only what was queued before the rebuild read raw.*, and clears the dead letters", async () => {
+    await db.withService(async (q) => {
+      await appendPending(q, PRIVATE.pendingOrders, [58556]);
+      await addDeadLetters(q, [{ orderNo: 58556, source: "scans", error: "boom" }], NOW - HOUR);
+    });
+    rebuildAll.mockImplementationOnce(async () => {
+      // Queued while the rebuild runs: not covered by it.
+      await db.withService((q) => appendPending(q, PRIVATE.pendingOrders, [58600]));
+      return { orders: 7, stationDays: 9, complete: true };
+    });
+    const result = await runRebuild({ now: NOW });
+    expect(result).toMatchObject({ status: "done", complete: true });
+    expect(await db.withService((q) => readPending(q, PRIVATE.pendingOrders))).toEqual([58600]);
+    expect(await db.withService((q) => readDeadLetters(q))).toEqual([]);
   });
 
   it("reports a failed rebuild and keeps the queue", async () => {
@@ -270,6 +308,22 @@ describe("getSyncStatus", () => {
     );
   });
 
+  it("tells an admin how many orders are set aside, and no one else", async () => {
+    expect((await getSyncStatus(testClaims("admin"), NOW)).deadLetters).toBe(0);
+    await db.withService((q) =>
+      addDeadLetters(
+        q,
+        [
+          { orderNo: 1, source: "scans", error: "a" },
+          { orderNo: 2, source: "documents", error: "b" },
+        ],
+        NOW
+      )
+    );
+    expect((await getSyncStatus(testClaims("admin"), NOW)).deadLetters).toBe(2);
+    expect((await getSyncStatus(testClaims("viewer"), NOW)).deadLetters).toBe(0);
+  });
+
   it("gives everyone else no rows", async () => {
     for (const role of ["ledelse", "planner", "viewer"] as const) {
       expect((await getSyncStatus(testClaims(role), NOW)).jobs).toEqual([]);
@@ -307,7 +361,7 @@ describe("the admin actions", () => {
   it("audits and runs a rebuild for an admin", async () => {
     const result = await requestRebuildAsAdmin(testClaims("admin"), { now: NOW });
     expect(result).toMatchObject({ ok: true, finished: true, result: { status: "done" } });
-    expect(rebuildAll).toHaveBeenCalledWith(NOW);
+    expect(rebuildAll).toHaveBeenCalledWith(NOW, { restart: true });
     expect(await auditRows()).toEqual([{ action: "sync.rebuild_requested", role: "admin", subject: "rebuild" }]);
   });
 });

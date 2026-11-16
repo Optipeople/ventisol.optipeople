@@ -7,15 +7,17 @@
 // Of each row only the fields below are passed on, picked by name. Secrets
 // are not in that table at all: the cached OptiCloud token, the login backoff
 // and the lease live in app.sync_private, which has no policy and no grant.
+// Of that table an admin is told one number: how many orders are in the dead
+// letters.
 //
 // The heavy parts (the PDF parser, the OptiCloud client) are only loaded when
 // a run is actually started.
 
-import { withUser, type Claims } from "@/lib/db";
+import { withService, withUser, type Claims } from "@/lib/db";
 import { fixturesEnabled } from "@/lib/fixtures-flag";
 import { audit } from "@/lib/portal/audit";
 import type { RebuildRunResult, RequestSyncOptions, RequestSyncResult, SyncRunResult } from "./run";
-import { STATE_COLUMNS, toStateRow } from "./state";
+import { readDeadLetters, STATE_COLUMNS, toStateRow } from "./state";
 // Registers the fixture seed (does nothing outside fixture mode).
 import "./fixture-seed";
 
@@ -72,6 +74,11 @@ export interface SyncStatus {
   /** The names of the missing environment variables. Never their values. */
   missing: string[];
   jobs: SyncStatusRow[];
+  /**
+   * Orders the read model writer kept failing on and set aside, so their
+   * figures are out of date until a rebuild. 0 for anyone but an admin.
+   */
+  deadLetters: number;
 }
 
 function missingEnv(): string[] {
@@ -88,13 +95,17 @@ function missingEnv(): string[] {
  * admin gets rows, anyone else an empty list.
  */
 export async function getSyncStatus(claims: Claims, now: number = Date.now()): Promise<SyncStatus> {
-  const rows = await withUser(claims, (db) =>
-    db.query<Parameters<typeof toStateRow>[0]>(`select ${STATE_COLUMNS} from app.sync_state order by name`)
-  );
+  const { rows, admin } = await withUser(claims, async (db) => ({
+    rows: await db.query<Parameters<typeof toStateRow>[0]>(`select ${STATE_COLUMNS} from app.sync_state order by name`),
+    admin: (await db.query<{ ok: boolean }>("select app.has_role('admin') as ok"))[0]?.ok === true,
+  }));
+  // app.sync_private has no grant: only the count is read, as the service, and only for an admin.
+  const deadLetters = admin ? (await withService((db) => readDeadLetters(db))).length : 0;
   const missing = missingEnv();
   return {
     configured: missing.length === 0,
     missing,
+    deadLetters,
     jobs: rows.map((raw): SyncStatusRow => {
       const row = toStateRow(raw);
       const d = row.detail;

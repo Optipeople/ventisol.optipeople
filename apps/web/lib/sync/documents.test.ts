@@ -22,7 +22,7 @@ import {
   type DocumentSyncOptions,
 } from "./documents";
 import { resetServiceMemory } from "./opticloud-service";
-import { JOBS, PRIVATE, readPending, readState } from "./state";
+import { JOBS, PRIVATE, readDeadLetters, readPending, readState } from "./state";
 import { fakeParse, FakeOptiCloud, HOUR, NOW } from "./test-fakes";
 
 let db: TestDb;
@@ -34,7 +34,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.reset();
   resetServiceMemory();
-  applyDocumentChanges.mockClear();
+  // Back to the default implementation as well: some tests make the writer fail.
+  applyDocumentChanges.mockReset();
   cloud = new FakeOptiCloud();
 });
 afterAll(() => db.close());
@@ -278,15 +279,35 @@ describe("runDocumentSync", () => {
   it("keeps the order queued when the writer fails, and hands it over next time", async () => {
     cloud.addDocument(FILE, "Fast");
     vi.spyOn(console, "error").mockImplementation(() => {});
-    applyDocumentChanges.mockRejectedValueOnce(new Error("writer down"));
+    // The writer is down: the batch, the retry per order and the empty probe all fail.
+    applyDocumentChanges.mockRejectedValue(new Error("writer down"));
     const first = await run(NOW);
     expect(first).toMatchObject({ status: "error", parsed: 1 });
     expect(await db.withService((q) => readPending(q, PRIVATE.pendingOrders))).toEqual([58556]);
+    expect(await db.withService((q) => readDeadLetters(q))).toEqual([]);
 
+    applyDocumentChanges.mockReset();
     const second = await run(NOW + 60_000);
     expect(second).toMatchObject({ status: "ok", parsed: 0 });
     expect(applyDocumentChanges).toHaveBeenLastCalledWith([58556], NOW + 60_000);
     vi.restoreAllMocks();
+  });
+
+  it("retries per order once a batch fails, and sets aside an order that keeps failing", async () => {
+    cloud.addDocument(FILE, "Fast");
+    cloud.addDocument("58557_20261110.pdf", "Fast");
+    applyDocumentChanges.mockImplementation(async (orderNos: number[]) => {
+      if (orderNos.includes(58557)) throw new Error("order 58557 is broken");
+      return { orders: orderNos.length, stationDays: 0 };
+    });
+    const result = await run(NOW);
+
+    expect(result).toMatchObject({ status: "ok", parsed: 2 });
+    expect(applyDocumentChanges.mock.calls.map((c) => c[0])).toEqual([[58556, 58557], [58556], [58557]]);
+    expect(await db.withService((q) => readPending(q, PRIVATE.pendingOrders))).toEqual([]);
+    expect(await db.withService((q) => readDeadLetters(q))).toEqual([
+      expect.objectContaining({ orderNo: 58557, source: "documents", error: "order 58557 is broken", failures: 1 }),
+    ]);
   });
 });
 

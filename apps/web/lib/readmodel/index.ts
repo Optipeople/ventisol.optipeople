@@ -20,8 +20,11 @@
 //     rebuild and the minute sync can run at the same time.
 //
 // Progress and the last error are in app.sync_state under "readmodel" (the
-// incremental runs) and "readmodel_rebuild" (rebuildAll).
+// incremental runs) and "readmodel_rebuild" (rebuildAll). The rebuild row
+// names the call that owns it (runId): a rebuild that another one took over
+// stops at its next transaction instead of writing over the other's progress.
 
+import { randomUUID } from "node:crypto";
 import { withService, type Db } from "@/lib/db";
 import {
   affectedBy,
@@ -67,6 +70,8 @@ export interface ApplyResult {
 export interface RebuildResult extends ApplyResult {
   /** False when the time budget ran out: call rebuildAll (or continueRebuild) again to go on. */
   complete: boolean;
+  /** True when another rebuild took over the progress row: this one stopped and wrote nothing more. */
+  superseded?: boolean;
 }
 
 export interface RebuildOptions {
@@ -148,6 +153,12 @@ async function clockOrders(db: Db, now: number, staleOpenSeconds: number): Promi
   ]);
 }
 
+/**
+ * Called first in a writing transaction. Throws when the transaction must not
+ * write (see RebuildSuperseded).
+ */
+type Guard = (db: Db) => Promise<void>;
+
 interface Tally {
   orders: number;
   days: StationDay[];
@@ -163,18 +174,18 @@ async function rebuildOrders(
   config: ReadModelConfig,
   now: number,
   chunkSize: number,
-  between?: (orders: number) => void | Promise<void>
+  guard?: Guard
 ): Promise<Tally> {
   const tally: Tally = { orders: 0, days: [] };
   const run = async (list: number[]) => {
     if (list.length === 0) return;
     const result = await withService(async (db) => {
+      await guard?.(db);
       await lockWriter(db);
       return replaceOrders(db, list, config, now);
     });
     tally.orders += result.orders;
     tally.days = mergeStationDays(tally.days, result.days);
-    await between?.(tally.orders);
   };
 
   if (orderNos.length <= chunkSize) {
@@ -192,11 +203,13 @@ async function rebuildStationDays(
   days: StationDay[],
   config: ReadModelConfig,
   now: number,
-  between?: (window: StationDay[]) => void | Promise<void | boolean>
+  between?: (window: StationDay[]) => void | Promise<void | boolean>,
+  guard?: Guard
 ): Promise<number> {
   let count = 0;
   for (const window of dayWindows(days)) {
     count += await withService(async (db) => {
+      await guard?.(db);
       await lockWriter(db);
       return replaceStationDays(db, window, config, now);
     });
@@ -218,7 +231,8 @@ async function settleForecasts(
   config: ReadModelConfig,
   now: number,
   chunkSize: number,
-  every: boolean
+  every: boolean,
+  guard?: Guard
 ): Promise<Tally> {
   const next = await withService(async (db) => {
     const typical = await loadTypical(db, now);
@@ -232,7 +246,7 @@ async function settleForecasts(
   });
   if (!next) return { orders: 0, days: [] };
   config.typical = next.typical;
-  return rebuildOrders(uniqueSorted(next.orders), config, now, chunkSize);
+  return rebuildOrders(uniqueSorted(next.orders), config, now, chunkSize, guard);
 }
 
 async function recordFailure(name: string, now: number, error: unknown, detail: Record<string, unknown>) {
@@ -336,6 +350,11 @@ export async function applyDocumentChanges(orderNos: number[], now: number): Pro
 
 interface RebuildProgress {
   status: "running" | "done" | "error";
+  /**
+   * Who owns the row: every call of rebuildAll takes a new id, also when it
+   * resumes. A call only writes while the row still holds its id.
+   */
+  runId: string;
   startedAt: string;
   phase: "orders" | "days";
   /** Phase orders: the last order number of the last finished chunk. */
@@ -344,6 +363,22 @@ interface RebuildProgress {
   dayCursor: string | null;
   orders: number;
   stationDays: number;
+}
+
+/** Thrown inside a rebuild's transaction once another rebuild owns the progress row. */
+class RebuildSuperseded extends Error {
+  constructor() {
+    super("Another rebuild took over.");
+  }
+}
+
+/** Locks the progress row and checks it still names `runId`. */
+async function assertOwner(db: Db, runId: string): Promise<void> {
+  const rows = await db.query<{ run_id: string | null }>(
+    "select detail->>'runId' as run_id from app.sync_state where name = $1 for update",
+    [REBUILD_STATE]
+  );
+  if (rows[0]?.run_id !== runId) throw new RebuildSuperseded();
 }
 
 function resumable(detail: Record<string, unknown> | null, now: number): RebuildProgress | null {
@@ -365,13 +400,21 @@ function resumable(detail: Record<string, unknown> | null, now: number): Rebuild
  * that finds an unfinished rebuild less than a day old goes on where it
  * stopped, unless `restart` is set. With `budgetMs` it stops in time and
  * returns `complete: false`.
+ *
+ * One at a time: each call claims the progress row with its own id, and
+ * every writing transaction first checks (under a row lock) that the row
+ * still holds it. A call that finds another call's id has been overtaken:
+ * it stops without writing and returns `complete: false, superseded: true`.
  */
 export async function rebuildAll(now: number, options: RebuildOptions = {}): Promise<RebuildResult> {
   const chunkSize = options.chunkSize ?? ORDER_CHUNK;
   const deadline = options.budgetMs != null ? performance.now() + options.budgetMs : Infinity;
   const started = performance.now();
+  const runId = randomUUID();
+  const guard: Guard = (db) => assertOwner(db, runId);
   let progress: RebuildProgress = {
     status: "running",
+    runId,
     startedAt: new Date(now).toISOString(),
     phase: "orders",
     orderCursor: null,
@@ -380,21 +423,27 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
     stationDays: 0,
   };
   const result: RebuildResult = { orders: 0, stationDays: 0, complete: false };
-  const save = (db: Db) => saveState(db, REBUILD_STATE, now, { lastError: null, detail: { ...progress } });
+  const save = async (db: Db) => {
+    await guard(db);
+    await saveState(db, REBUILD_STATE, now, { lastError: null, detail: { ...progress } });
+  };
   const report = () =>
     options.onChunk?.({ phase: progress.phase, orders: progress.orders, stationDays: progress.stationDays });
 
   try {
     const { config, all, live } = await withService(async (db) => {
+      // The claim. The row lock makes a rebuild that is writing finish its
+      // transaction first; its next one then sees this id and stops.
+      await db.query("select 1 from app.sync_state where name = $1 for update", [REBUILD_STATE]);
       const prior = options.restart ? null : resumable(await readStateDetail(db, REBUILD_STATE), now);
-      if (prior) progress = { ...prior, status: "running" };
+      if (prior) progress = { ...prior, status: "running", runId };
       await ensureStations(db, null);
       const config = await loadConfig(db, now);
       const all = await db.query<{ order_no: number }>(
         "select distinct order_no from raw.scans where order_no is not null order by order_no"
       );
       const live = await liveOrders(db, now, config.params.staleOpenSeconds);
-      await save(db);
+      await saveState(db, REBUILD_STATE, now, { lastError: null, detail: { ...progress } });
       return { config, all: all.map((r) => r.order_no), live: new Set(live) };
     });
 
@@ -419,6 +468,7 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
       const liveList = all.filter((no) => live.has(no));
       if (liveList.length > 0) {
         await withService(async (db) => {
+          await guard(db);
           await lockWriter(db);
           await replaceOrders(db, liveList, config, now);
         });
@@ -431,6 +481,7 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
       //    itself, not the list read above: an order that arrived since then
       //    must stay.
       await withService(async (db) => {
+        await guard(db);
         await lockWriter(db);
         await db.query(
           `delete from core.orders o
@@ -439,7 +490,7 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
       });
 
       // 4. The forecasts, on the typical times of the rebuilt history.
-      await settleForecasts(config, now, chunkSize, true);
+      await settleForecasts(config, now, chunkSize, true, guard);
 
       progress.phase = "days";
       progress.dayCursor = null;
@@ -482,11 +533,12 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
       await report();
       stopped = performance.now() > deadline && progress.dayCursor < today;
       return !stopped;
-    });
+    }, guard);
     if (stopped) return result;
 
     progress.status = "done";
     await withService(async (db) => {
+      await guard(db);
       const total = await db.query<{ n: number }>("select count(*) as n from core.orders");
       await saveState(db, REBUILD_STATE, now, {
         lastSuccessAt: now,
@@ -498,7 +550,19 @@ export async function rebuildAll(now: number, options: RebuildOptions = {}): Pro
     result.complete = true;
     return result;
   } catch (error) {
-    await recordFailure(REBUILD_STATE, now, error, { ...progress });
+    if (error instanceof RebuildSuperseded) return { ...result, complete: false, superseded: true };
+    // Filed only while the row is still ours: never over another rebuild's progress.
+    try {
+      await withService(async (db) => {
+        await guard(db);
+        await saveState(db, REBUILD_STATE, now, {
+          lastError: errorText(error),
+          detail: { ...progress, status: "error" },
+        });
+      });
+    } catch {
+      // Bookkeeping: the original error is the one to report.
+    }
     throw error;
   }
 }

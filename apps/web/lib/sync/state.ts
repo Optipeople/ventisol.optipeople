@@ -3,7 +3,8 @@
 //   app.sync_state    one row per job, what the settings page shows (admin
 //                     may read it). Never holds a secret.
 //   app.sync_private  service only: token cache, login backoff, the lease,
-//                     and the changes not yet handed to the read model writer.
+//                     the changes not yet handed to the read model writer,
+//                     and the orders it kept failing on (dead letters).
 //
 // Every function here takes the `db` of a withService transaction.
 
@@ -28,6 +29,8 @@ export const PRIVATE = {
   lease: "lease:sync",
   pendingScans: "pending:scans",
   pendingOrders: "pending:orders",
+  /** Orders the read model writer kept failing on, set aside so the rest goes on. */
+  deadLetters: "deadletter:orders",
 } as const;
 
 /** How a job run ended. Stored in detail.status. */
@@ -234,6 +237,73 @@ export async function appendPending(db: Db, name: string, items: unknown[]): Pro
 export async function readPending<T>(db: Db, name: string): Promise<T[]> {
   const row = await getPrivate<unknown>(db, name);
   return Array.isArray(row?.value) ? (row.value as T[]) : [];
+}
+
+// --- dead letters ---
+
+/** One order the read model writer kept failing on. */
+export interface DeadLetter {
+  orderNo: number;
+  /** Which queue it came from. */
+  source: "scans" | "documents";
+  /** The last error, shortened. */
+  error: string;
+  /** ISO text. */
+  firstFailedAt: string;
+  lastFailedAt: string;
+  /** Times it was set aside. */
+  failures: number;
+}
+
+/** Most entries kept: the oldest go first. */
+const MAX_DEAD_LETTERS = 500;
+
+export async function readDeadLetters(db: Db): Promise<DeadLetter[]> {
+  return readPending<DeadLetter>(db, PRIVATE.deadLetters);
+}
+
+/**
+ * Sets orders aside. An order already set aside from the same queue keeps its
+ * first failure time and counts up.
+ */
+export async function addDeadLetters(
+  db: Db,
+  failed: { orderNo: number; source: DeadLetter["source"]; error: string }[],
+  now: number
+): Promise<void> {
+  if (failed.length === 0) return;
+  const at = new Date(now).toISOString();
+  const list = await readDeadLetters(db);
+  for (const f of failed) {
+    const known = list.find((d) => d.orderNo === f.orderNo && d.source === f.source);
+    if (known) {
+      known.error = errorText(f.error);
+      known.lastFailedAt = at;
+      known.failures += 1;
+    } else {
+      list.push({ orderNo: f.orderNo, source: f.source, error: errorText(f.error), firstFailedAt: at, lastFailedAt: at, failures: 1 });
+    }
+  }
+  await setPrivate(db, PRIVATE.deadLetters, list.slice(-MAX_DEAD_LETTERS));
+}
+
+/** Takes these orders off the dead letters (the writer has since derived them). All of them when `orderNos` is null. */
+export async function clearDeadLetters(db: Db, orderNos: number[] | null): Promise<void> {
+  if (orderNos === null) {
+    await deletePrivate(db, PRIVATE.deadLetters);
+    return;
+  }
+  if (orderNos.length === 0) return;
+  await db.query(
+    `update app.sync_private
+        set value = coalesce(
+              (select jsonb_agg(e) from jsonb_array_elements(value) as e
+                where not ((e->>'orderNo')::int = any($2::int[]))),
+              '[]'::jsonb),
+            updated_at = now()
+      where name = $1 and jsonb_typeof(value) = 'array'`,
+    [PRIVATE.deadLetters, orderNos]
+  );
 }
 
 /** Drops the first `count` items of a pending list: the ones that were handed over. */
