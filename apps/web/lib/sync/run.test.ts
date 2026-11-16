@@ -15,6 +15,7 @@ vi.mock("@/lib/readmodel", () => ({
   applyScanChanges: () => applyScanChanges(),
   applyDocumentChanges: () => applyDocumentChanges(),
   rebuildAll: (now: number) => rebuildAll(now),
+  continueRebuild: async () => ({ orders: 0, stationDays: 0, complete: true }),
 }));
 
 // The run functions ask for the OptiCloud themselves: hand them the fake.

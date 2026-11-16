@@ -31,7 +31,7 @@
 
 import { randomUUID } from "node:crypto";
 import { DatabaseNotConfiguredError, withService } from "@/lib/db";
-import { rebuildAll, type ApplyResult } from "@/lib/readmodel";
+import { continueRebuild, rebuildAll, type ApplyResult } from "@/lib/readmodel";
 import { flushDocumentChanges, rebuildDocumentChunks, runDocumentSync, type DocumentSyncResult } from "./documents";
 import { getOptiCloud } from "./opticloud-service";
 import { reconcilePending, runScanReconcile, type ReconcileResult } from "./reconcile";
@@ -159,6 +159,10 @@ export async function runSync(options: RunSyncOptions): Promise<SyncRunResult> {
       if (access.status === "ok" && deadline - Date.now() >= MIN_RECONCILE_TIME_MS && (await reconcilePending())) {
         reconcile = await runScanReconcile({ now, access, deadline, resumeOnly: true });
       }
+      // A rebuild started by a settings or calendar change with a budget
+      // goes on here, a chunk at a time. It does nothing when none is open.
+      const left = deadline - Date.now();
+      if (left >= MIN_RECONCILE_TIME_MS) await continueRebuild(now, { budgetMs: left });
       return { status: "done" as const, scans, documents, reconcile, durationMs: Date.now() - started };
     });
   } catch (err) {
