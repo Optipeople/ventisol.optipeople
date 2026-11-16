@@ -14,6 +14,7 @@ const SCHEMAS = ["raw", "core", "doc", "config", "app", "ai", "rpt"];
 const SERVICE_ONLY = new Set([
   "app.instance",
   "app.rate_limits",
+  "app.sync_private",
   "raw.scans",
   "raw.order_documents",
 ]);
