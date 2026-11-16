@@ -14,6 +14,8 @@ const PUBLIC_PATHS = [
   "/auth/unavailable",
   "/forgot-password",
   "/reset-password",
+  // Vercel Cron sends no cookie; each route checks CRON_SECRET itself.
+  "/api/cron",
 ];
 
 export function proxy(request: NextRequest) {
@@ -26,6 +28,10 @@ export function proxy(request: NextRequest) {
 
   const hasToken = Boolean(request.cookies.get(SESSION_COOKIES.token)?.value);
   if (!hasToken) {
+    // An API caller (export, chat) gets a status, not a login page.
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Ikke logget ind." }, { status: 401 });
+    }
     // Back to this page after signing in (the login page checks `next` again).
     const login = new URL("/login", request.nextUrl);
     const here = `${pathname}${request.nextUrl.search}`;
