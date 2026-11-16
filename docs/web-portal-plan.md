@@ -38,9 +38,9 @@ The deck's AI demo is a contract in practice. These six questions must answer co
 
 ## 3. Architecture
 
-### 3.1 Where the report numbers come from. **UNDECIDED**
+### 3.1 Where the report numbers come from. **DECIDED 2026-11-16: option C**
 
-The biggest open decision in this plan. §3.4, §3.5 and Phase 1 are written for option C. Under A or B they shrink as noted at the end of this section.
+Supabase read model. How it is built is in `docs/portal-architecture.md`, which differs from §3.2 and §3.3 below in one way: server code reaches the database over a pooled Postgres connection and sets the role and claims per transaction, with no minted JWT and no supabase-js. The options are kept here for the record. Asking the backend owner for a "changed since" cursor (option B) is still worth doing, since it makes the sync cheaper.
 
 **The facts that decide it**
 - `MasterData/GetRowsPaged` has **no date filter and no server-side aggregation**. It can only page backwards from the newest row, 500 rows per page. `apps/web/lib/paging.ts` is sized for about 3,000 scans a day and capped at 600 pages.
