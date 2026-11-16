@@ -28,9 +28,9 @@ describe("navItemsFor", () => {
     expect(labels("viewer")).toEqual(["Overblik", "Stationer", "Ordrer", "Chat"]);
   });
 
-  it("Ordrer is active on the period report and on an order page", () => {
+  it("Ordrer is active on the order lists and on an order page", () => {
     const ordrer = navItemsFor("viewer").find((item) => item.href === "/ordrer");
-    expect(ordrer?.match).toEqual(["/ordrer", "/periode", "/ordre"]);
+    expect(ordrer?.match).toEqual(["/ordrer", "/ordre"]);
   });
 
   it("links to the six routes", () => {

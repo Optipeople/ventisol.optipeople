@@ -12,10 +12,14 @@
 
 # testing
 /coverage
+/playwright-report/
+/test-results/
 
 # next.js
 /.next/
 /.next-*/
+# the tsconfig of a second dev server (VENTISOL_DIST_DIR, see next.config.ts)
+/tsconfig.next-*.json
 /out/
 
 # production

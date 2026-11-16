@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTimeline,
   computeKpis,
   intervalsEndingIn,
   orderStatus,
   pairScans,
-  sortOrders,
   STALE_OPEN_MS,
-  summarizeElements,
   summarizeOrders,
   summarizeStations,
 } from "@/lib/report";
@@ -370,88 +367,5 @@ describe("intervalsEndingIn", () => {
     const ivs = pairScans(scans, at("12:00"));
     expect(intervalsEndingIn(ivs, dayStart("2026-10-20"), dayEnd("2026-10-20"))).toHaveLength(0);
     expect(intervalsEndingIn(ivs, dayStart("2026-10-21"), dayEnd("2026-10-21"))).toHaveLength(1);
-  });
-});
-
-describe("summarizeElements", () => {
-  it("labels positions and sorts by position, sub-position, piece", () => {
-    const scans = [
-      ...pass(at("07:00"), at("07:05"), { barcode: "058556050203", position: 5, subPosition: 2, piece: 3 }),
-      ...pass(at("07:00"), at("07:04"), { barcode: "058556040101", position: 4, subPosition: 1, piece: 1 }),
-      ...pass(at("08:00"), at("08:01"), { barcode: "058556040101", position: 4, subPosition: 1, piece: 1 }),
-    ];
-    const els = summarizeElements(pairScans(scans, at("12:00")));
-    expect(els.map((e) => [e.label, e.piece, e.totalMs / MIN, e.reworkPasses])).toEqual([
-      ["Pos. 4", 1, 5, 1],
-      ["Pos. 5.1", 3, 5, 0],
-    ]);
-  });
-});
-
-describe("buildTimeline", () => {
-  it("splits by day, one lane per station, axis on whole hours", () => {
-    const scans = [
-      ...pass(at("07:10", "2026-10-20"), at("07:20", "2026-10-20")),
-      ...pass(at("13:10", "2026-10-20"), at("13:40", "2026-10-20"), PACKING),
-      ...pass(at("06:30"), at("06:45"), { station: "Station 20", stationNo: 2 }),
-    ];
-    const days = buildTimeline(pairScans(scans, at("12:00")));
-    expect(days.map((d) => d.day)).toEqual(["2026-10-20", "2026-10-21"]);
-    expect(days[0].lanes.map((l) => l.station)).toEqual(["Station 10", "Pakning"]);
-    expect(days[0].axisStart).toBe(at("07:00", "2026-10-20"));
-    expect(days[0].axisEnd).toBe(at("14:00", "2026-10-20"));
-    expect(days[0].totalMs).toBe(40 * MIN);
-    expect(days[1].lanes[0].bars).toHaveLength(1);
-  });
-
-  it("puts a pass on the day it ended, as the day and period views do", () => {
-    const days = buildTimeline(pairScans(pass(at("15:00", "2026-10-20"), at("07:10")), at("12:00")));
-    expect(days.map((d) => d.day)).toEqual(["2026-10-21"]);
-    expect(days[0].totalMs).toBe((16 * 60 + 10) * MIN);
-  });
-
-  it("keeps the axis inside the day for a pass that spans a weekend", () => {
-    // In on Friday 16 October at 15:00, Out on Monday 19 October at 07:10.
-    const scans = [
-      ...pass(at("15:00", "2026-10-16"), at("07:10", "2026-10-19")),
-      ...pass(at("07:30", "2026-10-19"), at("08:20", "2026-10-19"), PACKING),
-    ];
-    const [monday, ...more] = buildTimeline(pairScans(scans, at("12:00")));
-    expect(more).toEqual([]);
-    expect(monday.day).toBe("2026-10-19");
-    // From midnight, not from Friday afternoon: 9 hours, not 66.
-    expect(monday.axisStart).toBe(dayStart("2026-10-19"));
-    expect(monday.axisEnd).toBe(at("09:00", "2026-10-19"));
-    // The bar itself keeps its real start, for the tooltip.
-    expect(monday.lanes[0].bars[0].start).toBe(at("15:00", "2026-10-16"));
-  });
-
-  it("puts an element in progress on today", () => {
-    const days = buildTimeline(pairScans([scan("In", at("22:00", "2026-10-20"))], at("09:30")));
-    expect(days.map((d) => d.day)).toEqual(["2026-10-21"]);
-    expect(days[0].axisStart).toBe(dayStart("2026-10-21"));
-    expect(days[0].axisEnd).toBe(at("10:00"));
-  });
-});
-
-describe("sortOrders", () => {
-  const scans = [
-    ...pass(at("07:00"), at("07:30"), { orderNo: 1, barcode: "000001010101" }),
-    ...pass(at("08:00"), at("08:10"), { orderNo: 2, barcode: "000002010101" }),
-    ...pass(at("08:10"), at("08:20"), { orderNo: 2, barcode: "000002010102" }),
-  ];
-  const orders = summarizeOrders(pairScans(scans, at("12:00")), scans);
-
-  it("sorts by total time", () => {
-    expect(sortOrders(orders, "total", "desc").map((o) => o.orderNo)).toEqual([1, 2]);
-    expect(sortOrders(orders, "total", "asc").map((o) => o.orderNo)).toEqual([2, 1]);
-  });
-
-  it("sorts by time per element", () => {
-    expect(sortOrders(orders, "perElement", "asc").map((o) => o.orderNo)).toEqual([2, 1]);
-  });
-
-  it("breaks ties by order number", () => {
-    expect(sortOrders(orders, "stations", "desc").map((o) => o.orderNo)).toEqual([1, 2]);
   });
 });

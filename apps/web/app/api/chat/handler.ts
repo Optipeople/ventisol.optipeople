@@ -16,6 +16,7 @@ import {
   toUIMessageStream,
   validateUIMessages,
   type LanguageModel,
+  type LanguageModelUsage,
   type UIMessage,
 } from "ai";
 import { z } from "zod";
@@ -62,6 +63,39 @@ const bodySchema = z.object({
 const json = (status: number, error: string) => Response.json({ error }, { status });
 
 export const defaultAllow = (ip: string, user: string) => allowAttempt(chatLimits, ip, user);
+
+/** What a finished step tells about its cost (a slice of the AI SDK's StepResult). */
+export interface StepUsage {
+  usage: LanguageModelUsage;
+  providerMetadata?: unknown;
+  response?: { modelId?: string };
+}
+
+/**
+ * The usage of the finished steps, summed. The cost is the gateway's own
+ * when every step reports one, else the list price. Null without steps.
+ */
+export function usageFromSteps(steps: readonly StepUsage[], fallbackModel: string): TurnUsage | null {
+  if (steps.length === 0) return null;
+  const model = steps.at(-1)?.response?.modelId || fallbackModel;
+  const tokens = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  for (const step of steps) {
+    tokens.inputTokens += step.usage.inputTokens ?? 0;
+    tokens.outputTokens += step.usage.outputTokens ?? 0;
+    tokens.cachedTokens += step.usage.inputTokenDetails?.cacheReadTokens ?? 0;
+  }
+  const reported = steps.map((s) => gatewayCost(s.providerMetadata));
+  const costUsd = reported.every((c) => c != null)
+    ? reported.reduce<number>((sum, c) => sum + (c ?? 0), 0)
+    : estimateCostUsd(model, tokens);
+  return { model, ...tokens, costUsd };
+}
+
+/** About 4 characters per token: the prompt was sent even when no step finished. */
+export function estimatedUsage(model: string, promptChars: number): TurnUsage {
+  const tokens = { inputTokens: Math.ceil(promptChars / 4), outputTokens: 0, cachedTokens: 0 };
+  return { model, ...tokens, costUsd: estimateCostUsd(model, tokens) };
+}
 
 export async function handleChat(request: Request, deps: ChatDeps): Promise<Response> {
   const access = await deps.access();
@@ -113,15 +147,31 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
 
   const assistantId = randomUUID();
   const toolDurations = new Map<string, number>();
-  let resolveUsage: (usage: TurnUsage | null) => void = () => {};
-  const usage = new Promise<TurnUsage | null>((resolve) => {
+  const instructions = buildSystemPrompt({ now, role: claims.role });
+  const modelMessages = await convertToModelMessages(messages, { tools, ignoreIncompleteToolCalls: true });
+
+  // The usage row is always written, also when the stream fails or is
+  // aborted, so failed answers count against the daily budget too: from the
+  // finished steps when there are any, else estimated from the prompt.
+  const finishedSteps: StepUsage[] = [];
+  let failed = false;
+  let settled: TurnUsage | null = null;
+  let resolveUsage: (usage: TurnUsage) => void = () => {};
+  const usage = new Promise<TurnUsage>((resolve) => {
     resolveUsage = resolve;
   });
+  const settle = (value: TurnUsage) => {
+    settled ??= value;
+    resolveUsage(settled);
+  };
+  const fallbackUsage = () =>
+    usageFromSteps(finishedSteps, deps.modelId()) ??
+    estimatedUsage(deps.modelId(), instructions.length + JSON.stringify(modelMessages).length);
 
   const result = streamText({
     model: deps.model(),
-    instructions: buildSystemPrompt({ now, role: claims.role }),
-    messages: await convertToModelMessages(messages, { tools, ignoreIncompleteToolCalls: true }),
+    instructions,
+    messages: modelMessages,
     tools,
     stopWhen: isStepCount(MAX_STEPS),
     reasoning: "medium",
@@ -136,24 +186,21 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
     onToolExecutionEnd: ({ toolCall, toolExecutionMs }) => {
       toolDurations.set(toolCall.toolCallId, Math.round(toolExecutionMs));
     },
-    onEnd: (event) => {
-      const model = event.finalStep?.response?.modelId || deps.modelId();
-      const tokens = {
-        inputTokens: event.usage.inputTokens ?? 0,
-        outputTokens: event.usage.outputTokens ?? 0,
-        cachedTokens: event.usage.inputTokenDetails?.cacheReadTokens ?? 0,
-      };
-      const reported = event.steps.map((s) => gatewayCost(s.providerMetadata));
-      const costUsd = reported.every((c) => c != null)
-        ? reported.reduce<number>((sum, c) => sum + (c ?? 0), 0)
-        : estimateCostUsd(model, tokens);
-      resolveUsage({ model, ...tokens, costUsd });
+    onStepEnd: (step) => {
+      finishedSteps.push(step);
     },
+    onEnd: (event) => {
+      settle(usageFromSteps(event.steps, deps.modelId()) ?? fallbackUsage());
+    },
+    // An error chunk ends its step with onStepEnd; onEnd follows only when a
+    // step finished. The UI stream's onEnd settles from the steps otherwise.
     onError: ({ error }) => {
       console.error("chat: model stream failed:", error);
-      resolveUsage(null);
+      failed = true;
     },
-    onAbort: () => resolveUsage(null),
+    onAbort: ({ steps }) => {
+      settle(usageFromSteps(steps, deps.modelId()) ?? fallbackUsage());
+    },
   });
 
   // Run to the end even when the browser goes away, so the answer is stored.
@@ -169,13 +216,17 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
       onError: () => "Svaret kunne ikke hentes. Prøv igen om lidt.",
       onEnd: async ({ responseMessage }) => {
         try {
-          const turnUsage = await Promise.race([
-            usage,
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
-          ]);
-          if (responseMessage.parts.length > 0 || turnUsage) {
-            await finishTurn(claims, body.id, responseMessage, turnUsage, toolDurations);
-          }
+          // After a failure streamText may never call onEnd: do not wait for it.
+          const turnUsage =
+            settled ??
+            (failed
+              ? null
+              : await Promise.race([
+                  usage,
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+                ])) ??
+            fallbackUsage();
+          await finishTurn(claims, body.id, responseMessage, turnUsage, toolDurations);
         } catch (error) {
           console.error("chat: storing the answer failed:", error);
         }

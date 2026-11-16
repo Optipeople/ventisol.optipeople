@@ -380,22 +380,16 @@ describe("driver selection", () => {
 });
 
 describe("node-postgres settings", () => {
-  it("turns TLS on for Supabase and drops the query string", () => {
+  // TLS settings per host: lib/db/postgres.test.ts.
+  it("drops the query string and keeps the pool small", () => {
     const config = poolConfig(
       "postgres://postgres.ref:secret@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&supa=base-pooler.x"
     );
-    expect(config.ssl).toEqual({ rejectUnauthorized: false });
     expect(config.connectionString).toBe(
       "postgres://postgres.ref:secret@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
     );
     expect(config.max).toBeLessThanOrEqual(5);
     expect(config.connectionTimeoutMillis).toBeGreaterThan(0);
-  });
-
-  it("leaves TLS off for a local Postgres or sslmode=disable", () => {
-    expect(poolConfig("postgres://u:p@localhost:5432/db").ssl).toBe(false);
-    expect(poolConfig("postgres://u:p@127.0.0.1:54322/postgres").ssl).toBe(false);
-    expect(poolConfig("postgres://u:p@db.internal:5432/db?sslmode=disable").ssl).toBe(false);
   });
 
   it("parses bigint, numeric and date like the PGlite driver", () => {

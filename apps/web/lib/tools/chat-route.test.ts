@@ -9,6 +9,7 @@ import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { handleChat, type ChatDeps } from "@/app/api/chat/handler";
+import { HIDDEN_TOOL_NOTE, hideToolsNotAllowed, loadConversation } from "@/app/api/chat/store";
 import type { Claims } from "@/lib/db";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
 import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
@@ -196,6 +197,77 @@ describe("a turn", () => {
     expect((forAdmin.doStreamCalls[0].tools ?? []).map((t) => t.name)).toContain("calc_vs_measured");
   });
 
+  it("hides stored tool results the current role may not run, in the page and for the model", async () => {
+    // An answer from when the user could see calculated times.
+    const conversationId = randomUUID();
+    const secret = "kalkuleret-hemmelig-7f3a";
+    await db.withService(async (tx) => {
+      await tx.query(`insert into ai.conversations (id, opti_user_id, title) values ($1, $2, 'x')`, [
+        conversationId,
+        viewer.optiUserId,
+      ]);
+      await tx.query(
+        `insert into ai.messages (id, conversation_id, role, parts, created_at) values
+           ($1, $3, 'user', $4::jsonb, now() - interval '2 minutes'),
+           ($2, $3, 'assistant', $5::jsonb, now() - interval '1 minute')`,
+        [
+          randomUUID(),
+          randomUUID(),
+          conversationId,
+          JSON.stringify([{ type: "text", text: "Holder kalkulen?" }]),
+          JSON.stringify([
+            {
+              type: "tool-calc_vs_measured",
+              toolCallId: "old-1",
+              state: "output-available",
+              input: {},
+              output: { data: { note: secret }, views: [] },
+            },
+            {
+              type: "tool-order_status",
+              toolCallId: "old-2",
+              state: "output-available",
+              input: { orderNo: 50006 },
+              output: { data: { orderNo: 50006 }, views: [] },
+            },
+            { type: "text", text: "Ja." },
+          ]),
+        ]
+      );
+    });
+
+    const shown = await loadConversation(viewer, conversationId);
+    const parts = shown?.messages[1].parts ?? [];
+    expect(JSON.stringify(parts)).not.toContain(secret);
+    expect(parts[0]).toEqual({ type: "text", text: HIDDEN_TOOL_NOTE });
+    expect(parts[1]).toMatchObject({ type: "tool-order_status", state: "output-available" });
+    expect(parts[2]).toEqual({ type: "text", text: "Ja." });
+
+    // An admin, who may still run the tool, sees it.
+    const forAdmin = await db.withService((tx) =>
+      tx.query(`update ai.conversations set opti_user_id = $2 where id = $1 returning id`, [conversationId, admin.optiUserId])
+    );
+    expect(forAdmin).toHaveLength(1);
+    expect(JSON.stringify(await loadConversation(admin, conversationId))).toContain(secret);
+    await db.withService((tx) =>
+      tx.query(`update ai.conversations set opti_user_id = $2 where id = $1`, [conversationId, viewer.optiUserId])
+    );
+    const allowed = new Set(["calc_vs_measured"]);
+    const kept = hideToolsNotAllowed(
+      [{ id: "m", role: "assistant", parts: [{ type: "tool-calc_vs_measured", toolCallId: "c", state: "output-available", input: {}, output: secret }] }],
+      allowed
+    );
+    expect(JSON.stringify(kept)).toContain(secret);
+
+    // The next question keeps the history (it validates) without the hidden output.
+    const model = mockModel();
+    await (await handleChat(post(question("Og nu?", conversationId)), deps(viewer, model))).text();
+    const prompt = JSON.stringify(model.doStreamCalls[0].prompt);
+    expect(prompt).not.toContain(secret);
+    expect(prompt).toContain(HIDDEN_TOOL_NOTE);
+    expect(prompt).toContain("Holder kalkulen?");
+  });
+
   it("sends the Danish system prompt and the stored history on the next question", async () => {
     const first = question("Hvor er ordrenummer 50006?");
     await (await handleChat(post(first), deps(viewer, mockModel()))).text();
@@ -215,5 +287,81 @@ describe("a turn", () => {
     const toolTurn = JSON.stringify(prompt.filter((m) => m.role === "tool"));
     expect(toolTurn).toContain("50006");
     expect(toolTurn).not.toContain('"views"');
+  });
+});
+
+describe("usage when the stream fails", () => {
+  async function usageRows(conversationId: string) {
+    return waitFor(async () => {
+      const rows = await db.withService((tx) =>
+        tx.query<{ message_id: string | null; input_tokens: number; output_tokens: number; cached_tokens: number }>(
+          `select message_id, input_tokens, output_tokens, cached_tokens from ai.usage_events where conversation_id = $1`,
+          [conversationId]
+        )
+      );
+      return rows.length > 0 ? rows : null;
+    });
+  }
+
+  it("counts the finished steps when a later model call fails", async () => {
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        call += 1;
+        if (call > 1) throw new Error("provider down");
+        const chunks: LanguageModelV4StreamPart[] = [
+          { type: "response-metadata", id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+          { type: "tool-call", toolCallId: "call-1", toolName: "order_status", input: '{"orderNo":50006}' },
+          { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
+        ];
+        return { stream: simulateReadableStream({ chunks }) };
+      },
+    });
+    const body = question("Hvor er ordrenummer 50006?");
+    await (await handleChat(post(body), deps(viewer, model))).text();
+    const [row] = await usageRows(body.id);
+    expect(row).toMatchObject({ input_tokens: 1000, output_tokens: 100, cached_tokens: 200 });
+  });
+
+  it("counts an error chunk's step", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "response-metadata", id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+            { type: "error", error: new Error("overloaded") },
+            { type: "finish", finishReason: { unified: "error", raw: undefined }, usage },
+          ] satisfies LanguageModelV4StreamPart[],
+        }),
+      }),
+    });
+    const body = question("Hej");
+    await (await handleChat(post(body), deps(viewer, model))).text();
+    const rows = await usageRows(body.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].input_tokens).toBe(1000);
+  });
+
+  it("writes an estimated row when the first model call fails", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new Error("provider down");
+      },
+    });
+    const body = question("Hvor er ordrenummer 50006?");
+    const streamed = await (await handleChat(post(body), deps(viewer, model))).text();
+    expect(streamed).toContain("Svaret kunne ikke hentes");
+    const rows = await usageRows(body.id);
+    expect(rows).toHaveLength(1);
+    // No answer to point at; the prompt (system prompt and tools) was estimated.
+    expect(rows[0].message_id).toBeNull();
+    expect(rows[0].input_tokens).toBeGreaterThan(100);
+    expect(rows[0].output_tokens).toBe(0);
+
+    // A failed turn stores no empty assistant message.
+    const messages = await db.withService((tx) =>
+      tx.query<{ role: string }>(`select role from ai.messages where conversation_id = $1`, [body.id])
+    );
+    expect(messages.map((m) => m.role)).toEqual(["user"]);
   });
 });

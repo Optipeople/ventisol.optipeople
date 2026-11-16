@@ -13,7 +13,7 @@ export const SESSION_COOKIES = {
   /**
    * Set for a minute by /auth/refresh after a refresh. A data read that is
    * still refused while it is set does not refresh again (that would loop):
-   * it ends the session instead. See lib/opticloud.ts.
+   * it ends the session instead. See app/auth/refresh/route.ts.
    */
   refreshed: "ventisol_refreshed",
 } as const;

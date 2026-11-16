@@ -8,9 +8,10 @@ export const metadata: Metadata = { title: "Ingen adgang" };
 
 // Where a signed-in user lands when something says no. Three reasons:
 //
-// - no `grund`: a data read got 403 from OptiCloud (lib/opticloud.ts). The
-//   API will not let this user read Ventisol's tables, and a token refresh
-//   would not change that.
+// - no `grund`: OptiCloud will not let this user read Ventisol's tables, and
+//   a token refresh would not change that. The pages used to read OptiCloud
+//   with the user's token and sent a 403 here; they read the portal database
+//   now, so only old links arrive without a `grund`.
 // - `grund=rolle`: the user's portal role does not cover the page
 //   (requireRole / requireCapability in lib/auth.ts).
 // - `grund=database`: the same guards, but the role is only the fallback

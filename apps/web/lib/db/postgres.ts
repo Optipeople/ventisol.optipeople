@@ -3,6 +3,7 @@
 
 import pg from "pg";
 import type { Db, Driver } from "./driver";
+import { SUPABASE_ROOT_CA } from "./supabase-ca";
 
 // Type oids whose default node-postgres parsing differs from PGlite's or
 // loses information. See the table in driver.ts.
@@ -59,27 +60,52 @@ export const typeParsers: pg.CustomTypesConfig = {
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
+function isSupabaseHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host.endsWith(".supabase.com") || host.endsWith(".supabase.co");
+}
+
+/**
+ * The TLS setting for a database host. Exported for the unit test.
+ *
+ * - Local Postgres, or sslmode=disable in the string: no TLS.
+ * - DATABASE_SSL_INSECURE=1: TLS without checking the certificate. Only for
+ *   an emergency, e.g. Supabase rotating its CA before this file follows.
+ * - Supabase (pooler and direct): the certificate chain and host name are
+ *   checked against Supabase's own root CA (supabase-ca.ts), which Node's
+ *   built-in list does not hold.
+ * - Any other host: checked against Node's built-in CAs.
+ */
+export function sslFor(
+  hostname: string,
+  sslmode: string | null,
+  env: Record<string, string | undefined> = process.env
+): pg.PoolConfig["ssl"] {
+  if (sslmode === "disable" || LOCAL_HOSTS.has(hostname)) return false;
+  if (env.DATABASE_SSL_INSECURE === "1") return { rejectUnauthorized: false };
+  if (isSupabaseHost(hostname)) return { ca: SUPABASE_ROOT_CA, rejectUnauthorized: true };
+  return { rejectUnauthorized: true };
+}
+
 /**
  * Pool settings for a connection string. Exported for the unit test.
  *
- * - TLS is always on, except to a local Postgres or when the string says
- *   sslmode=disable. The certificate chain is not verified: Supabase's pooler
- *   presents a certificate signed by Supabase's own CA, which Node does not
- *   know, and the string's own sslmode=require would make node-postgres
- *   reject it. The link is still encrypted.
+ * - TLS as `sslFor` says.
  * - The query parameters are dropped (sslmode, and extras the Vercel
  *   integration adds such as supa=...), so they cannot override this.
  * - Small pool: one serverless instance serves few requests at a time, and
  *   the transaction pooler shares its server connections between instances.
  */
-export function poolConfig(connectionString: string): pg.PoolConfig {
+export function poolConfig(
+  connectionString: string,
+  env: Record<string, string | undefined> = process.env
+): pg.PoolConfig {
   const url = new URL(connectionString);
-  const sslDisabled =
-    url.searchParams.get("sslmode") === "disable" || LOCAL_HOSTS.has(url.hostname);
+  const ssl = sslFor(url.hostname, url.searchParams.get("sslmode"), env);
   url.search = "";
   return {
     connectionString: url.toString(),
-    ssl: sslDisabled ? false : { rejectUnauthorized: false },
+    ssl,
     max: 3,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,

@@ -55,6 +55,9 @@ export default async function OrderPage({ params, searchParams }: { params: Para
   };
   const ctx = await requireCapability(self(wantedDoc), "reports.view");
 
+  // No loading boundary above this page (app/(detail)/layout.tsx): whether the
+  // order exists is only known from the full read, so nothing streams before
+  // it and an unknown order is a real HTTP 404.
   const orderNo = parseOrderNo(raw);
   if (orderNo == null) notFound();
   const now = requestTime();

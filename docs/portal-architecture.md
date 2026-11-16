@@ -17,7 +17,7 @@ raw.scans, raw.order_documents            mirror, never hand-edited
 core.*  doc.*                             derived, can always be rebuilt from raw.*
    │  rpt.* SQL functions (security invoker)
    ▼
-lib/reports  →  pages in app/(app)        lib/tools  →  chat
+lib/reports  →  pages in app/(app), app/(detail)    lib/tools  →  chat
 ```
 
 Portal-owned data (`config.*`, `app.*`, `ai.*`, `rpt.snapshots`) lives only in Supabase.
@@ -112,12 +112,14 @@ Inside `apps/web`:
 | `lib/reports/` | typed TypeScript wrappers, one per `rpt.*` function | pages and tools import from here, never write report SQL inline |
 | `lib/tools/` | chat tools: plain functions with a zod schema and a `Claims` context | no import from the chat route or from `ai` |
 | `lib/export/` | Excel and PDF export | |
-| `app/(app)/` | pages | read through `lib/reports`, never `lib/sync` |
+| `app/(app)/`, `app/(detail)/` | pages (`(detail)`: pages of one order or station, see below) | read through `lib/reports`, never `lib/sync` |
 | `app/api/cron/` | Vercel Cron routes | check `Authorization: Bearer ${CRON_SECRET}` |
 
 Outside it: `supabase/migrations/`, `.github/workflows/web-ci.yml`, `docs/`.
 
-Existing `lib/report.ts`, `lib/scans.ts`, `lib/time.ts` stay the home of the scan rules until `lib/derive` has taken them over; `docs/scan-rules-vectors.json` must keep passing against whichever module pairs scans.
+The scan rules live in `lib/derive` now: `lib/derive/pairing.ts` pairs the full scan history for the read model, and every page reads its result through `lib/reports`. It still takes its building blocks from two older modules: `lib/scans.ts` (row to `Scan`, barcode, station kind, position label) and `lib/report.ts` (`dedupeScans`, `stationKey`, and `pairScans`, the station app's windowed pairing with its order, station and KPI summaries). No page imports `lib/report.ts` any more; it stays as the reference that `lib/derive/fixture-day.test.ts` checks the read model against. `docs/scan-rules-vectors.json` runs against both `lib/derive/pairing.ts` (`pairing.test.ts`) and `lib/report.ts` (`lib/scan-rules-vectors.test.ts`) and must keep passing.
+
+Pages that answer `notFound()` for an unknown id (`/ordre/[orderNo]`, `/stationer/[stationNo]`) live in the route group `app/(detail)/`, which has the same chrome (`components/portal-chrome.tsx`) but no `loading.tsx`. A loading boundary above a page sends its fallback with HTTP 200 before the page runs, so a `notFound()` under `app/(app)/loading.tsx` would only show the not-found UI with a 200. Such a page checks the id first and puts any `<Suspense>` after that check.
 
 ## 6. Conventions
 
@@ -131,10 +133,15 @@ Existing `lib/report.ts`, `lib/scans.ts`, `lib/time.ts` stay the home of the sca
 
 ## 7. Environment
 
+Every variable, with defaults and examples, is in `apps/web/README.md` and `apps/web/.env.example`.
+
 | Name | Used by | What |
 |---|---|---|
-| `OPTIPEOPLE_API_URL`, `VENTISOL_ACCOUNT_ID`, `SITE_URL`, `VENTISOL_FIXTURES` | as before | see `apps/web/README.md` |
+| `OPTIPEOPLE_API_URL`, `VENTISOL_ACCOUNT_ID`, `SITE_URL` | `lib/auth.ts` | login, the account that gets in, links in emails |
+| `VENTISOL_FIXTURES` | `next dev` only | sample data in an in-process PGlite, no login |
+| `VENTISOL_DIST_DIR` | `next.config.ts` | build folder `.next-<name>` of a second dev server |
 | `DATABASE_URL` or `POSTGRES_URL` | `lib/db` | pooled Postgres connection string |
 | `OPTICLOUD_SERVICE_USER`, `OPTICLOUD_SERVICE_PASSWORD` | `lib/sync` | the service account that reads scans and documents |
-| `CRON_SECRET` | `app/api/cron/*` | Vercel sets and sends it |
-| `AI_GATEWAY_API_KEY` | chat | not needed on Vercel, where OIDC is used |
+| `CRON_SECRET` | `app/api/cron/*` | Vercel sets and sends it; without it every cron call is refused |
+| `AI_GATEWAY_API_KEY` | chat, Ledelse draft | not needed on Vercel, where OIDC is used |
+| `CHAT_MODEL`, `CHAT_DAILY_TOKEN_BUDGET` | `app/api/chat/config.ts` | model id (default `anthropic/claude-sonnet-5.5`), tokens per user per day (default 2,000,000) |

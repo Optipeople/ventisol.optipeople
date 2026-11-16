@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import {
   AutoRefresh,
   DayPicker,
@@ -9,6 +10,7 @@ import {
   Note,
   Notice,
   PageHeader,
+  PageHeaderSkeleton,
   PageShell,
   SectionCard,
   SectionTitle,
@@ -39,6 +41,8 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 
 const TREND_WEEKS = 12;
 
+type Claims = Parameters<typeof getStationDetail>[0];
+
 /** "39 passager", or "40 passager, 1 uden ud-scanning". */
 function passesAside(timeline: TimelineInterval[]): string {
   const missing = timeline.filter((iv) => iv.status === "missing_out").length;
@@ -64,13 +68,33 @@ export default async function StationDetailPage({
   const stationNo = parseStationNo(rawNo);
   if (stationNo == null) notFound();
 
-  const clock = parseClock(raw.clock);
+  // Everything that can answer 404 runs above this line: the Suspense below
+  // starts the stream, and the status is 200 from then on.
+  return (
+    <Suspense fallback={<StationDetailSkeleton />}>
+      <StationDetail claims={ctx.claims} stationNo={stationNo} rawDay={raw.day} clock={parseClock(raw.clock)} />
+    </Suspense>
+  );
+}
+
+/** The station's day, trend and type times: the slow part, streamed after the 404 check. */
+async function StationDetail({
+  claims,
+  stationNo,
+  rawDay,
+  clock,
+}: {
+  claims: Claims;
+  stationNo: number;
+  rawDay: string | undefined;
+  clock: ReturnType<typeof parseClock>;
+}) {
   const now = requestTime();
   const today = dayKey(now);
-  const { day, clamped } = parseDay(raw.day, today);
+  const { day, clamped } = parseDay(rawDay, today);
   const isToday = day === today;
 
-  const detail = await getStationDetail(ctx.claims, { stationNo, day, weeks: TREND_WEEKS, clock });
+  const detail = await getStationDetail(claims, { stationNo, day, weeks: TREND_WEEKS, clock });
   const { station, timeline, distribution, trend } = detail;
   const backHref = hrefWith("/stationer", { day: isToday ? undefined : day, clock });
   const period = detail.distributionPeriod;
@@ -211,6 +235,24 @@ export default async function StationDetailPage({
           )}
         </SectionCard>
       </div>
+    </PageShell>
+  );
+}
+
+/** While the station's numbers load: header, pickers, tiles and the day, in the same places as the page. */
+function StationDetailSkeleton() {
+  return (
+    <PageShell width="wide" aria-busy>
+      <PageHeaderSkeleton titleWidth="w-40" withActions />
+      <div className="mb-4 h-[30px] w-64 animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="h-[64px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mt-5 grid animate-pulse grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-[86px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+        ))}
+      </div>
+      <div className="mt-5 h-[240px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <p className="sr-only">Henter stationen…</p>
     </PageShell>
   );
 }

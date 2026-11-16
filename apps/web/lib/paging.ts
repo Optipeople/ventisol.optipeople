@@ -23,10 +23,7 @@ export const PAGE_SIZE = 500;
 
 /**
  * Hard ceiling, so a runaway table cannot keep a request busy forever. 600
- * pages are 300 000 rows: the longest read the site makes (62 days and the 36
- * hours before them) is about 190 000 rows at 3 000 scans a day, so a factory
- * half as busy again still gets its numbers. That many rows still fit the
- * shared store (MAX_SCAN_BYTES in lib/api-cache.ts).
+ * pages are 300 000 rows, about 100 days at 3 000 scans a day.
  */
 export const MAX_PAGES = 600;
 

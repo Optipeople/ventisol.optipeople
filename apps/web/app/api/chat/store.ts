@@ -11,6 +11,7 @@ import type { UIMessage } from "ai";
 import { getToolName, isToolUIPart } from "ai";
 import { withUser, type Claims, type Db } from "@/lib/db";
 import { dayKey } from "@/lib/time";
+import { chatToolsFor } from "@/lib/tools";
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -57,14 +58,40 @@ export async function listConversations(claims: Claims): Promise<ConversationSum
   return rows.map((r) => ({ id: r.id, title: r.title ?? "Ny samtale", updatedAt: new Date(r.updated_at).toISOString() }));
 }
 
-async function messagesOn(db: Db, conversationId: string): Promise<UIMessage[]> {
+/** Shown in place of a stored tool result the user's current role may not run. */
+export const HIDDEN_TOOL_NOTE = "Resultatet fra et værktøj er skjult, fordi din rolle ikke længere har adgang til det.";
+
+/**
+ * Replaces every tool part whose tool is not in `allowed` with a short text
+ * note, so a stored answer does not show (or hand the model) data the
+ * user's current role may no longer see, e.g. calculated times after a
+ * planner is made viewer.
+ */
+export function hideToolsNotAllowed(messages: UIMessage[], allowed: ReadonlySet<string>): UIMessage[] {
+  return messages.map((message) => {
+    if (!message.parts.some((p) => isToolUIPart(p) && !allowed.has(getToolName(p)))) return message;
+    return {
+      ...message,
+      parts: message.parts.map((p) =>
+        isToolUIPart(p) && !allowed.has(getToolName(p)) ? { type: "text" as const, text: HIDDEN_TOOL_NOTE } : p
+      ),
+    };
+  });
+}
+
+/** The conversation's messages, with the tool results the role may not see hidden. */
+async function messagesOn(db: Db, claims: Claims, conversationId: string): Promise<UIMessage[]> {
   const rows = await db.query<{ id: string; role: UIMessage["role"]; parts: UIMessage["parts"] }>(
     `select id, role, parts from ai.messages
       where conversation_id = $1 and role in ('user', 'assistant')
       order by created_at, id`,
     [conversationId]
   );
-  return rows.map((r) => ({ id: r.id, role: r.role, parts: r.parts }));
+  const allowed = new Set(chatToolsFor(claims).map((t) => t.name));
+  return hideToolsNotAllowed(
+    rows.map((r) => ({ id: r.id, role: r.role, parts: r.parts })),
+    allowed
+  );
 }
 
 /** One of the user's conversations with its messages, or null (unknown, archived or someone else's). */
@@ -76,7 +103,7 @@ export async function loadConversation(claims: Claims, id: string): Promise<Conv
       [id]
     );
     if (!row) return null;
-    return { id: row.id, title: row.title ?? "Ny samtale", messages: await messagesOn(db, row.id) };
+    return { id: row.id, title: row.title ?? "Ny samtale", messages: await messagesOn(db, claims, row.id) };
   });
 }
 
@@ -111,7 +138,7 @@ export async function beginTurn(
       [conversationId]
     );
     if (!row) return null;
-    const history = (await messagesOn(db, conversationId)).filter((m) => m.id !== message.id);
+    const history = (await messagesOn(db, claims, conversationId)).filter((m) => m.id !== message.id);
     await db.query(
       `insert into ai.messages (id, conversation_id, role, parts) values ($1, $2, 'user', $3::jsonb)
        on conflict (id) do nothing`,
@@ -130,7 +157,11 @@ export interface TurnUsage {
   costUsd: number | null;
 }
 
-/** Stores the answer, one ai.tool_calls row per tool part, and the usage row, in one transaction. */
+/**
+ * Stores the answer, one ai.tool_calls row per tool part, and the usage row,
+ * in one transaction. A failed answer with no parts stores only the usage
+ * row (message_id null), so it still counts against the daily budget.
+ */
 export async function finishTurn(
   claims: Claims,
   conversationId: string,
@@ -138,29 +169,9 @@ export async function finishTurn(
   usage: TurnUsage | null,
   toolDurations: ReadonlyMap<string, number>
 ): Promise<void> {
+  const hasAnswer = message.parts.length > 0;
   await withUser(claims, async (db) => {
-    await db.query(
-      `insert into ai.messages (id, conversation_id, role, parts) values ($1, $2, 'assistant', $3::jsonb)
-       on conflict (id) do update set parts = excluded.parts`,
-      [message.id, conversationId, JSON.stringify(message.parts)]
-    );
-    await db.query(`delete from ai.tool_calls where message_id = $1`, [message.id]);
-    for (const part of message.parts) {
-      if (!isToolUIPart(part)) continue;
-      await db.query(
-        `insert into ai.tool_calls (message_id, conversation_id, name, input, output, error, duration_ms)
-         values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)`,
-        [
-          message.id,
-          conversationId,
-          getToolName(part),
-          JSON.stringify(part.input ?? null),
-          part.state === "output-available" ? JSON.stringify(part.output ?? null) : null,
-          part.state === "output-error" ? part.errorText : null,
-          toolDurations.get(part.toolCallId) ?? null,
-        ]
-      );
-    }
+    if (hasAnswer) await storeAnswer(db, conversationId, message, toolDurations);
     if (usage) {
       await db.query(
         `insert into ai.usage_events
@@ -168,7 +179,7 @@ export async function finishTurn(
          values ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           conversationId,
-          message.id,
+          hasAnswer ? message.id : null,
           claims.optiUserId,
           usage.model,
           usage.inputTokens,
@@ -180,6 +191,36 @@ export async function finishTurn(
     }
     await db.query(`update ai.conversations set updated_at = now() where id = $1`, [conversationId]);
   });
+}
+
+async function storeAnswer(
+  db: Db,
+  conversationId: string,
+  message: UIMessage,
+  toolDurations: ReadonlyMap<string, number>
+): Promise<void> {
+  await db.query(
+    `insert into ai.messages (id, conversation_id, role, parts) values ($1, $2, 'assistant', $3::jsonb)
+     on conflict (id) do update set parts = excluded.parts`,
+    [message.id, conversationId, JSON.stringify(message.parts)]
+  );
+  await db.query(`delete from ai.tool_calls where message_id = $1`, [message.id]);
+  for (const part of message.parts) {
+    if (!isToolUIPart(part)) continue;
+    await db.query(
+      `insert into ai.tool_calls (message_id, conversation_id, name, input, output, error, duration_ms)
+       values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)`,
+      [
+        message.id,
+        conversationId,
+        getToolName(part),
+        JSON.stringify(part.input ?? null),
+        part.state === "output-available" ? JSON.stringify(part.output ?? null) : null,
+        part.state === "output-error" ? part.errorText : null,
+        toolDurations.get(part.toolCallId) ?? null,
+      ]
+    );
+  }
 }
 
 /** Tokens this user has used today (Copenhagen day of `now`). */

@@ -21,8 +21,8 @@ const NAV: ReadonlyArray<NavEntry> = [
   {
     label: "Ordrer",
     href: "/ordrer",
-    // /ordrer shows the period report for now, and the order page belongs here.
-    match: ["/ordrer", "/periode", "/ordre"],
+    // The order lists, and the page of one order (/ordre/[orderNo]).
+    match: ["/ordrer", "/ordre"],
     needs: "reports.view",
   },
   { label: "Ledelse", href: "/ledelse", needs: "ledelse.view" },

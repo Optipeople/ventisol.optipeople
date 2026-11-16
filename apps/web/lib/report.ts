@@ -19,8 +19,8 @@
 // These mirror DayReport in the station app (apps/station), so the reports
 // site and the operators' screen agree on the numbers.
 
-import { dayKey, dayStart } from "@/lib/time";
-import { isPacking, positionLabel, type Scan } from "@/lib/scans";
+import { dayKey } from "@/lib/time";
+import { isPacking, type Scan } from "@/lib/scans";
 
 /**
  * An In with no Out for longer than this is treated as abandoned (a missed
@@ -176,10 +176,6 @@ export function pairScans(scans: Scan[], now: number): WorkInterval[] {
  */
 export function intervalsEndingIn(intervals: WorkInterval[], from: number, to: number): WorkInterval[] {
   return intervals.filter((iv) => iv.end >= from && iv.end < to);
-}
-
-export function scansIn(scans: Scan[], from: number, to: number): Scan[] {
-  return scans.filter((s) => s.time >= from && s.time < to);
 }
 
 /** Station order on the floor: by station number, then by name. */
@@ -367,158 +363,6 @@ export function computeKpis(intervals: WorkInterval[], orders: OrderSummary[]): 
     totalWorkedMs: sum(intervals.map((iv) => iv.durationMs)),
     inProgress: intervals.filter((iv) => iv.inProgress).length,
   };
-}
-
-export interface ElementSummary {
-  barcode: string;
-  position: number | null;
-  subPosition: number | null;
-  piece: number | null;
-  /** "Pos. 5.1" */
-  label: string;
-  totalMs: number;
-  stations: string[];
-  passes: number;
-  reworkPasses: number;
-  inProgress: boolean;
-  firstStart: number;
-  lastEnd: number;
-}
-
-/** One line per element of an order, in label order (position, sub-position, piece). */
-export function summarizeElements(intervals: WorkInterval[]): ElementSummary[] {
-  return [...groupBy(intervals, (iv) => iv.barcode).values()]
-    .map((ivs) => {
-      const f = ivs[0];
-      return {
-        barcode: f.barcode,
-        position: f.position,
-        subPosition: f.subPosition,
-        piece: f.piece,
-        label: positionLabel(f.position, f.subPosition),
-        totalMs: sum(ivs.map((iv) => iv.durationMs)),
-        stations: stationNames(ivs),
-        passes: ivs.length,
-        reworkPasses: ivs.filter((iv) => iv.visit > 1).length,
-        inProgress: ivs.some((iv) => iv.inProgress),
-        firstStart: Math.min(...ivs.map((iv) => iv.start)),
-        lastEnd: Math.max(...ivs.map((iv) => iv.end)),
-      };
-    })
-    .sort(
-      (a, b) =>
-        (a.position ?? 0) - (b.position ?? 0) ||
-        (a.subPosition ?? 0) - (b.subPosition ?? 0) ||
-        (a.piece ?? 0) - (b.piece ?? 0) ||
-        a.barcode.localeCompare(b.barcode)
-    );
-}
-
-export interface TimelineLane {
-  station: string;
-  stationNo: number | null;
-  bars: WorkInterval[];
-  totalMs: number;
-}
-
-export interface TimelineDay {
-  /** Copenhagen day, yyyy-MM-dd. */
-  day: string;
-  /**
-   * Axis start and end, rounded out to whole hours. Never before the start of
-   * the day: a bar that began earlier is drawn from the axis start.
-   */
-  axisStart: number;
-  axisEnd: number;
-  lanes: TimelineLane[];
-  totalMs: number;
-}
-
-const HOUR = 3_600_000;
-
-/**
- * The order as a timeline: one block per day, one lane per station, a bar per
- * pass from In to Out. A pass is on the day it ended, as in the day and
- * period views. Days run oldest first; the axis of each day is cut to the
- * hours that had work, so nights do not fill the page. A pass that began on
- * an earlier day (left overnight, or over a weekend) does not pull the axis
- * back: the axis starts at midnight at the earliest and the bar is cut there.
- */
-export function buildTimeline(intervals: WorkInterval[]): TimelineDay[] {
-  return [...groupBy(intervals, (iv) => dayKey(iv.end)).entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, ivs]) => {
-      const midnight = dayStart(day);
-      const first = Math.min(...ivs.map((iv) => Math.max(iv.start, midnight)));
-      const last = Math.max(...ivs.map((iv) => iv.end));
-      const axisStart = Math.floor(first / HOUR) * HOUR;
-      const axisEnd = Math.max(axisStart + HOUR, Math.ceil(last / HOUR) * HOUR);
-      const lanes = [...groupBy(ivs, stationKey).values()]
-        .map((bars) => ({
-          station: bars[0].station,
-          stationNo: bars[0].stationNo,
-          bars: [...bars].sort((a, b) => a.start - b.start),
-          totalMs: sum(bars.map((iv) => iv.durationMs)),
-        }))
-        .sort(compareStations);
-      return { day, axisStart, axisEnd, lanes, totalMs: sum(ivs.map((iv) => iv.durationMs)) };
-    });
-}
-
-export type OrderSortKey =
-  | "order"
-  | "elements"
-  | "total"
-  | "perElement"
-  | "stations"
-  | "days"
-  | "status"
-  | "first"
-  | "last";
-
-export const ORDER_SORT_KEYS: OrderSortKey[] = [
-  "order",
-  "elements",
-  "total",
-  "perElement",
-  "stations",
-  "days",
-  "status",
-  "first",
-  "last",
-];
-
-const STATUS_RANK: Record<OrderStatus, number> = { active: 0, idle: 1 };
-
-function sortValue(o: OrderSummary, key: OrderSortKey): number {
-  switch (key) {
-    case "order":
-      return o.orderNo;
-    case "elements":
-      return o.elements;
-    case "total":
-      return o.totalMs;
-    case "perElement":
-      return o.elements > 0 ? o.totalMs / o.elements : 0;
-    case "stations":
-      return o.stations.length;
-    case "days":
-      return o.days.length;
-    case "status":
-      return STATUS_RANK[o.status];
-    case "first":
-      return o.firstScan;
-    case "last":
-      return o.lastScan;
-  }
-}
-
-/** Sorted copy; ties fall back to order number so the order is stable. */
-export function sortOrders(orders: OrderSummary[], key: OrderSortKey, dir: "asc" | "desc"): OrderSummary[] {
-  const sign = dir === "asc" ? 1 : -1;
-  return [...orders].sort(
-    (a, b) => sign * (sortValue(a, key) - sortValue(b, key)) || a.orderNo - b.orderNo
-  );
 }
 
 function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
