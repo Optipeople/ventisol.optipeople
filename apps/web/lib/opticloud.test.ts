@@ -36,7 +36,7 @@ async function readWith(status: number): Promise<string> {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status })));
   // A new `since` (and account) each time, so the memory cache never answers.
   since++;
-  const ctx = { user: {} as never, token: "t", accountId: `acc${since}`, currentPath: "/periode?fra=2026-10-01" };
+  const ctx = { user: {} as never, token: "t", accountId: `acc${since}`, currentPath: "/periode?fra=2026-10-01", role: "viewer" as const, claims: { accountId: "acc", optiUserId: "u1", role: "viewer" as const }, roleDegraded: false };
   try {
     await loadScansSince(ctx, since, 30, Date.now());
   } catch (err) {
@@ -125,6 +125,9 @@ const user = (id: string, accountId = "ventisol") => ({
   token: `token-${id}`,
   accountId,
   currentPath: "/",
+  role: "viewer" as const,
+  claims: { accountId, optiUserId: id, role: "viewer" as const },
+  roleDegraded: false,
 });
 
 async function outcome(read: Promise<unknown>): Promise<unknown> {

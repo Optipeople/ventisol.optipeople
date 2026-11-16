@@ -50,7 +50,7 @@ export async function resetPassword(
 
   // Only tries that go upstream are counted, so a typo in the form above
   // costs nothing. Stops guessing at reset tokens for an e-mail.
-  if (!allowAttempt(resetLimits, clientIp(await headers()), email)) {
+  if (!(await allowAttempt(resetLimits, clientIp(await headers()), email))) {
     return { error: TOO_MANY_ATTEMPTS };
   }
 

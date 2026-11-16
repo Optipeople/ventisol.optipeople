@@ -24,7 +24,7 @@ export async function sendResetLink(
 
   // Counted per IP, and per IP and e-mail typed, known or not, so the answer
   // says nothing about which accounts exist.
-  if (!allowAttempt(forgotLimits, clientIp(await headers()), email)) {
+  if (!(await allowAttempt(forgotLimits, clientIp(await headers()), email))) {
     return { error: TOO_MANY_ATTEMPTS };
   }
 

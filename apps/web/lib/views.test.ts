@@ -33,7 +33,7 @@ const { STALE_OPEN_MS } = await import("@/lib/report");
 const { at, PACKING, pass, scan } = await import("@/lib/test-helpers");
 const { addDays, dayStart, daysBetween } = await import("@/lib/time");
 
-const ctx = { user: { id: "u1" } as never, token: "t", accountId: "acc", currentPath: "/" };
+const ctx = { user: { id: "u1" } as never, token: "t", accountId: "acc", currentPath: "/", role: "viewer" as const, claims: { accountId: "acc", optiUserId: "u1", role: "viewer" as const }, roleDegraded: false };
 const TODAY = "2026-10-21";
 const YESTERDAY = "2026-10-20";
 const NOW = at("12:00");

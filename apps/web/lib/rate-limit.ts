@@ -1,12 +1,25 @@
-// A small sliding-window rate limiter for the login and password-reset
-// actions, which otherwise relay unlimited attempts to OptiCloud from this
-// server's IP.
+// Rate limiting for the login and password-reset actions, which otherwise
+// relay unlimited attempts to OptiCloud from this server's IP.
 //
-// It lives in process memory, so it is per server instance: on Vercel each
-// warm function instance counts on its own and a cold start begins at zero.
-// That slows a single client down but is not a real defence against a
-// distributed attack. The real fix is a Vercel WAF rate limit rule on
-// /login, /forgot-password and /reset-password; this is the backstop.
+// Two layers:
+//
+// 1. Postgres (app.rate_limits), shared by every server instance: a fixed
+//    window counter per key, bumped by one atomic upsert. This is the one
+//    that counts on Vercel, where each warm function instance has its own
+//    memory and a cold start begins at zero.
+// 2. Process memory (createRateLimiter, a sliding window), per instance. It
+//    is the fallback when the database is not configured, is down or is slow
+//    (DB_TIMEOUT_MS), so login never breaks because of the limiter. It slows
+//    a single client down but is no defence against a distributed attack.
+//
+// Neither replaces a Vercel WAF rate limit rule on /login, /forgot-password
+// and /reset-password; this is the backstop.
+//
+// Fixed window means: the first try opens a window of windowMs, tries in it
+// are counted, and the first try after it has ended opens a new one. A
+// refused try is counted too, but never moves the window, so hammering does
+// not extend the wait. Right at a window boundary a client can get up to
+// twice the limit in a short time, which is fine at these numbers.
 //
 // Two counters per action: one per IP, and one per IP and account together.
 // The account counter is never keyed on the account alone. It is checked
@@ -15,7 +28,9 @@
 // tries. Keyed with the IP, a stranger only uses up their own tries. Guessing
 // at one account from many IPs is for the WAF rule and OptiCloud to stop.
 //
-// Dependency free, and the clock can be passed in so it is unit tested.
+// The clock can be passed in everywhere, so it is unit tested.
+
+import { withService, type Db } from "@/lib/db";
 
 export type RateLimitResult =
   | { ok: true }
@@ -120,33 +135,68 @@ export const TOO_MANY_ATTEMPTS = "For mange forsøg. Prøv igen om lidt.";
 
 const MINUTE = 60_000;
 
-// Module-level, so one set of counters per server instance.
+/** The limits of one action, with the in-memory counters of the fallback. */
+export type AttemptLimits = {
+  /** Key prefix in app.rate_limits: "login", "forgot", "reset". */
+  name: string;
+  windowMs: number;
+  /** Tries per window from one IP. */
+  ipLimit: number;
+  /** Of those, tries at one account. */
+  accountLimit: number;
+  /** In-memory fallback counters, one set per server instance. */
+  ip: RateLimiter;
+  account: RateLimiter;
+};
+
+export function createAttemptLimits(options: {
+  name: string;
+  windowMs: number;
+  ipLimit: number;
+  accountLimit: number;
+}): AttemptLimits {
+  return {
+    ...options,
+    ip: createRateLimiter({ limit: options.ipLimit, windowMs: options.windowMs }),
+    account: createRateLimiter({
+      limit: options.accountLimit,
+      windowMs: options.windowMs,
+    }),
+  };
+}
 
 /** Login: 10 tries per 10 minutes per IP, 5 of them at one account. */
-export const loginLimits = {
-  ip: createRateLimiter({ limit: 10, windowMs: 10 * MINUTE }),
-  account: createRateLimiter({ limit: 5, windowMs: 10 * MINUTE }),
-};
+export const loginLimits = createAttemptLimits({
+  name: "login",
+  windowMs: 10 * MINUTE,
+  ipLimit: 10,
+  accountLimit: 5,
+});
 
 /** Reset mails: 10 per hour per IP, 3 of them to one e-mail. */
-export const forgotLimits = {
-  ip: createRateLimiter({ limit: 10, windowMs: 60 * MINUTE }),
-  account: createRateLimiter({ limit: 3, windowMs: 60 * MINUTE }),
-};
+export const forgotLimits = createAttemptLimits({
+  name: "forgot",
+  windowMs: 60 * MINUTE,
+  ipLimit: 10,
+  accountLimit: 3,
+});
 
 /** Setting a new password from a reset link: 10 tries per 10 minutes per IP, 5 of them for one e-mail. */
-export const resetLimits = {
-  ip: createRateLimiter({ limit: 10, windowMs: 10 * MINUTE }),
-  account: createRateLimiter({ limit: 5, windowMs: 10 * MINUTE }),
-};
+export const resetLimits = createAttemptLimits({
+  name: "reset",
+  windowMs: 10 * MINUTE,
+  ipLimit: 10,
+  accountLimit: 5,
+});
 
 /**
- * Count one try against the IP, and against this IP's tries at the account
- * (attemptKey). The IP is checked first, so a blocked IP does not count
- * further. One IP's tries never count against the same account from another
- * IP, so the account's owner is not locked out by someone else's guesses.
+ * The in-memory check. Count one try against the IP, and against this IP's
+ * tries at the account (attemptKey). The IP is checked first, so a blocked IP
+ * does not count further. One IP's tries never count against the same account
+ * from another IP, so the account's owner is not locked out by someone else's
+ * guesses.
  */
-export function allowAttempt(
+export function allowAttemptInMemory(
   limits: { ip: RateLimiter; account: RateLimiter },
   ip: string,
   account: string,
@@ -154,4 +204,161 @@ export function allowAttempt(
 ): boolean {
   if (!limits.ip.hit(ip, now).ok) return false;
   return limits.account.hit(attemptKey(ip, account), now).ok;
+}
+
+// --- The Postgres layer ---
+
+/** Longest wait for the database before the in-memory fallback answers. */
+export const DB_TIMEOUT_MS = 2_000;
+
+/** Rows older than this are swept now and then. Longer than any window. */
+const SWEEP_AGE_MS = 24 * 60 * MINUTE;
+
+/** The keys of one try in app.rate_limits. */
+export function dbKeys(
+  limits: Pick<AttemptLimits, "name">,
+  ip: string,
+  account: string
+): { ip: string; account: string } {
+  return {
+    ip: `${limits.name}:ip:${ip}`.slice(0, MAX_KEY_LENGTH),
+    account: `${limits.name}:acct:${attemptKey(ip, account)}`.slice(0, MAX_KEY_LENGTH),
+  };
+}
+
+/**
+ * Count one try for `key` and say whether it is within `limit`. One
+ * statement, so two instances counting at the same moment cannot both read
+ * the old count: the upsert takes the row lock.
+ */
+async function hitInDb(
+  db: Db,
+  key: string,
+  limit: number,
+  windowMs: number,
+  now: number
+): Promise<boolean> {
+  const rows = await db.query<{ count: number | string }>(
+    `insert into app.rate_limits as r (key, window_start, count)
+     values ($1, to_timestamp($2::double precision / 1000.0), 1)
+     on conflict (key) do update set
+       count = case
+         when r.window_start <= excluded.window_start - ($3::double precision * interval '1 millisecond')
+           then 1
+         else r.count + 1
+       end,
+       window_start = case
+         when r.window_start <= excluded.window_start - ($3::double precision * interval '1 millisecond')
+           then excluded.window_start
+         else r.window_start
+       end
+     returning count`,
+    [key, now, windowMs]
+  );
+  return Number(rows[0]?.count) <= limit;
+}
+
+/** The database check. Same order as allowAttemptInMemory: IP first. */
+export async function allowAttemptInDb(
+  limits: AttemptLimits,
+  ip: string,
+  account: string,
+  now: number = Date.now()
+): Promise<boolean> {
+  const keys = dbKeys(limits, ip, account);
+  return withService(async (db) => {
+    // About one try in a hundred also clears out long dead counters.
+    if (now % 100 === 0) {
+      await db.query(
+        `delete from app.rate_limits
+          where window_start < to_timestamp($1::double precision / 1000.0)`,
+        [now - SWEEP_AGE_MS]
+      );
+    }
+    if (!(await hitInDb(db, keys.ip, limits.ipLimit, limits.windowMs, now))) {
+      return false;
+    }
+    return hitInDb(db, keys.account, limits.accountLimit, limits.windowMs, now);
+  });
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`no answer from the database in ${ms} ms`)),
+      ms
+    );
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+// One log line a minute at most, so a database that is down does not fill
+// the log with one error per login try.
+let lastFallbackLog = 0;
+
+function logFallback(err: unknown): void {
+  const now = Date.now();
+  if (now - lastFallbackLog < MINUTE) return;
+  lastFallbackLog = now;
+  console.error(
+    "rate limit: database unavailable, counting in memory instead:",
+    err
+  );
+}
+
+/**
+ * May this try go ahead? Counts it in Postgres, shared by all instances.
+ * When the database is not configured, fails or does not answer in
+ * DB_TIMEOUT_MS, the in-memory counters of this instance decide instead, so
+ * the caller always gets an answer and never an exception.
+ */
+export async function allowAttempt(
+  limits: AttemptLimits,
+  ip: string,
+  account: string,
+  now: number = Date.now()
+): Promise<boolean> {
+  try {
+    return await withTimeout(
+      allowAttemptInDb(limits, ip, account, now),
+      DB_TIMEOUT_MS
+    );
+  } catch (err) {
+    logFallback(err);
+    return allowAttemptInMemory(limits, ip, account, now);
+  }
+}
+
+/**
+ * Forget this IP's tries at this account, for example after a successful
+ * login: earlier typos no longer count. The IP's own counter stays. Never
+ * throws.
+ */
+export async function forgetAccountAttempts(
+  limits: AttemptLimits,
+  ip: string,
+  account: string
+): Promise<void> {
+  limits.account.reset(attemptKey(ip, account));
+  try {
+    await withTimeout(
+      withService(async (db) => {
+        await db.query("delete from app.rate_limits where key = $1", [
+          dbKeys(limits, ip, account).account,
+        ]);
+      }),
+      DB_TIMEOUT_MS
+    );
+  } catch (err) {
+    logFallback(err);
+  }
 }

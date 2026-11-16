@@ -59,6 +59,10 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // The design system ships TypeScript source, with no build step.
   transpilePackages: ["@optipeople/ui"],
+  // PGlite (fixture mode only) finds its .wasm and data files next to its
+  // own code, so it must be loaded from node_modules, not bundled. `pg` is
+  // on Next's built-in list already.
+  serverExternalPackages: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector"],
   experimental: {
     // Same as vola: keep rendered pages in the browser's client cache for a
     // short while, so the back button and moving between views do not

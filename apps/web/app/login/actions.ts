@@ -11,8 +11,8 @@ import {
 } from "@/lib/auth";
 import {
   allowAttempt,
-  attemptKey,
   clientIp,
+  forgetAccountAttempts,
   loginLimits,
   TOO_MANY_ATTEMPTS,
 } from "@/lib/rate-limit";
@@ -38,7 +38,7 @@ export async function login(
   // Before anything goes upstream. The same answer for every account, known
   // or not, so it says nothing about which ones exist.
   const ip = clientIp(await headers());
-  if (!allowAttempt(loginLimits, ip, email)) {
+  if (!(await allowAttempt(loginLimits, ip, email))) {
     return { error: TOO_MANY_ATTEMPTS, email };
   }
 
@@ -58,7 +58,7 @@ export async function login(
   }
 
   // The password was right: this client's earlier typos at the account no longer count.
-  loginLimits.account.reset(attemptKey(ip, email));
+  await forgetAccountAttempts(loginLimits, ip, email);
 
   // Authorization happens before any cookie is set: only super admins and
   // Ventisol-account users get a session at all.

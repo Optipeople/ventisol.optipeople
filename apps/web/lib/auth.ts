@@ -8,14 +8,43 @@
 // site reads the scans with the signed-in user's own bearer token, so the
 // token is also the data credential. It never reaches the browser.
 //
-// Access policy: super administrators, plus any user in the Ventisol account
-// (VENTISOL_ACCOUNT_ID). Everyone allowed in has the same rights.
+// Access policy, in two steps:
+//
+// 1. Who gets in at all (identity, OptiCloud): super administrators, plus any
+//    user in the Ventisol account (VENTISOL_ACCOUNT_ID).
+// 2. What they may do (authorisation, the portal): a portal role from
+//    app.portal_users, resolved once per request by getPortalAccess(). The
+//    rules are in lib/portal/users.ts, the capabilities in
+//    lib/portal/roles.ts. Pages call requireUser, requireRole or
+//    requireCapability; nothing compares roles by hand.
+//
+// When the database cannot be reached, a valid OptiCloud login still gets
+// in: a super administrator as admin (that never needed the database),
+// everyone else as viewer for that request, with `roleDegraded` set and the
+// error logged. So pages that need no more than a viewer keep working, and
+// requireRole / requireCapability refuse everything above viewer with a "try
+// again" page instead of a silent lock-out or a silent promotion.
 
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SESSION_COOKIES } from "@/lib/auth-cookies";
-import { FIXTURE_USER, fixturesEnabled } from "@/lib/fixtures-flag";
+import type { Claims } from "@/lib/db";
+import {
+  FIXTURE_ACCOUNT_ID,
+  FIXTURE_ROLE,
+  FIXTURE_USER,
+  fixturesEnabled,
+} from "@/lib/fixtures-flag";
+import {
+  ADMIN_ROLE,
+  can,
+  DEFAULT_ROLE,
+  hasAnyRole,
+  type Capability,
+  type PortalRole,
+} from "@/lib/portal/roles";
+import { resolvePortalUser } from "@/lib/portal/users";
 
 /** Base URL of the Optipeople API (login and data). */
 export const API_URL = (
@@ -225,8 +254,87 @@ export const getSession = cache(async (): Promise<Session> => {
     : { status: "forbidden", user: result.user };
 });
 
+/** The portal side of a signed-in user: the role and how to query as them. */
+export type PortalAccess = {
+  role: PortalRole;
+  /** Pass to withUser() from @/lib/db to run queries as this user. */
+  claims: Claims;
+  /**
+   * True when the role could not be read from the database and a fallback is
+   * used instead (viewer, or admin for a super administrator). Such a user is
+   * refused by requireRole and requireCapability for anything above viewer.
+   */
+  roleDegraded: boolean;
+};
+
+/** Longest wait for the role read before the fallback is used. */
+const ROLE_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${ms} ms`)),
+      ms
+    );
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+/**
+ * The portal role of the signed-in user, or null without a valid session.
+ * Resolved once per request (React cache), so the layout and the page share
+ * one database read. Fixture mode: admin with fixed fake ids, no network and
+ * no database.
+ */
+export const getPortalAccess = cache(async (): Promise<PortalAccess | null> => {
+  if (fixturesEnabled()) {
+    return {
+      role: FIXTURE_ROLE,
+      claims: {
+        accountId: FIXTURE_ACCOUNT_ID,
+        optiUserId: FIXTURE_USER.id,
+        role: FIXTURE_ROLE,
+      },
+      roleDegraded: false,
+    };
+  }
+  const session = await getSession();
+  if (session.status !== "ok") return null;
+
+  const accountId = dataAccountId();
+  const superAdmin = isSuperAdmin(session.user);
+  try {
+    const identity = await withTimeout(
+      resolvePortalUser(session.user, accountId, { superAdmin }),
+      ROLE_TIMEOUT_MS
+    );
+    return { role: identity.role, claims: identity.claims, roleDegraded: false };
+  } catch (err) {
+    // See the header: never a silent lock-out, never a silent promotion.
+    const role = superAdmin ? ADMIN_ROLE : DEFAULT_ROLE;
+    console.error(
+      `getPortalAccess: the portal role of ${session.user.id} could not be read, continuing as ${role}:`,
+      err
+    );
+    return {
+      role,
+      claims: { accountId, optiUserId: session.user.id, role },
+      roleDegraded: !superAdmin,
+    };
+  }
+});
+
 /** What a protected page needs: who is signed in and how to read the data. */
-export type AuthContext = {
+export type AuthContext = PortalAccess & {
   user: SessionUser;
   /** Bearer token for the data reads. Empty in fixture mode. */
   token: string;
@@ -243,17 +351,22 @@ export type AuthContext = {
  */
 export async function requireUser(currentPath: string): Promise<AuthContext> {
   if (fixturesEnabled()) {
-    return { user: FIXTURE_USER, token: "", accountId: "fixtures", currentPath };
+    const access = (await getPortalAccess())!;
+    return { ...access, user: FIXTURE_USER, token: "", accountId: "fixtures", currentPath };
   }
   const session = await getSession();
   switch (session.status) {
-    case "ok":
+    case "ok": {
+      // Not null: the session is ok, and both reads are cached per request.
+      const access = (await getPortalAccess())!;
       return {
+        ...access,
         user: session.user,
         token: session.token,
         accountId: dataAccountId(),
         currentPath,
       };
+    }
     case "expired":
       redirect(refreshPath(currentPath));
     case "forbidden":
@@ -261,6 +374,40 @@ export async function requireUser(currentPath: string): Promise<AuthContext> {
     default:
       redirect(loginPath(currentPath));
   }
+}
+
+/**
+ * Where a signed-in user lands when their portal role does not cover a page.
+ * `database` instead of `rolle` when the role is only a fallback because the
+ * database could not be reached: then the answer is "try again", not "ask an
+ * administrator".
+ */
+export function noRolePath(roleDegraded: boolean): string {
+  return `/ingen-adgang?grund=${roleDegraded ? "database" : "rolle"}`;
+}
+
+/**
+ * Page guard for pages only some roles may open: requireUser, then the role
+ * has to be one of `roles`. Others are sent to /ingen-adgang. Prefer
+ * requireCapability, which says what the page needs instead of who has it.
+ */
+export async function requireRole(
+  currentPath: string,
+  ...roles: PortalRole[]
+): Promise<AuthContext> {
+  const ctx = await requireUser(currentPath);
+  if (!hasAnyRole(ctx.role, roles)) redirect(noRolePath(ctx.roleDegraded));
+  return ctx;
+}
+
+/** Page guard: requireUser, then the role has to have `capability`. */
+export async function requireCapability(
+  currentPath: string,
+  capability: Capability
+): Promise<AuthContext> {
+  const ctx = await requireUser(currentPath);
+  if (!can(ctx.role, capability)) redirect(noRolePath(ctx.roleDegraded));
+  return ctx;
 }
 
 /**

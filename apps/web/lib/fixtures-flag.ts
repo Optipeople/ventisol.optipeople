@@ -13,6 +13,17 @@ export function fixturesEnabled(): boolean {
   );
 }
 
+/**
+ * The made-up OptiCloud account of fixture mode, as the account claim of the
+ * fixture user. A real uuid shape, because the database compares the claim
+ * with app.instance.account_id (uuid): the fixture database has to hold this
+ * id there for row level security to let the fixture user in.
+ */
+export const FIXTURE_ACCOUNT_ID = "00000000-0000-4000-8000-00000000f1c5";
+
+/** The fixture user's portal role: admin, so every page can be looked at. */
+export const FIXTURE_ROLE = "admin" as const;
+
 export const FIXTURE_USER = {
   id: "fixture-user",
   email: "demo@ventisol.dk",
