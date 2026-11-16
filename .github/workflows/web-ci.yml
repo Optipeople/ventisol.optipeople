@@ -1,0 +1,65 @@
+# Type checks, lints, tests and builds the web app on every push to main and every pull request that touches it.
+# Actions are pinned to a commit, with the version it was at beside it: a tag can be moved, a commit can't.
+# Packages are installed with npm ci: only what package-lock.json names, with the hashes it names.
+#
+# @optipeople/ui is a private package on GitHub Packages (repo Optipeople/optipeople.ui).
+# The install reads it with the built-in GITHUB_TOKEN (packages: read). That works once the package
+# grants this repo access: package settings, "Manage Actions access", add ventisol.optipeople with Read.
+# If that grant is not wanted, add a repo secret GH_PACKAGES_TOKEN (a token with read:packages only).
+# It is used instead when it is set.
+#
+# The tests run on an in-process Postgres (PGlite), so there is no database service.
+# The build needs no secrets: every env var in apps/web/.env.example has a default or is read per request.
+name: web-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/web/**', 'supabase/**', 'docs/scan-rules-vectors.json', '.github/workflows/web-ci.yml']
+  pull_request:
+    paths: ['apps/web/**', 'supabase/**', 'docs/scan-rules-vectors.json', '.github/workflows/web-ci.yml']
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@optipeople'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+      # next-env.d.ts and the route types are generated, not committed. tsc needs them.
+      - run: npx next typegen
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  # PLACEHOLDER, not active yet: Playwright end-to-end tests.
+  # e2e:
+  #   needs: build
+  #   steps: npm ci, npx playwright install --with-deps chromium, npm run test:e2e
+
+  # PLACEHOLDER, not active yet: AI eval suite. It will need a model API key as a secret.
+  # evals:
+  #   needs: build
+  #   steps: npm ci, npm run test:evals
