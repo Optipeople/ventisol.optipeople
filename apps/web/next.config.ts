@@ -57,6 +57,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // A second dev server (fixture mode beside a real one) needs its own build
+  // folder: Next allows one `next dev` per folder. Unset everywhere else.
+  distDir: process.env.VENTISOL_DIST_DIR || ".next",
   // The design system ships TypeScript source, with no build step.
   transpilePackages: ["@optipeople/ui"],
   // PGlite (fixture mode only) finds its .wasm and data files next to its
