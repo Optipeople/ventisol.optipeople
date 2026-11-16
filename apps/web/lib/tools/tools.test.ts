@@ -1,0 +1,190 @@
+// The chat tools on PGlite: which role gets which tool, that every tool runs
+// on real derived rows and returns compact JSON, and that the role rules of
+// the report layer hold through the tools.
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
+import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
+import { REPORT_QUERY_NAMES, type ReportQueryName } from "@/lib/reports";
+import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
+import { buildSystemPrompt, chatToolsFor, compact, runChatTool, type ToolContext } from "./index";
+
+const admin = testClaims("admin");
+const ledelse = testClaims("ledelse");
+const planner = testClaims("planner");
+const viewer = testClaims("viewer");
+const OCTOBER = { from: "2026-10-01", to: "2026-10-31" };
+
+const ctx = (claims = admin): ToolContext => ({ claims, now: NOW });
+const names = (claims = admin) => chatToolsFor(claims).map((t) => t.name);
+
+/** What the model would send to every tool: no `now`, the tool adds it. */
+const MODEL_INPUTS: Record<ReportQueryName | "search_documents", unknown> = {
+  find_order: { query: "5000" },
+  order_status: { orderNo: 50006 },
+  order_route: { orderNo: 50002 },
+  finished_orders: { from: "2026-10-01" },
+  orders_in_progress: {},
+  bottleneck: OCTOBER,
+  period_kpis: OCTOBER,
+  lead_time_series: { ...OCTOBER, bucket: "week" },
+  kpi_summary: OCTOBER,
+  today: {},
+  stations: {},
+  station_day: { day: "2026-10-21" },
+  station_performance: OCTOBER,
+  calc_vs_measured: OCTOBER,
+  management_kpis: { month: "2026-10" },
+  monthly_lead_time: { month: "2026-10", months: 3 },
+  missing_scan_outs: {},
+  incomplete_packed_orders: {},
+  baseline_suggestion: { ...OCTOBER, minSamples: 1 },
+  capacity_plan: { day: "2026-11-18" },
+  staffing_analysis: OCTOBER,
+  search_documents: { query: "terrassedør" },
+};
+
+describe("which tools a role gets", () => {
+  it("admin gets one tool per report query plus search_documents", () => {
+    expect(names(admin)).toEqual([...REPORT_QUERY_NAMES, "search_documents"]);
+  });
+
+  it("a viewer never gets calc_vs_measured or the Ledelse tools", () => {
+    const tools = names(viewer);
+    expect(tools).not.toContain("calc_vs_measured");
+    expect(tools).not.toContain("management_kpis");
+    expect(tools).not.toContain("monthly_lead_time");
+    expect(tools).toContain("order_status");
+    expect(tools).toContain("search_documents");
+  });
+
+  it("a planner gets calc_vs_measured but not the Ledelse tools", () => {
+    expect(names(planner)).toContain("calc_vs_measured");
+    expect(names(planner)).not.toContain("management_kpis");
+    expect(names(ledelse)).toContain("management_kpis");
+  });
+
+  it("every tool has a Danish description and an input schema that converts to JSON schema", () => {
+    for (const tool of chatToolsFor(admin)) {
+      expect(tool.description.length, tool.name).toBeGreaterThan(30);
+      const schema = z.toJSONSchema(tool.inputSchema) as { type?: string; properties?: object };
+      expect(schema.type, tool.name).toBe("object");
+      expect(Object.keys(schema.properties ?? {}), tool.name).not.toContain("now");
+    }
+  });
+
+  it("there is a model input for every tool", () => {
+    expect(Object.keys(MODEL_INPUTS).sort()).toEqual(names(admin).sort());
+  });
+});
+
+describe("running the tools", () => {
+  let db: TestDb;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+  beforeEach(async () => {
+    await db.reset();
+    await seedConfig(db);
+    await seedOctober(db, IN_PROGRESS_ORDERS);
+  });
+  afterAll(() => db.close());
+
+  it.each(names(admin))("%s runs for admin and returns compact JSON", async (name) => {
+    const result = await runChatTool(ctx(admin), name, MODEL_INPUTS[name as keyof typeof MODEL_INPUTS]);
+    const json = JSON.stringify(result.data);
+    expect(json).not.toContain('"error"');
+    // Durations reach the model as one headline number in seconds.
+    expect(json).not.toContain("wallSeconds");
+    expect(json).not.toContain("workingSeconds");
+    expect(json.length).toBeLessThan(40_000);
+    expect(Array.isArray(result.views)).toBe(true);
+  });
+
+  it("a viewer calling calc_vs_measured anyway gets a refusal, never the figures", async () => {
+    const result = await runChatTool(ctx(viewer), "calc_vs_measured", OCTOBER);
+    expect(result.data).toMatchObject({ error: "forbidden" });
+    expect(JSON.stringify(result)).not.toMatch(/calculated/i);
+  });
+
+  it("a viewer calling a Ledelse tool gets a refusal", async () => {
+    const result = await runChatTool(ctx(viewer), "management_kpis", { month: "2026-10" });
+    expect(result.data).toMatchObject({ error: "forbidden" });
+  });
+
+  it("nothing a viewer can reach through the tools carries a calculated time", async () => {
+    for (const name of names(viewer)) {
+      const result = await runChatTool(ctx(viewer), name, MODEL_INPUTS[name as keyof typeof MODEL_INPUTS]);
+      expect(JSON.stringify(result), name).not.toMatch(/calculated/i);
+    }
+  });
+
+  it("bad input comes back as an error the model can read", async () => {
+    const result = await runChatTool(ctx(admin), "order_status", { orderNo: "abc" });
+    expect(result.data).toMatchObject({ error: "invalid_input" });
+    const period = await runChatTool(ctx(admin), "bottleneck", { from: "2026-10-31", to: "2026-10-01" });
+    expect(period.data).toMatchObject({ error: "invalid_input" });
+  });
+
+  it("an unknown tool is refused", async () => {
+    const result = await runChatTool(ctx(admin), "drop_tables", {});
+    expect(result.data).toMatchObject({ error: "forbidden" });
+  });
+
+  it("order_status gives the order, a KPI view and a link to its page", async () => {
+    const result = await runChatTool(ctx(admin), "order_status", { orderNo: 50006 });
+    expect(result.data).toMatchObject({ orderNo: 50006 });
+    expect(result.views[0]).toMatchObject({ kind: "kpis" });
+    expect(result.href).toBe("/ordre/50006");
+  });
+
+  it("an unknown order is a note, not an error", async () => {
+    const result = await runChatTool(ctx(admin), "order_status", { orderNo: 999999 });
+    expect(result.data).toBeNull();
+    expect(result.views[0]).toMatchObject({ kind: "note" });
+  });
+
+  it("capacity_plan and staffing_analysis say there is no data yet", async () => {
+    const capacity = await runChatTool(ctx(admin), "capacity_plan", { day: "2026-11-18" });
+    expect(capacity.data).toMatchObject({ available: false, reason: "no_planned_orders" });
+    const staffing = await runChatTool(ctx(admin), "staffing_analysis", OCTOBER);
+    expect(staffing.data).toMatchObject({ available: false, reason: "no_staffing_data" });
+  });
+});
+
+describe("compact", () => {
+  it("turns a Duration into one headline number with the unit in the key", () => {
+    expect(compact({ lead: { seconds: 61.4, wallSeconds: 70, workingSeconds: 61.4 } })).toEqual({ leadSeconds: 61 });
+    expect(compact({ lead: { seconds: null, wallSeconds: null, workingSeconds: null } })).toEqual({ leadSeconds: null });
+  });
+
+  it("cuts long lists and says how many were left out", () => {
+    const out = compact({ rows: Array.from({ length: 50 }, (_, i) => i) }, 10) as { rows: number[]; rowsOmitted: number };
+    expect(out.rows).toHaveLength(10);
+    expect(out.rowsOmitted).toBe(40);
+  });
+
+  it("drops storage references and rounds floats", () => {
+    expect(compact({ blobReference: "x", gaps: [1], value: 1.234 })).toEqual({ value: 1.2 });
+  });
+});
+
+describe("system prompt", () => {
+  it("states the date, the week and that numbers only come from tools", () => {
+    const prompt = buildSystemPrompt({ now: NOW, role: "viewer" });
+    expect(prompt).toContain("2026-11-16");
+    expect(prompt).toContain("mandag");
+    expect(prompt).toContain("Denne uge: 2026-11-16 til 2026-11-22");
+    expect(prompt).toContain("Alle tal skal komme fra værktøjerne");
+    expect(prompt).toContain("Læser");
+    expect(prompt).not.toMatch(/[–—]/);
+  });
+
+  it("keeps the fixed part identical between users and days", () => {
+    const a = buildSystemPrompt({ now: NOW, role: "admin" });
+    const b = buildSystemPrompt({ now: NOW + 86_400_000 * 40, role: "viewer" });
+    const fixed = (p: string) => p.slice(0, p.indexOf("## Nu"));
+    expect(fixed(a)).toBe(fixed(b));
+  });
+});
