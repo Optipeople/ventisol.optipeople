@@ -12,14 +12,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.177",
     "@electric-sql/pglite": "^0.5.16",
     "@electric-sql/pglite-pgvector": "^0.0.17",
     "@optipeople/ui": "^0.2.2",
+    "ai": "^7.0.173",
     "next": "16.4.6",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.5.438",
     "pg": "^8.23.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "write-excel-file": "^4.1.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -30,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "read-excel-file": "^9.3.17",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3"
