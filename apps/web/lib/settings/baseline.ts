@@ -142,7 +142,7 @@ export async function applyBaselineProposal(claims: Claims, kept: unknown): Prom
   if (!can(claims.role, "times.edit")) return fail(FORBIDDEN_MESSAGE);
   const parsed = keptSchema.safeParse(kept);
   if (!parsed.success) return fail("Vælg mindst ét forslag at bruge.");
-  const result = await saveTimes(claims, "normal", baselineEntries(parsed.data));
+  const result = await saveTimes(claims, "normal", baselineEntries(parsed.data), "baseline");
   if (!result.ok) return result;
   const n = parsed.data.length;
   return { ok: true, message: n === 1 ? "1 normaltid er gemt." : `${n} normaltider er gemt.` };

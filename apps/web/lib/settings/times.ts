@@ -102,7 +102,9 @@ export type TimeEntry = { stationNo: number; elementTypeId: string; minutes: str
 export async function saveTimes(
   claims: Claims,
   kind: unknown,
-  entries: unknown
+  entries: unknown,
+  /** "baseline" when the times come from an accepted baseline suggestion. Server code only. */
+  source: "manual" | "baseline" = "manual"
 ): Promise<ActionResult> {
   const parsedKind = kindSchema.safeParse(kind);
   if (!parsedKind.success) return invalid(parsedKind.error);
@@ -166,20 +168,20 @@ export async function saveTimes(
         continue;
       }
 
-      if (before && before.seconds === cell.seconds && before.source === "manual") continue;
+      if (before && before.seconds === cell.seconds && before.source === source) continue;
       const written = await db.query(
         `insert into ${table} (station_no, element_type_id, seconds, source, updated_at, updated_by)
-         values ($1, $2, $3, 'manual', now(), app.current_user_id())
+         values ($1, $2, $3, $4, now(), app.current_user_id())
          on conflict (station_no, element_type_id) do update
            set seconds = excluded.seconds, source = excluded.source,
                updated_at = excluded.updated_at, updated_by = excluded.updated_by
          returning station_no`,
-        [cell.stationNo, cell.elementTypeId, cell.seconds]
+        [cell.stationNo, cell.elementTypeId, cell.seconds, source]
       );
       if (written.length === 0) refuseForbidden();
       await audit(db, `${prefix}.set`, subject, {
         before: before ? { seconds: before.seconds, source: before.source } : null,
-        after: { seconds: cell.seconds, source: "manual" },
+        after: { seconds: cell.seconds, source },
       });
     }
     return OK;
