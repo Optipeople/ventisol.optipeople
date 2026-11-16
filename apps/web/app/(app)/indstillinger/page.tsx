@@ -1,18 +1,14 @@
 import type { Metadata } from "next";
-import { EmptyState, PageHeader, PageShell } from "@optipeople/ui/blocks";
-import { requireCapability } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { noRolePath, requireCapability } from "@/lib/auth";
+import { settingsSectionsFor } from "@/lib/settings/sections";
 
 export const metadata: Metadata = { title: "Indstillinger" };
 
-// Placeholder until the settings pages are built (docs/web-portal-plan.md 4.6).
-// Only admin and planner get past the guard. Each part inside needs its own
-// capability check: users, stations and element types are admin only.
+// /indstillinger has no content of its own: it opens the first section the
+// user may see. The sections guard themselves.
 export default async function SettingsPage() {
-  await requireCapability("/indstillinger", "settings.view");
-  return (
-    <PageShell width="wide">
-      <PageHeader title="Indstillinger" intro="Brugere, stationer, elementtyper, tider og kalender." />
-      <EmptyState title="Kommer snart">Siden er på vej.</EmptyState>
-    </PageShell>
-  );
+  const ctx = await requireCapability("/indstillinger", "settings.view");
+  const first = settingsSectionsFor(ctx.role)[0];
+  redirect(first ? first.href : noRolePath(ctx.roleDegraded));
 }
