@@ -29,7 +29,7 @@ const linkClass = buttonClasses({ variant: "secondary", size: "sm" });
 
 export function ExportButtons({ report, params, pdf = false, label }: ExportButtonsProps) {
   return (
-    <div className="flex items-center gap-2" role="group" aria-label="Eksport">
+    <span className="inline-flex items-center gap-2" role="group" aria-label="Eksport">
       {label ? <span className="text-xs opacity-70">{label}</span> : null}
       <a href={exportHref("xlsx", report, params)} download className={linkClass} title="Hent som Excel">
         Excel
@@ -39,6 +39,6 @@ export function ExportButtons({ report, params, pdf = false, label }: ExportButt
           PDF
         </a>
       ) : null}
-    </div>
+    </span>
   );
 }
