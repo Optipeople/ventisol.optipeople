@@ -5,12 +5,16 @@
 // an ActionResult with a Danish message and never throw for a user error.
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { ZodError } from "zod";
+import { aiConfigured, chatModelId } from "@/app/api/chat/config";
 import { getPortalAccess } from "@/lib/auth";
 import { withUser } from "@/lib/db";
+import { defaultDraftAllow, draftManagementNotes, type DraftResult } from "@/lib/management-view/draft";
 import { isMonth, isMonthOver, noteLines, noteLinesProblem } from "@/lib/management-view/month";
 import { audit } from "@/lib/portal/audit";
 import { can, hasAnyRole } from "@/lib/portal/roles";
+import { clientIp } from "@/lib/rate-limit";
 import { freezeMonth, ReportAccessError, saveManagementNotes } from "@/lib/reports";
 import { fail, FORBIDDEN_MESSAGE, type ActionResult } from "@/lib/settings/result";
 
@@ -85,4 +89,21 @@ export async function freezeMonthAction(month: string): Promise<ActionResult> {
     console.error("Ledelse: freezing the month failed:", error);
     return fail("Måneden kunne ikke fryses. Prøv igen om lidt.");
   }
+}
+
+/**
+ * "Lav udkast": the chat model drafts the notes of a month from its report.
+ * Saves nothing: the draft fills the editor, and the person saves. The role
+ * check, rate limit and usage row are in draftManagementNotes.
+ */
+export async function draftNotesAction(month: string): Promise<DraftResult> {
+  return draftManagementNotes(month, {
+    access: getPortalAccess,
+    model: chatModelId,
+    modelId: chatModelId,
+    configured: aiConfigured,
+    now: Date.now,
+    ip: async () => clientIp(await headers()),
+    allow: defaultDraftAllow,
+  });
 }

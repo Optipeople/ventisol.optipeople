@@ -13,6 +13,11 @@ import { onCalendarChanged, onElementTypesChanged, onSettingsChanged } from "@/l
 import { can, isPortalRole, type Capability } from "@/lib/portal/roles";
 import { SET_ROLE_ERRORS, setPortalUserRole } from "@/lib/portal/users";
 import {
+  applyBaselineProposal,
+  loadBaselineProposal,
+  type BaselineProposalResult,
+} from "@/lib/settings/baseline";
+import {
   removeClosedDay,
   removeShift,
   saveClosedDay,
@@ -136,6 +141,28 @@ export async function restoreDefaultElementTypesAction(): Promise<ActionResult> 
 
 export async function saveTimesAction(kind: unknown, entries: unknown): Promise<ActionResult> {
   return run("times.edit", "config", (claims) => saveTimes(claims, kind, entries));
+}
+
+/**
+ * "Foreslå fra baseline", step one: the measured medians of the last eight
+ * weeks as a proposal to review. Reads only; nothing is saved here.
+ */
+export async function suggestBaselineAction(): Promise<BaselineProposalResult> {
+  try {
+    const access = await getPortalAccess();
+    if (!access) return fail(SESSION_MESSAGE);
+    if (access.roleDegraded) return fail(DEGRADED_MESSAGE);
+    if (!can(access.role, "times.edit")) return fail(FORBIDDEN_MESSAGE);
+    return await loadBaselineProposal(access.claims, Date.now());
+  } catch (error) {
+    console.error("Indstillinger: the baseline suggestion failed:", error);
+    return fail("Forslaget kunne ikke hentes. Prøv igen om lidt.");
+  }
+}
+
+/** Step two, "Brug forslag": saves the rows the user kept, through saveTimes. */
+export async function applyBaselineAction(kept: unknown): Promise<ActionResult> {
+  return run("times.edit", "config", (claims) => applyBaselineProposal(claims, kept));
 }
 
 // --- Kalender ---

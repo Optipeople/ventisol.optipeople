@@ -22,6 +22,7 @@ import { LeadTimeChart } from "@/components/overview/lead-time-chart";
 import { StepBreakdown } from "@/components/overview/step-breakdown";
 import { TodayStrip } from "@/components/overview/today-strip";
 import { requireCapability } from "@/lib/auth";
+import { ordersHref } from "@/lib/orders-view/params";
 import {
   defaultPeriod,
   filterHref,
@@ -111,7 +112,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         }
       />
 
-      <TodayStrip today={todayStrip} ordersHref={filterHref("/ordrer", carry)} />
+      <TodayStrip
+        today={todayStrip}
+        // rpt.today counts every order in progress, so the lists show all of them (active=all).
+        lateHref={ordersHref({ view: "in-progress", status: "late", active: "all", clock: filters.clock })}
+        atRiskHref={ordersHref({ view: "in-progress", status: "at_risk", active: "all", clock: filters.clock })}
+      />
       <Note>
         <Link href={filterHref("/stationer", carry)} className="underline-offset-2 hover:underline">
           {summary.stationsToday.sentence}

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Note, Notice, PageHeader, PageShell, PillTabs, SectionCard, SectionTitle } from "@optipeople/ui/blocks";
+import { aiConfigured } from "@/app/api/chat/config";
 import { ExportButtons } from "@/components/export/export-buttons";
 import { FreezeButton } from "@/components/management/freeze-button";
 import { MonthPicker } from "@/components/management/month-picker";
@@ -22,6 +23,7 @@ import {
   parseClockParam,
   parseMonthParam,
 } from "@/lib/management-view/month";
+import { DRAFT_MESSAGES } from "@/lib/management-view/draft";
 import { can, hasAnyRole } from "@/lib/portal/roles";
 import {
   formatDayTime,
@@ -32,7 +34,7 @@ import {
   monthTitle,
 } from "@/lib/reports";
 import { capitalize, requestTime } from "@/lib/time";
-import { freezeMonthAction, saveNotesAction } from "./actions";
+import { draftNotesAction, freezeMonthAction, saveNotesAction } from "./actions";
 
 export const metadata: Metadata = { title: "Ledelse" };
 
@@ -203,6 +205,8 @@ export default async function ManagementPage({
           decisions={notes.decisions}
           updatedText={notes.updatedAt ? `Senest rettet ${formatDayTime(notes.updatedAt)}` : null}
           onSave={saveNotesAction}
+          onDraft={draftNotesAction}
+          draftDisabledReason={aiConfigured() ? null : DRAFT_MESSAGES.notConfigured}
         />
       </SectionCard>
     </PageShell>

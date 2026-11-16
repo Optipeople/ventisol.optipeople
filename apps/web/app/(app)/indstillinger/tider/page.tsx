@@ -11,6 +11,7 @@ import { listStations } from "@/lib/settings/stations";
 import { listTimes, type TimeCell } from "@/lib/settings/times";
 import { portalUserNames, whoLabel } from "@/lib/settings/who";
 import { formatDateTime } from "@/lib/time";
+import { applyBaselineAction, suggestBaselineAction } from "../actions";
 
 export const metadata: Metadata = { title: "Tider" };
 
@@ -97,8 +98,7 @@ export default async function TimesPage() {
         types={types}
         cells={toCells(normal)}
         latest={latest(normal)}
-        // The baseline suggestion is wired here later: pass `action` to enable it.
-        headerAction={<SuggestBaselineButton />}
+        headerAction={<SuggestBaselineButton suggest={suggestBaselineAction} apply={applyBaselineAction} />}
       />
 
       <TimesGrid

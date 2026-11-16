@@ -2,12 +2,24 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatNumber, type TodayStrip as TodayStripData } from "@/lib/reports";
 
+const riskLink = "font-bold text-[var(--ds-red-dark)] underline underline-offset-2 hover:no-underline";
+
 /**
  * The today strip: what is moving on the floor right now. A row of plain
  * figures under the header, not tiles, so it does not compete with the
  * period KPIs.
  */
-export function TodayStrip({ today, ordersHref }: { today: TodayStripData; ordersHref: string }) {
+export function TodayStrip({
+  today,
+  lateHref,
+  atRiskHref,
+}: {
+  today: TodayStripData;
+  /** The in-progress list filtered to late orders (all orders, not only the active ones). */
+  lateHref: string;
+  /** The same, filtered to orders at risk. */
+  atRiskHref: string;
+}) {
   return (
     <section
       aria-label="I dag"
@@ -16,9 +28,17 @@ export function TodayStrip({ today, ordersHref }: { today: TodayStripData; order
       <dl className="grid grid-cols-2 divide-[var(--ds-grey-light-02)] md:grid-cols-4 md:divide-x">
         <Figure label="Ordrer i gang" value={formatNumber(today.ordersInProgress)}>
           {today.ordersAtRisk > 0 ? (
-            <Link href={ordersHref} className="font-bold text-[var(--ds-red-dark)] underline-offset-2 hover:underline">
-              {today.ordersAtRisk} forsinket eller i risiko
-            </Link>
+            // One count covers both statuses, so each gets its own link.
+            <span className="font-bold text-[var(--ds-red-dark)]">
+              {formatNumber(today.ordersAtRisk)}{" "}
+              <Link href={lateHref} className={riskLink}>
+                forsinket
+              </Link>{" "}
+              eller{" "}
+              <Link href={atRiskHref} className={riskLink}>
+                i risiko
+              </Link>
+            </span>
           ) : (
             <>{formatNumber(today.ordersActive)} scannet de sidste 14 dage</>
           )}
