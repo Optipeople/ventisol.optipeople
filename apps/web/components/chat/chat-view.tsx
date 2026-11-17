@@ -7,6 +7,10 @@
 // shared ChatMessage (messages.ts). History lives on the server: the client
 // sends only its new message with the conversation id
 // (app/api/chat/handler.ts).
+//
+// The same view is the chat page and, with `dock`, the small chat on every
+// other page (chat-dock.tsx): no sidebar, tighter text, and each question
+// carries the page it was asked from.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -55,16 +59,35 @@ function errorText(error: Error): string {
   return "Svaret kunne ikke hentes. Prøv igen om lidt.";
 }
 
+/** The page a question is asked from, for the server (PageContext in app/api/chat/handler.ts). */
+function currentPage(): { path: string; title: string } {
+  return {
+    path: `${window.location.pathname}${window.location.search}`.slice(0, 300),
+    // The root layout's title template puts the app's name first.
+    title: document.title.replace(/^Ventisol:\s*/, "").slice(0, 200),
+  };
+}
+
 /** Shown in an empty conversation, above the starter questions. */
-function Intro() {
+function Intro({ dock }: { dock: boolean }) {
   return (
     <div className="flex flex-col gap-3 sm:gap-4">
-      <p className="msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)] sm:text-[22px] sm:leading-[1.55]">
-        Spørg om ordrer, stationer, ventetid og nøgletal i produktionen.
+      <p
+        className={cn(
+          "msg-in max-w-2xl text-[18px] leading-[1.5] tracking-[-0.005em] text-[var(--color-foreground)]",
+          !dock && "sm:text-[22px] sm:leading-[1.55]"
+        )}
+      >
+        {dock
+          ? "Spørg om det du ser på siden, eller om ordrer, stationer, ventetid og nøgletal."
+          : "Spørg om ordrer, stationer, ventetid og nøgletal i produktionen."}
       </p>
       <p
         role="note"
-        className="msg-in flex max-w-2xl items-start gap-2.5 text-[16px] leading-[1.5] text-[var(--color-foreground)]/80 sm:text-[17px]"
+        className={cn(
+          "msg-in flex max-w-2xl items-start gap-2.5 text-[16px] leading-[1.5] text-[var(--color-foreground)]/80",
+          !dock && "sm:text-[17px]"
+        )}
       >
         <CircleInfoIcon size={18} className="mt-1 shrink-0 text-[var(--color-foreground)]/70" />
         <span>
@@ -111,6 +134,9 @@ export function ChatView({
   configured,
   isNew,
   sidebar,
+  dock = false,
+  onAsked,
+  onReady,
 }: {
   conversationId: string;
   initialMessages: UIMessage[];
@@ -119,7 +145,13 @@ export function ChatView({
   /** The conversation does not exist yet: the URL gets its id after the first question. */
   isNew: boolean;
   /** The conversation list, left of the chat. */
-  sidebar: ReactNode;
+  sidebar?: ReactNode;
+  /** The small chat on every page: it sends the page along, and leaves the URL and the page alone. */
+  dock?: boolean;
+  /** A question was sent. */
+  onAsked?: () => void;
+  /** The view is on the page, with its question field. */
+  onReady?: (field: HTMLTextAreaElement | null) => void;
 }) {
   const router = useRouter();
   const [input, setInput] = useState("");
@@ -137,15 +169,25 @@ export function ChatView({
     generateId: newId,
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      prepareSendMessagesRequest: ({ id, messages: all }) => ({ body: { id, message: all[all.length - 1] } }),
+      prepareSendMessagesRequest: ({ id, messages: all }) => ({
+        body: { id, message: all[all.length - 1], ...(dock ? { page: currentPage() } : {}) },
+      }),
     }),
     onToolCall: ({ toolCall }) => {
       const at = Date.now();
       setStartedAt((known) => (toolCall.toolCallId in known ? known : { ...known, [toolCall.toolCallId]: at }));
     },
-    // The list on the left shows the new conversation and its title.
-    onFinish: () => router.refresh(),
+    // The list on the left shows the new conversation and its title. The
+    // dock has no list, and the page under it is not the chat's to reload.
+    onFinish: () => {
+      if (!dock) router.refresh();
+    },
   });
+
+  const ready = useRef(onReady);
+  useEffect(() => {
+    ready.current?.(field.current);
+  }, []);
 
   const busy = status === "submitted" || status === "streaming";
   const rows = useMemo(
@@ -171,10 +213,11 @@ export function ChatView({
     clearError();
     setInput("");
     layout.current?.scrollToBottom();
-    if (isNew && messages.length === 0) {
+    if (!dock && isNew && messages.length === 0) {
       window.history.replaceState(null, "", `/chat?samtale=${conversationId}`);
     }
     setSentAt(Date.now());
+    onAsked?.();
     void sendMessage({ text: question });
   }
 
@@ -187,9 +230,17 @@ export function ChatView({
           samtaler kan stadig læses.
         </Notice>
       )}
-      {rows.length === 0 && <SuggestionChips questions={SUGGESTIONS} onAsk={ask} disabled={!configured} />}
-      {/* The sidebar has "Ny samtale" too: this one shows only while that one is folded away. */}
-      {rows.length > 0 && (
+      {rows.length === 0 && (
+        <SuggestionChips
+          questions={dock ? SUGGESTIONS.slice(0, 3) : SUGGESTIONS}
+          onAsk={ask}
+          disabled={!configured}
+          className={cn(dock && "sm:mb-6")}
+        />
+      )}
+      {/* The sidebar has "Ny samtale" too: this one shows only while that one is folded away.
+          The dock has its own in its header. */}
+      {rows.length > 0 && !dock && (
         <div className={cn("msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5", sidebarOpen !== false && "sm:hidden")}>
           <Link
             href="/chat"
@@ -227,7 +278,7 @@ export function ChatView({
       brandStripe={false}
     >
       {rows.length === 0 ? (
-        <Intro />
+        <Intro dock={dock} />
       ) : (
         <div className="flex flex-col gap-6 sm:gap-8">
           {rows.map((row, i) => {

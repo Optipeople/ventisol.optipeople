@@ -107,6 +107,25 @@ export async function loadConversation(claims: Claims, id: string): Promise<Conv
   });
 }
 
+/**
+ * The user's newest conversation with its messages, when its last message is
+ * newer than `sinceMs` (epoch). Null otherwise. The small chat on every page
+ * continues it (components/chat/chat-dock.tsx).
+ */
+export async function loadLatestConversation(claims: Claims, sinceMs: number): Promise<Conversation | null> {
+  return withUser(claims, async (db) => {
+    const [row] = await db.query<{ id: string; title: string | null }>(
+      `select id, title from ai.conversations
+        where opti_user_id = $1 and archived_at is null and updated_at >= $2
+        order by updated_at desc
+        limit 1`,
+      [claims.optiUserId, new Date(sinceMs).toISOString()]
+    );
+    if (!row) return null;
+    return { id: row.id, title: row.title ?? "Ny samtale", messages: await messagesOn(db, claims, row.id) };
+  });
+}
+
 /** Hides a conversation from the list. The usage rows stay. */
 export async function archiveConversation(claims: Claims, id: string): Promise<boolean> {
   if (!UUID_RE.test(id)) return false;

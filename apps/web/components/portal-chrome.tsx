@@ -6,10 +6,11 @@ import {
   UserMenu,
 } from "@optipeople/ui/blocks";
 import { logout } from "@/app/login/actions";
+import { ChatDock } from "@/components/chat/chat-dock";
 import { getPortalAccess, getSession } from "@/lib/auth";
 import { FIXTURE_USER, fixturesEnabled } from "@/lib/fixtures-flag";
 import { navItemsFor } from "@/lib/portal/nav";
-import { roleLabel } from "@/lib/portal/roles";
+import { can, roleLabel } from "@/lib/portal/roles";
 
 // App chrome for the authenticated views (as in optipeople.vola), shared by
 // the layouts of app/(app) and app/(detail). It only *displays* the session
@@ -52,6 +53,8 @@ export async function PortalChrome({ children }: { children: ReactNode }) {
         <SectionNav items={navItemsFor(access.role)} width="wide" label="Portal" />
       )}
       <div className="flex-1">{children}</div>
+      {/* The chat on every page. Shown by role only: the chat route checks the role itself. */}
+      {access && can(access.role, "chat.use") && <ChatDock />}
     </>
   );
 }

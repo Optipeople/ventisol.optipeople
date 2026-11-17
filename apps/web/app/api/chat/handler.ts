@@ -6,6 +6,11 @@
 // the user's (404) -> stream. The history is loaded on the server; the client
 // sends only its new message. The answer, its tool calls and the usage row
 // are stored when the stream ends, also when the client has gone away.
+//
+// The small chat on every page (components/chat/chat-dock.tsx) also sends
+// the page the user stands on. It is stored with the question as a
+// "data-page" part and handed to the model as a line of text, so "den her
+// ordre" can be answered. The part is never drawn.
 
 import { randomUUID } from "node:crypto";
 import {
@@ -49,8 +54,35 @@ export interface ChatDeps {
   allow(ip: string, optiUserId: string): Promise<boolean>;
 }
 
+/** The page a question was asked from: its path with the query, and its title. */
+export interface PageContext {
+  path: string;
+  title: string;
+}
+
+const PAGE_PART = "data-page";
+
+/** One line, without the characters that could close the note the model reads. */
+const pageText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .transform((value) => value.replace(/[\u0000-\u001f\u007f"\[\]]/g, " ").trim());
+
+const pageSchema = z.object({
+  path: pageText(300).refine((path) => path.startsWith("/") && !path.startsWith("//")),
+  title: pageText(200),
+});
+
+/** What the model reads in place of a stored page part. */
+export function pageNote(page: PageContext): string {
+  const title = page.title ? `"${page.title}" ` : "";
+  return `[Spurgt fra siden ${title}(${page.path})]`;
+}
+
 const bodySchema = z.object({
   id: z.string().regex(UUID_RE),
+  page: pageSchema.optional(),
   message: z.object({
     id: z.string().min(1).max(100),
     role: z.literal("user"),
@@ -142,7 +174,9 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
   const message: UIMessage = {
     id: UUID_RE.test(body.message.id) ? body.message.id : randomUUID(),
     role: "user",
-    parts: body.message.parts,
+    parts: body.page
+      ? [...body.message.parts, { type: PAGE_PART, data: body.page } as UIMessage["parts"][number]]
+      : body.message.parts,
   };
 
   const turn = await beginTurn(claims, body.id, message);
@@ -174,7 +208,15 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
     { role: "system", content: prompt.fixed, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
     { role: "system", content: prompt.current },
   ];
-  const modelMessages = await convertToModelMessages(messages, { tools, ignoreIncompleteToolCalls: true });
+  const modelMessages = await convertToModelMessages(messages, {
+    tools,
+    ignoreIncompleteToolCalls: true,
+    convertDataPart: (part) => {
+      if (part.type !== PAGE_PART) return undefined;
+      const page = pageSchema.safeParse(part.data);
+      return page.success ? { type: "text", text: pageNote(page.data) } : undefined;
+    },
+  });
 
   // The usage row is always written, also when the stream fails or is
   // aborted, so failed answers count against the daily budget too: from the

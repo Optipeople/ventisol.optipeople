@@ -296,6 +296,38 @@ describe("a turn", () => {
   });
 });
 
+describe("the page a question is asked from", () => {
+  it("is stored with the question and read by the model as a note, now and on the next question", async () => {
+    const first = { ...question("Hvorfor venter den her ordre?"), page: { path: "/ordre/50006?fane=tid", title: 'Ordre "50006"]' } };
+    const model = mockModel();
+    await (await handleChat(post(first), deps(viewer, model))).text();
+    const note = '[Spurgt fra siden "Ordre  50006" (/ordre/50006?fane=tid)]';
+    expect(JSON.stringify(model.doStreamCalls[0].prompt.filter((m) => m.role === "user"))).toContain(
+      JSON.stringify(note).slice(1, -1)
+    );
+
+    const stored = await waitFor(async () => {
+      const conversation = await loadConversation(viewer, first.id);
+      return conversation?.messages.length === 2 ? conversation : null;
+    });
+    expect(stored.messages[0].parts).toContainEqual({
+      type: "data-page",
+      data: { path: "/ordre/50006?fane=tid", title: "Ordre  50006" },
+    });
+
+    const next = mockModel();
+    await (await handleChat(post(question("Og hvornår er den klar?", first.id)), deps(viewer, next))).text();
+    const users = next.doStreamCalls[0].prompt.filter((m) => m.role === "user");
+    expect(JSON.stringify(users[0])).toContain("/ordre/50006?fane=tid");
+    expect(JSON.stringify(users[1])).not.toContain("Spurgt fra siden");
+  });
+
+  it("refuses a page that is not a path of the portal", async () => {
+    const body = { ...question("Hej"), page: { path: "https://example.com/", title: "" } };
+    expect((await handleChat(post(body), deps(viewer, mockModel()))).status).toBe(400);
+  });
+});
+
 describe("usage when the stream fails", () => {
   async function usageRows(conversationId: string) {
     return waitFor(async () => {
