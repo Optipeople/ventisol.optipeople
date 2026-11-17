@@ -1,6 +1,6 @@
 "use client";
 
-// The "Hent" button of a page: one button that opens a short list of the
+// The "Download" button of a page: one button that opens a short list of the
 // files the page can be downloaded as. The route handlers (app/api/export)
 // do the work and answer each file as an attachment.
 

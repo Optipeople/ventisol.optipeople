@@ -100,7 +100,7 @@ export default async function ManagementPage({
   const clockLocked = result.frozen;
   const period = report.period;
 
-  // Every file of the page, in the one "Hent" menu of the header.
+  // Every file of the page, in the one "Download" menu of the header.
   const exports: ExportEntry[] = [
     { report: "management_kpis", params: { month, clock: askedClock }, name: "Månedsrapport", pdf: true },
     { report: "monthly_lead_time", params: { month, clock: askedClock }, name: "Gennemløbstid pr. måned" },

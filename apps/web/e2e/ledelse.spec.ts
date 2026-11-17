@@ -19,9 +19,9 @@ test.describe("Ledelse", () => {
     await expect(page.getByRole("heading", { name: new RegExp(`^Nøgletal, ${month}`) })).toBeVisible();
   });
 
-  test("one Hent menu holds every file of the report", async ({ page }) => {
+  test("one Download menu holds every file of the report", async ({ page }) => {
     await page.goto("/ledelse");
-    await page.getByRole("button", { name: "Hent" }).click();
+    await page.getByRole("button", { name: "Download" }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem", { name: "Månedsrapport (PDF)" })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Gennemløbstid pr. måned (Excel)" })).toBeVisible();

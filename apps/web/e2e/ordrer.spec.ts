@@ -94,7 +94,7 @@ test.describe("Ordrer", () => {
 
   test("the Excel export answers with an xlsx file", async ({ page, request }) => {
     await page.goto("/ordrer?view=finished");
-    const href = await page.getByRole("link", { name: "Hent Excel" }).getAttribute("href");
+    const href = await page.getByRole("link", { name: "Download Excel" }).getAttribute("href");
     expect(href).toContain("/api/export/xlsx");
     const res = await request.get(href!);
     expect(res.status()).toBe(200);

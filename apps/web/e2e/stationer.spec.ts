@@ -11,7 +11,7 @@ test.describe("Stationer", () => {
     await expect(rows.filter({ hasText: "Station 70" }).first()).toBeVisible();
     // Status, in progress and missing scan-outs are on the tiles, not in the day table.
     await expect(table.getByRole("columnheader", { name: "Status" })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Hent Excel" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Download Excel" })).toBeVisible();
   });
 
   test("the headline counts the stations when it would name more than three", async ({ page }) => {
@@ -36,7 +36,7 @@ test.describe("Stationer", () => {
     await expect(page).toHaveURL(/\/stationer\/3(\?|$)/);
     await expect(page.getByRole("heading", { level: 1, name: "Station 30" })).toBeVisible();
     await expect(page.getByRole("heading", { name: /uge for uge/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Hent 12 uger (Excel)" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Download 12 uger (Excel)" })).toBeVisible();
   });
 
   test("the weeks table is folded away under the chart", async ({ page }) => {

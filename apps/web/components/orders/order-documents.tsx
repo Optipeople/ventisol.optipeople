@@ -113,7 +113,7 @@ export function OrderDocuments({
           <div className="flex flex-wrap items-center justify-between gap-2 text-[14px]">
             <span className="font-bold text-[var(--ds-grey-dark-09)]">{selected.fileName}</span>
             <a href={`${pdf}?download=1`} className="text-[var(--ds-midnight-green)] hover:underline">
-              Hent PDF
+              Download PDF
             </a>
           </div>
           <PdfViewer key={pdf} src={pdf} title={`Produktionsliste ${selected.fileName}`} />

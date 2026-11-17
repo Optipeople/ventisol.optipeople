@@ -1,7 +1,7 @@
 // The one download control of a page or a table.
 // A server component: it builds the links to the route handlers
-// (app/api/export). One file gives a plain link, "Hent Excel". Several files
-// give a single "Hent" button that opens a list (the shared DropdownButton).
+// (app/api/export). One file gives a plain link, "Download Excel". Several files
+// give a single "Download" button that opens a list (the shared DropdownButton).
 
 import { buttonClasses } from "@optipeople/ui";
 import type { ReportQueryName } from "@/lib/reports";
@@ -46,9 +46,9 @@ export function ExportMenu({ entries }: { entries: ReadonlyArray<ExportEntry> })
   if (items.length === 1) {
     return (
       <a href={items[0].href} download className={buttonClasses({ variant: "secondary", size: "sm" })}>
-        Hent {items[0].label}
+        Download {items[0].label}
       </a>
     );
   }
-  return <ExportMenuButton label="Hent" items={items} />;
+  return <ExportMenuButton label="Download" items={items} />;
 }

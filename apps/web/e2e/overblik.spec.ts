@@ -21,9 +21,9 @@ test.describe("Overblik", () => {
     expect(await bars.locator("tbody tr").count()).toBeGreaterThan(1);
   });
 
-  test("one Hent menu holds every file of the page", async ({ page }) => {
+  test("one Download menu holds every file of the page", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "Hent" }).click();
+    await page.getByRole("button", { name: "Download" }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem")).toHaveText(["Nøgletal (Excel)", "Nøgletal (PDF)", "Gennemløbstid (Excel)"]);
     // A menu line is not a link: choosing it starts the download.
