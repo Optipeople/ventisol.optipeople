@@ -45,7 +45,7 @@ export function ExportMenu({ entries }: { entries: ReadonlyArray<ExportEntry> })
   if (items.length === 0) return null;
   if (items.length === 1) {
     return (
-      <a href={items[0].href} download className={buttonClasses({ variant: "secondary", size: "sm" })}>
+      <a href={items[0].href} download className={buttonClasses({ variant: "secondary" })}>
         Download {items[0].label}
       </a>
     );

@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
 import Link from "next/link";
 import { EmptyState, FilterBar, PageHeader, PageShell, PillTabs, SectionTitle, type FilterBarSelect } from "@optipeople/ui/blocks";
-import { ExportMenu } from "@/components/export/export-menu";
+import { ExportMenu, type ExportEntry } from "@/components/export/export-menu";
 import { OrdersSearch } from "@/components/orders/orders-search";
 import { FinishedOrdersTable, InProgressOrdersTable } from "@/components/orders/orders-tables";
 import { AuditPager } from "@/components/settings/audit-pager";
-import { ClockToggle } from "@/components/stations/view-controls";
+import { ClockToggle, PageControls } from "@/components/page-controls";
 import { requireCapability } from "@/lib/auth";
 import type { Claims } from "@/lib/db";
 import {
@@ -40,27 +39,30 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   // The clock the lists are read on: the URL's, else the setting's.
   const clock: Clock = view.clock ?? (await report(ctx.claims, undefined, async (_db, c) => c.clock));
 
+  // The file holds the list as it is filtered and sorted, every page of it.
+  const exportEntry: ExportEntry =
+    view.tab === "finished"
+      ? { report: "finished_orders", params: finishedParams(view) }
+      : { report: "orders_in_progress", params: inProgressParams(view, now) };
+
   return (
     <PageShell width="wide">
       <PageHeader
         title="Ordrer"
         intro="Ordrer i gang nu og pakkede ordrer. Klik på en ordre for ruten, afvigelserne og produktionslisten."
-      >
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-            <PillTabs
-              label="Visning"
-              selectedId={view.tab}
-              tabs={[
-                { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
-                { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
-              ]}
-            />
-            <ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />
-          </div>
-          <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />
-        </div>
-      </PageHeader>
+        actions={<ExportMenu entries={[exportEntry]} />}
+      />
+      <PageControls clock={<ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />}>
+        <PillTabs
+          label="Visning"
+          selectedId={view.tab}
+          tabs={[
+            { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
+            { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
+          ]}
+        />
+        <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />
+      </PageControls>
 
       {view.tab === "finished" ? (
         <FinishedList view={view} claims={ctx.claims} today={dayKey(now)} />
@@ -69,6 +71,30 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
       )}
     </PageShell>
   );
+}
+
+function finishedParams(view: FinishedView) {
+  return {
+    search: view.search || undefined,
+    from: view.from,
+    to: view.to,
+    status: view.status,
+    sort: view.sort,
+    dir: view.dir,
+    clock: view.clock,
+  };
+}
+
+function inProgressParams(view: InProgressView, now: number) {
+  return {
+    now,
+    search: view.search || undefined,
+    status: view.status,
+    sort: view.sort,
+    dir: view.dir,
+    activeDays: view.activeOnly ? ACTIVE_DAYS : undefined,
+    clock: view.clock,
+  };
 }
 
 function statusSelect(view: OrdersView): FilterBarSelect {
@@ -104,16 +130,6 @@ function rangeText(page: number, shown: number, total: number): string {
   return `${first} til ${first + shown - 1} af ${formatCount(total, "ordre", "ordrer")}`;
 }
 
-/** The count and the download, to the right of the list's title. */
-function ListAside({ range, children }: { range: string | null; children: ReactNode }) {
-  return (
-    <span className="flex flex-wrap items-center gap-3">
-      {range && <span>{range}</span>}
-      {children}
-    </span>
-  );
-}
-
 function PastLastPage({ view }: { view: OrdersView }) {
   return (
     <EmptyState title="Siden er tom">
@@ -127,15 +143,7 @@ function PastLastPage({ view }: { view: OrdersView }) {
 }
 
 async function FinishedList({ view, claims, today }: { view: FinishedView; claims: Claims; today: string }) {
-  const params = {
-    search: view.search || undefined,
-    from: view.from,
-    to: view.to,
-    status: view.status,
-    sort: view.sort,
-    dir: view.dir,
-    clock: view.clock,
-  };
+  const params = finishedParams(view);
   const list = await listFinishedOrders(claims, { ...params, page: view.page, pageSize: PAGE_SIZE });
   const filtered = Boolean(view.search || view.status || view.from || view.to);
 
@@ -152,11 +160,7 @@ async function FinishedList({ view, claims, today }: { view: FinishedView; claim
 
       <SectionTitle
         title="Afsluttede ordrer"
-        aside={
-          <ListAside range={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : null}>
-            {list.total > 0 && <ExportMenu entries={[{ report: "finished_orders", params }]} />}
-          </ListAside>
-        }
+        aside={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : undefined}
       />
 
       {list.rows.length > 0 ? (
@@ -179,15 +183,7 @@ async function FinishedList({ view, claims, today }: { view: FinishedView; claim
 }
 
 async function InProgressList({ view, claims, now }: { view: InProgressView; claims: Claims; now: number }) {
-  const params = {
-    now,
-    search: view.search || undefined,
-    status: view.status,
-    sort: view.sort,
-    dir: view.dir,
-    activeDays: view.activeOnly ? ACTIVE_DAYS : undefined,
-    clock: view.clock,
-  };
+  const params = inProgressParams(view, now);
   const list = await listInProgressOrders(claims, { ...params, page: view.page, pageSize: PAGE_SIZE });
   const filtered = Boolean(view.search || view.status);
 
@@ -212,11 +208,7 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
 
       <SectionTitle
         title="Ordrer i gang nu"
-        aside={
-          <ListAside range={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : null}>
-            {list.total > 0 && <ExportMenu entries={[{ report: "orders_in_progress", params }]} />}
-          </ListAside>
-        }
+        aside={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : undefined}
       />
 
       {list.rows.length > 0 ? (

@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Note, Notice, PageShell, PillTabs } from "@optipeople/ui/blocks";
+import { Note, Notice, PageHeader, PageShell } from "@optipeople/ui/blocks";
 import {
   REPORT_CUSTOM_RANGE,
   ReportFrame,
   ReportHeader,
   ReportPeriodBadge,
+  ReportPrintActions,
   ReportWidgetCard,
 } from "@optipeople/ui/reports";
 import { aiConfigured } from "@/app/api/chat/config";
@@ -21,6 +22,7 @@ import {
   ManagementKpis,
   StationsTable,
 } from "@/components/management/report-sections";
+import { ClockToggle, PageControls } from "@/components/page-controls";
 import { ReportSheet } from "@/components/management/report-sheet";
 import { requireCapability } from "@/lib/auth";
 import {
@@ -115,40 +117,39 @@ export default async function ManagementPage({
 
   const clockName = clock === "working" ? "Arbejdstid" : "Hele døgnet";
 
-  const toolbar = (
-    <MonthPicker month={month} choices={choices} hrefs={hrefs}>
-      <div>
-        <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
-          Tid
-        </p>
-        {clockLocked ? (
-          <p className="text-[14px] leading-[28px] text-[var(--ds-grey-dark-09)]">{clockName} (låst)</p>
-        ) : (
-          <PillTabs
-            label="Tid"
-            selectedId={clock}
-            tabs={[
-              { id: "working", label: "Arbejdstid", href: monthHref(month, now, "working") },
-              { id: "wall", label: "Hele døgnet", href: monthHref(month, now, "wall") },
-            ]}
-          />
-        )}
-      </div>
-    </MonthPicker>
-  );
-
   return (
     <PageShell width="wide">
+      <PageHeader
+        title="Ledelse"
+        intro={`Månedsrapport for ${name}.`}
+        actions={
+          <div className="flex items-center gap-2">
+            <ReportPrintActions />
+            <ExportMenu entries={exports} />
+          </div>
+        }
+      />
+      <PageControls
+        clock={
+          <ClockToggle
+            clock={clock}
+            locked={clockLocked}
+            hrefs={{ working: monthHref(month, now, "working"), wall: monthHref(month, now, "wall") }}
+          />
+        }
+      />
+      <MonthPicker month={month} choices={choices} hrefs={hrefs} />
+
+      <div className="mt-4 print:mt-0">
       <ReportSheet>
+        {/* The title prints with the sheet; on screen it is the page header above. */}
         <ReportFrame
+          className="[&>hr]:hidden print:[&>hr]:block"
           header={
-            <ReportHeader
-              title="Ledelse"
-              subtitle={`Månedsrapport for ${name}.`}
-              actions={<ExportMenu entries={exports} />}
-            />
+            <div className="hidden print:block">
+              <ReportHeader title="Ledelse" subtitle={`Månedsrapport for ${name}.`} />
+            </div>
           }
-          toolbar={toolbar}
         >
           {/* The days and the clock, only on paper: on screen the month and the clock are in the toolbar. */}
           <div className="mb-6 hidden print:block">
@@ -250,6 +251,7 @@ export default async function ManagementPage({
           </ReportWidgetCard>
         </ReportFrame>
       </ReportSheet>
+      </div>
     </PageShell>
   );
 }

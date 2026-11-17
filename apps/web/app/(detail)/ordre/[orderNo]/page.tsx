@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { BackLink, EmptyState, KpiRow, KpiTile, PageHeader, PageShell, SectionTitle } from "@optipeople/ui/blocks";
+import { EmptyState, KpiRow, KpiTile, PageHeader, PageShell, SectionTitle } from "@optipeople/ui/blocks";
 import { DeliveryStatusTag } from "@/components/orders/delivery-status-tag";
 import { DeviationNotes } from "@/components/orders/deviation-notes";
 import { OrderDocuments } from "@/components/orders/order-documents";
@@ -76,8 +76,8 @@ export default async function OrderPage({ params, searchParams }: { params: Para
 
   return (
     <PageShell width="wide">
-      <BackLink href={back} label="Ordrer" className="mb-4" />
       <PageHeader
+        breadcrumbs={[{ label: "Ordrer", href: back }, { label: `Ordre ${order.orderNo}` }]}
         eyebrow={packed ? "Pakket ordre" : "Ordre i gang"}
         title={
           <span className="inline-flex flex-wrap items-center gap-3">
@@ -164,8 +164,8 @@ function NotStartedOrder({
   const pieces = document?.positions.reduce((sum, p) => sum + (p.quantity ?? 0), 0) ?? 0;
   return (
     <PageShell width="wide">
-      <BackLink href={ordersHref({ view: "in-progress", clock })} label="Ordrer" className="mb-4" />
       <PageHeader
+        breadcrumbs={[{ label: "Ordrer", href: ordersHref({ view: "in-progress", clock }) }, { label: `Ordre ${orderNo}` }]}
         eyebrow="Ikke startet"
         title={`Ordre ${orderNo}`}
         intro={[customer ?? "Ukendt kunde", header?.caseHandler ? `sagsbehandler ${header.caseHandler}` : null]

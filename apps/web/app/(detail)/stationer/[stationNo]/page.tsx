@@ -21,7 +21,7 @@ import { StationStatusTag } from "@/components/stations/station-status";
 import { StationTimeline } from "@/components/stations/station-timeline";
 import { StationTrendChart, StationTrendTable } from "@/components/stations/station-trend";
 import { TypeDistributionTable } from "@/components/stations/type-distribution";
-import { ClockToggle } from "@/components/stations/view-controls";
+import { ClockToggle, PageControls } from "@/components/page-controls";
 import { requireCapability } from "@/lib/auth";
 import {
   formatDuration,
@@ -137,6 +137,11 @@ async function StationDetail({
         </Notice>
       )}
 
+      <PageControls
+        clock={
+          <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
+        }
+      />
       <DayPicker
         day={day}
         today={today}
@@ -145,9 +150,6 @@ async function StationDetail({
         labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
       >
         {isToday && <AutoRefresh />}
-        <div className="ml-auto">
-          <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
-        </div>
       </DayPicker>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
@@ -273,7 +275,7 @@ function StationDetailSkeleton() {
   return (
     <PageShell width="wide" aria-busy>
       <PageHeaderSkeleton titleWidth="w-40" withActions />
-      <div className="mb-4 h-[30px] w-64 animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mb-4 ml-auto h-[30px] w-64 animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
       <div className="h-[64px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
       <div className="mt-5 grid animate-pulse grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (

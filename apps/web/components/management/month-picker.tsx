@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition, type ReactNode } from "react";
+import { useTransition } from "react";
 import { Select } from "@optipeople/ui";
+import { FilterPanel } from "@optipeople/ui/blocks";
 
 export type MonthChoice = { month: string; label: string };
 
@@ -11,31 +12,27 @@ export type MonthChoice = { month: string; label: string };
  * every month the page reaches, locked ones marked.
  * The hrefs are made on the server, so the bare path stays the last full month.
  *
- * A bare row: it sits in the toolbar of the ReportFrame, which is not printed.
+ * The page's filter card, like the day and period pickers of the other pages.
  */
 export function MonthPicker({
   month,
   choices,
   hrefs,
-  children,
 }: {
   month: string;
   /** Newest first. */
   choices: MonthChoice[];
   /** The page URL of each month in `choices`. */
   hrefs: Record<string, string>;
-  /** More filters in the same row (the clock). */
-  children?: ReactNode;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   return (
-    <div aria-busy={pending} className="flex w-full flex-wrap items-end gap-2">
-      <div className="w-[220px]">
+    <FilterPanel pending={pending} pendingLabel="Opdaterer…" className="print:hidden">
+      <div className="w-[300px] max-w-full">
         <Select
           label="Måned"
-          size="small"
           value={month}
           items={choices.map((c) => ({ value: c.month, label: c.label }))}
           onValueChange={(value) => {
@@ -44,12 +41,6 @@ export function MonthPicker({
           }}
         />
       </div>
-      {pending && (
-        <span role="status" className="self-center text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
-          Opdaterer…
-        </span>
-      )}
-      {children && <div className="ml-auto">{children}</div>}
-    </div>
+    </FilterPanel>
   );
 }

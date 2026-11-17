@@ -10,10 +10,10 @@ import {
   Notice,
   PageHeader,
   PageShell,
-  PillTabs,
   SectionCard,
 } from "@optipeople/ui/blocks";
 import { ExportMenu } from "@/components/export/export-menu";
+import { ClockToggle, PageControls } from "@/components/page-controls";
 import { KpiChange } from "@/components/overview/kpi-change";
 import { LeadTimeChart } from "@/components/overview/lead-time-chart";
 import { PeriodPicker } from "@/components/overview/period-picker";
@@ -105,24 +105,10 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         }
       />
 
-      <TodayStrip
-        today={todayStrip}
-        // rpt.today counts every order in progress, so the lists show all of them (active=all).
-        lateHref={ordersHref({ view: "in-progress", status: "late", active: "all", clock: filters.clock })}
-        atRiskHref={ordersHref({ view: "in-progress", status: "at_risk", active: "all", clock: filters.clock })}
+      <PageControls
+        clock={<ClockToggle clock={clock} hrefs={{ working: selfHref({ clock: "working" }), wall: selfHref({ clock: "wall" }) }} />}
       />
-      <Note>
-        <Link href={filterHref("/stationer", carry)} className="underline-offset-2 hover:underline">
-          {/* The names only when they are few. The Stationer tab marks each one. */}
-          {summary.stationsToday.count <= 3
-            ? summary.stationsToday.sentence
-            : `${summary.stationsToday.count} stationer afviger fra det normale`}
-        </Link>
-      </Note>
-
-      {/* One card for the whole filter: the period, and the clock beside it. */}
       <PeriodPicker
-        className="mt-6 flex flex-wrap items-end gap-x-8 gap-y-4"
         from={from}
         to={to}
         max={today}
@@ -130,22 +116,25 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         defaults={defaultPeriod(today)}
         preserve={keep}
         basePath="/"
-      >
-        <div>
-          <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
-            Tid
-          </p>
-          <PillTabs
-            label="Tid"
-            selectedId={clock}
-            tabs={[
-              { id: "working", label: "Arbejdstid", href: selfHref({ clock: "working" }) },
-              { id: "wall", label: "Hele døgnet", href: selfHref({ clock: "wall" }) },
-            ]}
-          />
-        </div>
-      </PeriodPicker>
+      />
       {filters.correction && <Note>{filters.correction}</Note>}
+
+      <div className="mt-6">
+        <TodayStrip
+          today={todayStrip}
+          // rpt.today counts every order in progress, so the lists show all of them (active=all).
+          lateHref={ordersHref({ view: "in-progress", status: "late", active: "all", clock: filters.clock })}
+          atRiskHref={ordersHref({ view: "in-progress", status: "at_risk", active: "all", clock: filters.clock })}
+        />
+        <Note>
+          <Link href={filterHref("/stationer", carry)} className="underline-offset-2 hover:underline">
+            {/* The names only when they are few. The Stationer tab marks each one. */}
+            {summary.stationsToday.count <= 3
+              ? summary.stationsToday.sentence
+              : `${summary.stationsToday.count} stationer afviger fra det normale`}
+          </Link>
+        </Note>
+      </div>
 
       <div className="mt-6">
         <KpiRow>

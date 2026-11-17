@@ -10,11 +10,12 @@ import {
   SectionTitle,
 } from "@optipeople/ui/blocks";
 import { ExportMenu } from "@/components/export/export-menu";
+import { ClockToggle, PageControls } from "@/components/page-controls";
 import { PeriodPicker } from "@/components/overview/period-picker";
 import { MissingScanOutsTable } from "@/components/stations/missing-scan-outs";
 import { attentionHeadline, StationBoard } from "@/components/stations/station-board";
 import { StationsTable } from "@/components/stations/stations-table";
-import { ClockToggle, ViewTabs } from "@/components/stations/view-controls";
+import { ViewTabs } from "@/components/stations/view-controls";
 import { requireCapability } from "@/lib/auth";
 import {
   formatCount,
@@ -183,10 +184,9 @@ function Controls({
   params: Record<string, string | undefined>;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <PageControls clock={<ClockToggle clock={clock} path="/stationer" params={params} />}>
       <ViewTabs view={view} {...tabs} />
-      <ClockToggle clock={clock} path="/stationer" params={params} />
-    </div>
+    </PageControls>
   );
 }
 

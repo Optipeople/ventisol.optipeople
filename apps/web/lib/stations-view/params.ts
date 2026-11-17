@@ -106,7 +106,7 @@ export function periodPresets(today: string): PeriodPresetChoice[] {
   return [
     { label: "Denne uge", from: week, to: today },
     { label: "Sidste uge", from: addDays(week, -7), to: addDays(week, -1) },
-    { label: "Sidste 4 uger", from: addDays(week, -21), to: today },
+    { label: "Seneste 4 uger", from: addDays(week, -21), to: today },
     { label: "Denne måned", from: month, to: today },
     { label: "Sidste måned", from: monthStart(lastMonthEnd), to: lastMonthEnd },
   ];

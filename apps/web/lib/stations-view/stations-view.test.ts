@@ -70,7 +70,7 @@ describe("periodPresets", () => {
     expect(periodPresets(TODAY)).toEqual([
       { label: "Denne uge", from: "2026-11-09", to: TODAY },
       { label: "Sidste uge", from: "2026-11-02", to: "2026-11-08" },
-      { label: "Sidste 4 uger", from: "2026-10-19", to: TODAY },
+      { label: "Seneste 4 uger", from: "2026-10-19", to: TODAY },
       { label: "Denne måned", from: "2026-11-01", to: TODAY },
       { label: "Sidste måned", from: "2026-10-01", to: "2026-10-31" },
     ]);
