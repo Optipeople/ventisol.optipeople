@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { StationsManager } from "@/components/settings/stations-manager";
 import { requireCapability } from "@/lib/auth";
 import { can } from "@/lib/portal/roles";
+import { listOptiCloudMachines } from "@/lib/settings/machines";
 import { listStations } from "@/lib/settings/stations";
 
 export const metadata: Metadata = { title: "Stationer" };
@@ -10,6 +11,15 @@ export const metadata: Metadata = { title: "Stationer" };
 // gets the form and the buttons.
 export default async function StationsPage() {
   const ctx = await requireCapability("/indstillinger/stationer", "settings.view");
-  const stations = await listStations(ctx.claims);
-  return <StationsManager stations={stations} canEdit={can(ctx.role, "masterdata.edit")} />;
+  const [stations, machines] = await Promise.all([
+    listStations(ctx.claims),
+    listOptiCloudMachines(ctx.token, ctx.accountId),
+  ]);
+  return (
+    <StationsManager
+      stations={stations}
+      machines={machines.status === "ok" ? machines.machines : null}
+      canEdit={can(ctx.role, "masterdata.edit")}
+    />
+  );
 }

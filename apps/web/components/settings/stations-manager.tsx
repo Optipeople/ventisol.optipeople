@@ -18,13 +18,26 @@ import {
 import { EmptyState, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
 import { saveStationAction, setStationActiveAction } from "@/app/(app)/indstillinger/actions";
 import { STATION_KIND_LABELS, STATION_KINDS, type StationKind } from "@/lib/settings/format";
+import type { OptiCloudMachine } from "@/lib/settings/machines";
 import type { Station } from "@/lib/settings/stations";
 import { FieldError, FormMessage, useSettingsAction } from "./use-settings-action";
 
 const KIND_ITEMS = STATION_KINDS.map((kind) => ({ value: kind, label: STATION_KIND_LABELS[kind] }));
 
-export function StationsManager({ stations, canEdit }: { stations: Station[]; canEdit: boolean }) {
+const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+export function StationsManager({
+  stations,
+  machines,
+  canEdit,
+}: {
+  stations: Station[];
+  /** The machines of the account in OptiCloud. Null: the list could not be read. */
+  machines: OptiCloudMachine[] | null;
+  canEdit: boolean;
+}) {
   const [editing, setEditing] = useState<Station | null>(null);
+  const machineName = (id: string) => machines?.find((m) => sameId(m.id, id))?.name ?? id;
   const confirm = useConfirm();
   const toggle = useSettingsAction();
 
@@ -82,7 +95,9 @@ export function StationsManager({ stations, canEdit }: { stations: Station[]; ca
                     <DataTableCell className="font-bold">{station.name}</DataTableCell>
                     <DataTableCell>{STATION_KIND_LABELS[station.kind]}</DataTableCell>
                     <DataTableCell>
-                      {station.opticloudMachineId ?? (
+                      {station.opticloudMachineId ? (
+                        machineName(station.opticloudMachineId)
+                      ) : (
                         <span className="text-[var(--ds-grey-medium-05)]">Ingen</span>
                       )}
                     </DataTableCell>
@@ -123,6 +138,8 @@ export function StationsManager({ stations, canEdit }: { stations: Station[]; ca
           // A new key gives a fresh form when another station is picked.
           key={editing ? `edit-${editing.stationNo}` : "new"}
           editing={editing}
+          stations={stations}
+          machines={machines}
           defaultSortOrder={nextSort}
           onDone={() => setEditing(null)}
         />
@@ -133,10 +150,14 @@ export function StationsManager({ stations, canEdit }: { stations: Station[]; ca
 
 function StationForm({
   editing,
+  stations,
+  machines,
   defaultSortOrder,
   onDone,
 }: {
   editing: Station | null;
+  stations: Station[];
+  machines: OptiCloudMachine[] | null;
   defaultSortOrder: number;
   onDone: () => void;
 }) {
@@ -174,6 +195,25 @@ function StationForm({
   }
 
   const state = (field: string) => (fieldErrors[field] ? "error" : "none");
+
+  // The choices: no machine, every machine of the account (with the station
+  // that already uses it), and the stored id when OptiCloud no longer lists it.
+  const machineItems = machines && [
+    { value: "", label: "Ingen" },
+    ...machines.map((machine) => {
+      const usedBy = stations.find(
+        (s) =>
+          s.stationNo !== editing?.stationNo &&
+          s.opticloudMachineId !== null &&
+          sameId(s.opticloudMachineId, machine.id)
+      );
+      return { value: machine.id, label: usedBy ? `${machine.name} (bruges af ${usedBy.name})` : machine.name };
+    }),
+    ...(machineId && !machines.some((m) => sameId(m.id, machineId))
+      ? [{ value: machineId, label: `Ukendt maskine (${machineId})` }]
+      : []),
+  ];
+  const machineValue = machines?.find((m) => sameId(m.id, machineId))?.id ?? machineId;
 
   return (
     <SectionCard
@@ -224,15 +264,29 @@ function StationForm({
             <FieldError message={fieldErrors.kind} />
           </div>
           <div>
-            <TextField
-              label="Maskine-id i OptiCloud (valgfrit)"
-              value={machineId}
-              onChange={(e) => setMachineId(e.target.value)}
-              disabled={pending}
-              maxLength={100}
-              validation={state("opticloudMachineId")}
-              aria-invalid={Boolean(fieldErrors.opticloudMachineId)}
-            />
+            {machineItems ? (
+              <Select
+                label="Maskine i OptiCloud (valgfrit)"
+                value={machineValue}
+                onValueChange={setMachineId}
+                items={machineItems}
+                searchable={machineItems.length > 10}
+                disabled={pending}
+                validation={state("opticloudMachineId")}
+              />
+            ) : (
+              // The list could not be read from OptiCloud: the id can still be typed.
+              <TextField
+                label="Maskine-id i OptiCloud (valgfrit)"
+                helpText="Maskinlisten kunne ikke hentes fra OptiCloud lige nu."
+                value={machineId}
+                onChange={(e) => setMachineId(e.target.value)}
+                disabled={pending}
+                maxLength={100}
+                validation={state("opticloudMachineId")}
+                aria-invalid={Boolean(fieldErrors.opticloudMachineId)}
+              />
+            )}
             <FieldError message={fieldErrors.opticloudMachineId} />
           </div>
           <div>
