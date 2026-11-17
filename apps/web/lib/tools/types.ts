@@ -38,7 +38,30 @@ export type ToolView =
       title: string;
       items: { label: string; value: number; display: string }[];
     }
+  | {
+      /** A trend over time, drawn as a line. One point per week or month, oldest first. */
+      kind: "line";
+      title: string;
+      /** What the values count, as the chart names it: "h" for hours, "min", "%". */
+      unit?: string;
+      points: LinePoint[];
+    }
   | { kind: "note"; text: string };
+
+/** One bucket of a line view. */
+export interface LinePoint {
+  /** Formatted name of the bucket: "Uge 46", "nov. 2026". */
+  label: string;
+  /** The number the line is drawn from, in the view's unit. Null for no data. */
+  value: number | null;
+  /** The value formatted (Danish), e.g. "11 t 20 min". */
+  display: string;
+  /** First day of the bucket as yyyy-MM-dd: the chart's x axis is a time axis. */
+  start: string;
+  /** Only on week buckets, so the chart names each week by its ISO number. */
+  isoYear?: number;
+  isoWeek?: number;
+}
 
 /** What a tool returns: compact JSON for the model, views for the screen. */
 export interface ToolResult {

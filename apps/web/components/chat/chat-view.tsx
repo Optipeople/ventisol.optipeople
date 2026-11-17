@@ -30,7 +30,7 @@ import {
   type ChatLayoutHandle,
 } from "@optipeople/ui/chat";
 import { useChatSidebar } from "./chat-shell";
-import { growthKey, toChatRow, type ChatRow } from "./messages";
+import { growthKey, toChatRow, type ChatRow, type MessageMeta } from "./messages";
 import { ToolFailedLine, ToolResultCard, toolLabel } from "./tool-views";
 
 /** The six questions from the deck, offered in an empty conversation. */
@@ -107,10 +107,13 @@ function AnswerRow({
   row,
   streaming,
   onAsk,
+  onRegenerate,
 }: {
   row: ChatRow;
   streaming: boolean;
   onAsk: ((question: string) => void) | undefined;
+  /** Set on the last answer: asks its question again. */
+  onRegenerate: (() => void) | undefined;
 }) {
   const hasRow = streaming || row.message.content !== "";
   if (!hasRow && row.outcomes.length === 0) return null;
@@ -123,7 +126,9 @@ function AnswerRow({
           <ToolFailedLine key={o.id} name={o.name} />
         )
       )}
-      {hasRow && <MessageRow message={row.message} isStreaming={streaming} onAsk={onAsk} />}
+      {hasRow && (
+        <MessageRow message={row.message} isStreaming={streaming} onAsk={onAsk} onRegenerate={onRegenerate} />
+      )}
     </div>
   );
 }
@@ -163,14 +168,21 @@ export function ChatView({
   const [startedAt, setStartedAt] = useState<Record<string, number>>({});
   const [sentAt, setSentAt] = useState(() => Date.now());
 
-  const { messages, sendMessage, status, stop, error, clearError } = useChat({
+  const { messages, sendMessage, regenerate, status, stop, error, clearError } = useChat({
     id: conversationId,
     messages: initialMessages,
     generateId: newId,
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      prepareSendMessagesRequest: ({ id, messages: all }) => ({
-        body: { id, message: all[all.length - 1], ...(dock ? { page: currentPage() } : {}) },
+      // A new answer to the last question ("Prøv igen" and the regenerate
+      // button): the question is sent again with its id, and the server
+      // drops what followed it.
+      prepareSendMessagesRequest: ({ id, messages: all, trigger }) => ({
+        body: {
+          id,
+          message: all[all.length - 1],
+          ...(trigger === "regenerate-message" ? { regenerate: true } : dock ? { page: currentPage() } : {}),
+        },
       }),
     }),
     onToolCall: ({ toolCall }) => {
@@ -216,9 +228,20 @@ export function ChatView({
     if (!dock && isNew && messages.length === 0) {
       window.history.replaceState(null, "", `/chat?samtale=${conversationId}`);
     }
+    const now = Date.now();
+    setSentAt(now);
+    onAsked?.();
+    void sendMessage({ text: question, metadata: { createdAt: now } satisfies MessageMeta });
+  }
+
+  /** Asks the last question again: after an error, or for another answer. */
+  function askAgain() {
+    if (busy || !configured) return;
+    clearError();
+    layout.current?.scrollToBottom();
     setSentAt(Date.now());
     onAsked?.();
-    void sendMessage({ text: question });
+    void regenerate();
   }
 
   const { open: sidebarOpen } = useChatSidebar();
@@ -290,12 +313,19 @@ export function ChatView({
                 row={row}
                 streaming={busy && isLast}
                 onAsk={!busy && isLast ? ask : undefined}
+                onRegenerate={!busy && isLast && !error && configured ? askAgain : undefined}
               />
             );
           })}
           {/* Sent, and nothing has come back yet. */}
           {status === "submitted" && !lastIsAnswer && <WorkingRow />}
-          {error && <OutageCard info={{ kind: "error", title: "Noget gik galt" }} message={errorText(error)} />}
+          {error && (
+            <OutageCard
+              info={{ kind: "error", title: "Noget gik galt" }}
+              message={errorText(error)}
+              onRetry={configured ? askAgain : undefined}
+            />
+          )}
         </div>
       )}
       {/* A streamed answer is silent to a screen reader: read it out when it is done. */}

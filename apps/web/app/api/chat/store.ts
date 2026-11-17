@@ -81,15 +81,26 @@ export function hideToolsNotAllowed(messages: UIMessage[], allowed: ReadonlySet<
 
 /** The conversation's messages, with the tool results the role may not see hidden. */
 async function messagesOn(db: Db, claims: Claims, conversationId: string): Promise<UIMessage[]> {
-  const rows = await db.query<{ id: string; role: UIMessage["role"]; parts: UIMessage["parts"] }>(
-    `select id, role, parts from ai.messages
+  const rows = await db.query<{
+    id: string;
+    role: UIMessage["role"];
+    parts: UIMessage["parts"];
+    created_at: Date | string;
+  }>(
+    `select id, role, parts, created_at from ai.messages
       where conversation_id = $1 and role in ('user', 'assistant')
       order by created_at, id`,
     [conversationId]
   );
   const allowed = new Set(chatToolsFor(claims).map((t) => t.name));
   return hideToolsNotAllowed(
-    rows.map((r) => ({ id: r.id, role: r.role, parts: r.parts })),
+    // The time is shown beside the message (MessageMeta in components/chat/messages.ts).
+    rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      parts: r.parts,
+      metadata: { createdAt: new Date(r.created_at).getTime() },
+    })),
     allowed
   );
 }
@@ -140,12 +151,18 @@ export async function archiveConversation(claims: Claims, id: string): Promise<b
  * new, stores the message, and returns the history before it. Null when the
  * id belongs to someone else (the insert conflicts, the select sees nothing)
  * or the conversation is archived.
+ *
+ * `regenerate` asks for a new answer to a question that is already stored
+ * ("Prøv igen", or the regenerate button): everything after that question is
+ * removed first, and the question is returned as it was stored, with the
+ * page it was asked from.
  */
 export async function beginTurn(
   claims: Claims,
   conversationId: string,
-  message: UIMessage
-): Promise<{ history: UIMessage[] } | null> {
+  message: UIMessage,
+  regenerate = false
+): Promise<{ history: UIMessage[]; message: UIMessage } | null> {
   return withUser(claims, async (db) => {
     await db.query(
       `insert into ai.conversations (id, opti_user_id, title) values ($1, $2, $3)
@@ -157,14 +174,26 @@ export async function beginTurn(
       [conversationId]
     );
     if (!row) return null;
-    const history = (await messagesOn(db, claims, conversationId)).filter((m) => m.id !== message.id);
+    if (regenerate) {
+      // The tool calls of a removed answer go with it; its usage rows stay
+      // (their message_id is set to null), so the tokens still count.
+      await db.query(
+        `delete from ai.messages
+          where conversation_id = $1
+            and created_at > (select created_at from ai.messages where id = $2 and conversation_id = $1)`,
+        [conversationId, message.id]
+      );
+    }
+    const stored = await messagesOn(db, claims, conversationId);
+    const history = stored.filter((m) => m.id !== message.id);
+    const asked = (regenerate && stored.find((m) => m.id === message.id && m.role === "user")) || message;
     await db.query(
       `insert into ai.messages (id, conversation_id, role, parts) values ($1, $2, 'user', $3::jsonb)
        on conflict (id) do nothing`,
       [message.id, conversationId, JSON.stringify(message.parts)]
     );
     await db.query(`update ai.conversations set updated_at = now() where id = $1`, [conversationId]);
-    return { history };
+    return { history, message: asked };
   });
 }
 

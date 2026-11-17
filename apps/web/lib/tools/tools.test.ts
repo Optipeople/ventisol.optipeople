@@ -155,6 +155,51 @@ describe("running the tools", () => {
     expect(result.views[0]).toMatchObject({ kind: "note" });
   });
 
+  it("lead_time_series draws its weeks as a line, from the same numbers the model reads", async () => {
+    const result = await runChatTool(ctx(admin), "lead_time_series", { ...OCTOBER, bucket: "week" });
+    expect(result.views).toHaveLength(1);
+    const view = result.views[0];
+    if (view?.kind !== "line") throw new Error("expected a line view");
+    expect(view.unit).toBe("h");
+    expect(view.points.length).toBeGreaterThan(1);
+    expect(view.points.some((p) => p.value != null)).toBe(true);
+
+    const rows = result.data as { bucketStart: string; isoWeek: number; leadSeconds: number | null }[];
+    expect(view.points.map((p) => p.start)).toEqual(rows.map((r) => r.bucketStart));
+    for (const [i, p] of view.points.entries()) {
+      const row = rows[i]!;
+      expect(p.start).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(p.label).toBe(`Uge ${row.isoWeek}`);
+      expect(p.isoWeek).toBe(row.isoWeek);
+      expect(typeof p.isoYear).toBe("number");
+      if (row.leadSeconds == null) {
+        expect(p.value).toBeNull();
+      } else {
+        // Hours with one decimal (data is rounded to whole seconds).
+        expect(p.value).toBeCloseTo(row.leadSeconds / 3600, 1);
+        expect(p.display).not.toBe("");
+      }
+    }
+    // The view is stored as JSON with the conversation.
+    expect(JSON.parse(JSON.stringify(view))).toEqual(view);
+  });
+
+  it("monthly_lead_time draws its months as a line, without week fields", async () => {
+    const result = await runChatTool(ctx(admin), "monthly_lead_time", { month: "2026-10", months: 3 });
+    expect(result.views).toHaveLength(1);
+    const view = result.views[0];
+    if (view?.kind !== "line") throw new Error("expected a line view");
+    expect(view.points.map((p) => p.start)).toEqual(["2026-08-01", "2026-09-01", "2026-10-01"]);
+    expect(view.points.map((p) => p.label)).toEqual(["aug. 2026", "sep. 2026", "okt. 2026"]);
+    for (const p of view.points) {
+      expect(p).not.toHaveProperty("isoWeek");
+      expect(p).not.toHaveProperty("isoYear");
+    }
+    const october = view.points[2]!;
+    expect(october.value).toBeGreaterThan(0);
+    expect(october.display).toMatch(/\d/);
+  });
+
   it("capacity_plan and staffing_analysis say there is no data yet", async () => {
     const capacity = await runChatTool(ctx(admin), "capacity_plan", { day: "2026-11-18" });
     expect(capacity.data).toMatchObject({ available: false, reason: "no_planned_orders" });

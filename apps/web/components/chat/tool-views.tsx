@@ -1,4 +1,4 @@
-// A tool result in the chat: the small tables, bars and figures the tool
+// A tool result in the chat: the small tables, bars, lines and figures the tool
 // prepared (ToolView in lib/tools/types.ts). Values come formatted from the
 // server, so this file knows nothing about the report types.
 
@@ -14,6 +14,7 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@optipeople/ui";
+import { SeriesChart, type SeriesPayload } from "@optipeople/ui/reports";
 import type { ToolResult, ToolView } from "@/lib/tools/types";
 
 /** What the user sees while a tool runs and above its result. */
@@ -75,6 +76,43 @@ function View({ view }: { view: ToolView }) {
             formatValue={(v) => display.get(v) ?? String(v)}
             emptyLabel="Ingen data endnu"
           />
+        </div>
+      );
+    }
+    case "line": {
+      const valued = view.points.filter((p) => p.value != null);
+      // A line needs two points. With fewer, the values show as bars or a note.
+      if (valued.length < 2) {
+        return (
+          <div>
+            <p className={VIEW_TITLE}>{view.title}</p>
+            {valued.length === 0 ? (
+              <Note className="mt-0">Ingen data endnu.</Note>
+            ) : (
+              <BarList
+                items={valued.map((p) => ({ label: p.label, value: p.value ?? 0, title: `${p.label}: ${p.display}` }))}
+                formatValue={() => valued[0]?.display ?? ""}
+                emptyLabel="Ingen data endnu"
+              />
+            )}
+          </div>
+        );
+      }
+      const weekly = view.points.every((p) => p.isoWeek != null);
+      const payload: SeriesPayload = {
+        unit: view.unit ?? null,
+        buckets: view.points.map((p) => ({
+          start: `${p.start}T00:00:00Z`,
+          ...(weekly ? { isoYear: p.isoYear, isoWeek: p.isoWeek } : {}),
+        })),
+        series: [{ id: "value", label: view.title, kind: "metric", values: view.points.map((p) => p.value) }],
+      };
+      return (
+        <div>
+          <p className={VIEW_TITLE}>{view.title}</p>
+          <div className="min-w-0 rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-sm)]">
+            <SeriesChart payload={payload} type="line" height={220} title={view.title} />
+          </div>
         </div>
       );
     }

@@ -8,6 +8,11 @@ import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import type { ChatMessage, ChatToolStep } from "@optipeople/ui/chat";
 import type { ToolResult } from "@/lib/tools/types";
 
+/** What a message carries beside its parts: when it was written (epoch ms). */
+export interface MessageMeta {
+  createdAt?: number;
+}
+
 /** A tool call that has ended: with a result to draw, or failed. */
 export type ToolOutcome =
   | { id: string; name: string; state: "done"; result: ToolResult | undefined }
@@ -56,10 +61,14 @@ export function toChatRow(message: UIMessage, options: RowOptions): ChatRow {
   }
 
   const role = message.role === "user" ? "user" : "assistant";
+  // Set by the server for stored and streamed messages, and by the chat for
+  // a question on its way (MessageMeta).
+  const createdAt = (message.metadata as MessageMeta | undefined)?.createdAt;
   return {
     message: {
       id: message.id,
       role,
+      createdAt: typeof createdAt === "number" ? createdAt : undefined,
       // The user's text is shown as written. The answer is Markdown, so its
       // text parts (before and after a tool call) become separate paragraphs.
       content: role === "user" ? texts.join("") : texts.join("\n\n"),

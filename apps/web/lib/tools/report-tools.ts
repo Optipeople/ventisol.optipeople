@@ -114,6 +114,29 @@ function kpiViews(k: PeriodKpis): ToolView {
   };
 }
 
+/**
+ * Lead time per order over time as a line, in hours with one decimal. A
+ * bucket with no packed orders has no value, so the line breaks there.
+ */
+function leadTimeLine(title: string, points: LeadTimePoint[]): ToolView {
+  return {
+    kind: "line",
+    title,
+    unit: "h",
+    points: points.map((p) => {
+      const seconds = p.lead.seconds;
+      const week = p.bucket === "week";
+      return {
+        label: week ? `Uge ${p.label}` : `${p.label} ${p.bucketStart.slice(0, 4)}`,
+        value: seconds == null ? null : Math.round(seconds / 360) / 10,
+        display: formatDuration(seconds),
+        start: p.bucketStart,
+        ...(week ? { isoYear: p.isoYear, isoWeek: p.isoWeek } : {}),
+      };
+    }),
+  };
+}
+
 function bottleneckViews(b: Bottleneck): ToolView[] {
   return [
     { kind: "note", text: b.sentence },
@@ -348,17 +371,7 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
       ...period,
       bucket: z.enum(["week", "month"]).optional().describe("week (standard) eller month."),
     }),
-    views: (points) => [
-      {
-        kind: "bars",
-        title: "Gennemløbstid pr. ordre",
-        items: points.map((p) => ({
-          label: p.bucket === "week" ? `Uge ${p.label}` : p.label,
-          value: p.lead.seconds ?? 0,
-          display: formatDuration(p.lead.seconds),
-        })),
-      },
-    ],
+    views: (points) => [leadTimeLine("Gennemløbstid pr. ordre", points)],
     href: () => "/periode",
   }),
 
@@ -468,13 +481,7 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
       months: z.number().int().min(1).max(36).optional().describe("Antal måneder, standard 12."),
       clock: period.clock,
     }),
-    views: (points) => [
-      {
-        kind: "bars",
-        title: "Gennemløbstid pr. ordre, måned for måned",
-        items: points.map((p) => ({ label: p.label, value: p.lead.seconds ?? 0, display: formatDuration(p.lead.seconds) })),
-      },
-    ],
+    views: (points) => [leadTimeLine("Gennemløbstid pr. ordre, måned for måned", points)],
     href: () => "/ledelse",
   }),
 

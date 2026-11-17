@@ -328,6 +328,39 @@ describe("the page a question is asked from", () => {
   });
 });
 
+describe("a new answer to the last question", () => {
+  it("replaces the stored answer and keeps the question with its page", async () => {
+    const first = { ...question("Hvor er den her ordre?"), page: { path: "/ordre/50006", title: "Ordre 50006" } };
+    await (await handleChat(post(first), deps(viewer, mockModel()))).text();
+    const before = await waitFor(async () => {
+      const conversation = await loadConversation(viewer, first.id);
+      return conversation?.messages.length === 2 ? conversation : null;
+    });
+    // The time beside a stored message.
+    expect((before.messages[0].metadata as { createdAt?: number }).createdAt).toBeTypeOf("number");
+
+    const model = mockModel();
+    const again = { id: first.id, message: first.message, regenerate: true };
+    await (await handleChat(post(again), deps(viewer, model))).text();
+    const prompt = model.doStreamCalls[0].prompt;
+    expect(prompt.filter((m) => m.role === "assistant")).toHaveLength(0);
+    const users = prompt.filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(JSON.stringify(users[0])).toContain("/ordre/50006");
+
+    const after = await waitFor(async () => {
+      const conversation = await loadConversation(viewer, first.id);
+      const answer = conversation?.messages[1];
+      return conversation?.messages.length === 2 && answer && answer.id !== before.messages[1].id ? conversation : null;
+    });
+    expect(after.messages[0].id).toBe(before.messages[0].id);
+    const calls = await db.withService((tx) =>
+      tx.query(`select 1 from ai.tool_calls where conversation_id = $1`, [first.id])
+    );
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe("usage when the stream fails", () => {
   async function usageRows(conversationId: string) {
     return waitFor(async () => {

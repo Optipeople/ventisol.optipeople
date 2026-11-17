@@ -83,6 +83,8 @@ export function pageNote(page: PageContext): string {
 const bodySchema = z.object({
   id: z.string().regex(UUID_RE),
   page: pageSchema.optional(),
+  /** A new answer to the question, which is already stored (store.ts beginTurn). */
+  regenerate: z.boolean().optional(),
   message: z.object({
     id: z.string().min(1).max(100),
     role: z.literal("user"),
@@ -171,7 +173,7 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
   } catch {
     return json(400, "Ugyldig forespørgsel.");
   }
-  const message: UIMessage = {
+  const sent: UIMessage = {
     id: UUID_RE.test(body.message.id) ? body.message.id : randomUUID(),
     role: "user",
     parts: body.page
@@ -179,8 +181,9 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
       : body.message.parts,
   };
 
-  const turn = await beginTurn(claims, body.id, message);
+  const turn = await beginTurn(claims, body.id, sent, body.regenerate === true);
   if (!turn) return json(404, "Samtalen findes ikke.");
+  const message = turn.message;
 
   const ctx: ToolContext = { claims, now };
   const tools = aiTools(ctx);
@@ -287,6 +290,8 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
       originalMessages: messages,
       generateMessageId: () => assistantId,
       sendReasoning: false,
+      // The time beside the answer. A stored answer gets its time from the database.
+      messageMetadata: ({ part }) => (part.type === "start" ? { createdAt: deps.now() } : undefined),
       onError: () => "Svaret kunne ikke hentes. Prøv igen om lidt.",
       onEnd: async ({ responseMessage }) => {
         try {
