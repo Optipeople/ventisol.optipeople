@@ -52,7 +52,7 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
             <p className="text-[24px] font-bold leading-[28px] tabular-nums text-[var(--ds-grey-dark-09)]">
               {formatNumber(row.countThrough)}
             </p>
-            <p className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">gennem</p>
+            <p className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">stk. igennem</p>
           </div>
           <div className="text-right">
             <p
