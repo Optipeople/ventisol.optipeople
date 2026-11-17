@@ -25,6 +25,7 @@ export function ExportMenuButton({ label, items }: { label: string; items: Reado
   return (
     <DropdownButton
       align="right"
+      size="small"
       buttonText={label}
       options={items.map((item) => ({ value: item.href, label: item.label }))}
       onSelect={download}
