@@ -44,7 +44,7 @@ function Deviation({ row }: { row: StationRow }) {
 function Count({ value, warn = false }: { value: number | null; warn?: boolean }) {
   if (value == null) return <>{NO_DATA}</>;
   if (value === 0) return <span className="text-[var(--ds-grey-medium-05)]">0</span>;
-  return <span className={warn ? "font-bold text-[var(--ds-orange-darkest)]" : undefined}>{formatNumber(value)}</span>;
+  return <span className={warn ? "font-bold text-[var(--ds-orange-text)]" : undefined}>{formatNumber(value)}</span>;
 }
 
 export function StationsTable({
@@ -126,7 +126,7 @@ export function StationsTable({
                   <DataTableCell
                     align="right"
                     className={`whitespace-nowrap tabular-nums ${
-                      row.status === "long_dwell" ? "font-bold text-[var(--ds-orange-darkest)]" : ""
+                      row.status === "long_dwell" ? "font-bold text-[var(--ds-orange-text)]" : ""
                     }`}
                   >
                     {formatDuration(row.longestWaitBeforeSeconds)}

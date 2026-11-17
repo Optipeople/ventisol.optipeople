@@ -65,7 +65,7 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
           <span className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">{row.openCount} i gang</span>
         )}
         {(row.missingScanOutCount ?? 0) > 0 && (
-          <span className="text-[12px] font-bold leading-[16px] text-[var(--ds-orange-darkest)]">
+          <span className="text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
             {row.missingScanOutCount} mangler ud-scanning
           </span>
         )}
