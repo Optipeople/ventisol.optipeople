@@ -44,7 +44,7 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
       </div>
 
       {row.hasData ? (
-        <div className="mt-auto flex items-end justify-between gap-3">
+        <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-[24px] font-bold leading-[28px] tabular-nums text-[var(--ds-grey-dark-09)]">
               {formatNumber(row.countThrough)}
@@ -69,20 +69,19 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
           </div>
         </div>
       ) : (
-        <p className="mt-auto text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">{NO_DATA}</p>
+        <p className="flex min-h-[44px] items-end text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">{NO_DATA}</p>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Every tile has the same rows at the same height, so nothing moves from tile to tile. */}
+      <div className="flex items-center gap-2 whitespace-nowrap">
         <StationStatusTag status={row.status} standstillSeconds={row.standstillSeconds} />
         {(row.openCount ?? 0) > 0 && (
           <span className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">{row.openCount} i gang</span>
         )}
-        {(row.missingScanOutCount ?? 0) > 0 && (
-          <span className="text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
-            {row.missingScanOutCount} mangler ud-scanning
-          </span>
-        )}
       </div>
+      <p className="min-h-[16px] text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
+        {(row.missingScanOutCount ?? 0) > 0 ? `${row.missingScanOutCount} mangler ud-scanning` : ""}
+      </p>
     </Link>
   );
 }
