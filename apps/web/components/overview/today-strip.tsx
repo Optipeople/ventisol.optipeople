@@ -13,12 +13,18 @@ export function TodayStrip({
   today,
   lateHref,
   atRiskHref,
+  stationsHref,
+  stationsNote,
 }: {
   today: TodayStripData;
   /** The in-progress list filtered to late orders (all orders, not only the active ones). */
   lateHref: string;
   /** The same, filtered to orders at risk. */
   atRiskHref: string;
+  /** The Stationer tab for the same period. */
+  stationsHref: string;
+  /** Which stations deviate from normal, shown under the station figure. */
+  stationsNote: string;
 }) {
   return (
     <section
@@ -59,6 +65,9 @@ export function TodayStrip({
           }
         >
           har et element lige nu
+          <Link href={stationsHref} className="mt-1 block underline underline-offset-2 hover:no-underline">
+            {stationsNote}
+          </Link>
         </Figure>
       </dl>
     </section>

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import {
   CHART_GREY,
   AutoRefresh,
@@ -126,15 +125,14 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           // rpt.today counts every order in progress, so the lists show all of them (active=all).
           lateHref={ordersHref({ view: "in-progress", status: "late", active: "all", clock: filters.clock })}
           atRiskHref={ordersHref({ view: "in-progress", status: "at_risk", active: "all", clock: filters.clock })}
-        />
-        <Note>
-          <Link href={filterHref("/stationer", carry)} className="underline-offset-2 hover:underline">
-            {/* The names only when they are few. The Stationer tab marks each one. */}
-            {summary.stationsToday.count <= 3
+          stationsHref={filterHref("/stationer", carry)}
+          // The names only when they are few. The Stationer tab marks each one.
+          stationsNote={
+            summary.stationsToday.count <= 3
               ? summary.stationsToday.sentence
-              : `${summary.stationsToday.count} stationer afviger fra det normale`}
-          </Link>
-        </Note>
+              : `${summary.stationsToday.count} stationer afviger fra det normale`
+          }
+        />
       </div>
 
       <div className="mt-6">
