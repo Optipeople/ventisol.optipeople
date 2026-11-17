@@ -2,10 +2,11 @@
 //
 //   ANTHROPIC_API_KEY    the Anthropic API key. The chat and the Ledelse draft
 //                        call the Anthropic API directly.
-//   CHAT_MODEL           Anthropic model id, default claude-sonnet-5-5.
+//   ANTHROPIC_WORKSPACE_ID  only for a key that is not scoped to a workspace.
+//   CHAT_MODEL         Anthropic model id, default claude-sonnet-5-5.
 //   CHAT_DAILY_TOKEN_BUDGET  tokens one user may spend per Copenhagen day.
 
-import { anthropic } from "@ai-sdk/anthropic";
+import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModel } from "ai";
 
 export const DEFAULT_CHAT_MODEL = "claude-sonnet-5-5";
@@ -18,7 +19,10 @@ export function chatModelId(): string {
 
 /** The chat model on the Anthropic API; the key is read from ANTHROPIC_API_KEY. */
 export function chatModel(): LanguageModel {
-  return anthropic(chatModelId());
+  // A key that is not tied to one workspace must name the workspace per request.
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  const provider = workspaceId ? createAnthropic({ headers: { "anthropic-workspace-id": workspaceId } }) : anthropic;
+  return provider(chatModelId());
 }
 
 /** Whether the Anthropic API can be reached: a key is set. */
