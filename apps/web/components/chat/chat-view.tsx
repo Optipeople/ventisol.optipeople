@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { buttonClasses, CircleInfoIcon } from "@optipeople/ui";
+import { buttonClasses, CircleInfoIcon, cn } from "@optipeople/ui";
 import { Notice } from "@optipeople/ui/blocks";
 import {
   ChatComposer,
@@ -25,6 +25,7 @@ import {
   WorkingRow,
   type ChatLayoutHandle,
 } from "@optipeople/ui/chat";
+import { useChatSidebar } from "./chat-shell";
 import { growthKey, toChatRow, type ChatRow } from "./messages";
 import { ToolFailedLine, ToolResultCard, toolLabel } from "./tool-views";
 
@@ -177,6 +178,7 @@ export function ChatView({
     void sendMessage({ text: question });
   }
 
+  const { open: sidebarOpen } = useChatSidebar();
   const footer = (
     <>
       {!configured && (
@@ -186,8 +188,9 @@ export function ChatView({
         </Notice>
       )}
       {rows.length === 0 && <SuggestionChips questions={SUGGESTIONS} onAsk={ask} disabled={!configured} />}
+      {/* The sidebar has "Ny samtale" too: this one shows only while that one is folded away. */}
       {rows.length > 0 && (
-        <div className="msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5">
+        <div className={cn("msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5", sidebarOpen !== false && "sm:hidden")}>
           <Link
             href="/chat"
             className={buttonClasses({

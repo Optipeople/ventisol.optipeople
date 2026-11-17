@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { EmptyState, FilterBar, PageHeader, PageShell, PillTabs, SectionTitle, type FilterBarSelect } from "@optipeople/ui/blocks";
+import { EmptyState, PageHeader, PageShell, PillTabs, SectionTitle } from "@optipeople/ui/blocks";
 import { ExportMenu, type ExportEntry } from "@/components/export/export-menu";
+import { OrdersFilters, type OrdersFilterSelect } from "@/components/orders/orders-filters";
 import { OrdersSearch } from "@/components/orders/orders-search";
 import { FinishedOrdersTable, InProgressOrdersTable } from "@/components/orders/orders-tables";
 import { AuditPager } from "@/components/settings/audit-pager";
 import { ClockToggle, PageControls } from "@/components/page-controls";
 import { requireCapability } from "@/lib/auth";
+import { periodPresets } from "@/lib/overview/filters";
 import type { Claims } from "@/lib/db";
 import {
   ACTIVE_DAYS,
@@ -29,8 +31,6 @@ import { report } from "@/lib/reports/shared";
 import { dayKey, requestTime } from "@/lib/time";
 
 export const metadata: Metadata = { title: "Ordrer" };
-
-const FILTER_LABELS = { all: "Alle", from: "Pakket fra", to: "Pakket til", clear: "Ryd filtre", updating: "Opdaterer…" };
 
 export default async function OrdersPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const view = parseOrdersView(await searchParams);
@@ -97,7 +97,7 @@ function inProgressParams(view: InProgressView, now: number) {
   };
 }
 
-function statusSelect(view: OrdersView): FilterBarSelect {
+function statusSelect(view: OrdersView): OrdersFilterSelect {
   const keys = view.tab === "finished" ? FINISHED_STATUSES : IN_PROGRESS_STATUSES;
   return {
     param: "status",
@@ -149,13 +149,17 @@ async function FinishedList({ view, claims, today }: { view: FinishedView; claim
 
   return (
     <>
-      <FilterBar
+      <OrdersFilters
         basePath={ORDERS_PATH}
+        period={{
+          from: view.from,
+          to: view.to,
+          max: today,
+          presets: periodPresets(today).map(({ label, from, to }) => ({ label, from, to })),
+        }}
         selects={[statusSelect(view)]}
-        dateRange={{ from: view.from ?? "", to: view.to ?? "", max: today }}
         preserve={preserveFor(view, "status", "from", "to")}
         hasActiveFilters={Boolean(view.status || view.from || view.to)}
-        labels={FILTER_LABELS}
       />
 
       <SectionTitle
@@ -189,7 +193,7 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
 
   return (
     <>
-      <FilterBar
+      <OrdersFilters
         basePath={ORDERS_PATH}
         selects={[
           statusSelect(view),
@@ -203,7 +207,6 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
         ]}
         preserve={preserveFor(view, "status", "active")}
         hasActiveFilters={Boolean(view.status || !view.activeOnly)}
-        labels={FILTER_LABELS}
       />
 
       <SectionTitle

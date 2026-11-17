@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import {
   Button,
   DataTable,
@@ -10,13 +10,15 @@ import {
   DataTableHeader,
   DataTableRow,
   DateField,
+  Modal,
   RowMenu,
+  Select,
   Switch,
   TextField,
   TimeField,
   useConfirm,
 } from "@optipeople/ui";
-import { EmptyState, SectionCard, TableFrame } from "@optipeople/ui/blocks";
+import { EmptyState, FieldRow, SectionCard, TableFrame } from "@optipeople/ui/blocks";
 import {
   removeClosedDayAction,
   removeShiftAction,
@@ -27,6 +29,9 @@ import {
 import type { Shift } from "@/lib/settings/calendar";
 import { WEEKDAY_LABELS } from "@/lib/settings/format";
 import { FieldError, FormMessage, useSettingsAction } from "./use-settings-action";
+
+// Like the other settings pages: "Tilføj" sits in the card's top right corner,
+// and a row is added or edited in a dialog.
 
 // --- The switch ---
 
@@ -65,22 +70,15 @@ export function OffShiftToggle({ value }: { value: boolean | null }) {
 
 // --- Shifts ---
 
-type ShiftDraft = { weekday: number; originalStart?: string; start: string; end: string };
+const WEEKDAY_ITEMS = WEEKDAY_LABELS.map((label, index) => ({ value: String(index + 1), label }));
 
-function ShiftForm({
-  draft,
-  label,
-  onDone,
-}: {
-  draft: ShiftDraft;
-  /** The weekday name, for the field labels. */
-  label: string;
-  onDone?: () => void;
-}) {
-  const [start, setStart] = useState(draft.start);
-  const [end, setEnd] = useState(draft.end);
+/** The dialog with one shift: a new one, or `editing`. */
+function ShiftForm({ editing, onDone }: { editing: Shift | null; onDone: () => void }) {
+  const formId = useId();
+  const [weekday, setWeekday] = useState(String(editing?.weekday ?? 1));
+  const [start, setStart] = useState(editing?.start ?? "");
+  const [end, setEnd] = useState(editing?.end ?? "");
   const { pending, result, run, clear, fieldErrors } = useSettingsAction();
-  const isNew = draft.originalStart === undefined;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -88,29 +86,47 @@ function ShiftForm({
     // old value would be saved. The field already says what is wrong.
     if (event.currentTarget.querySelector('[aria-invalid="true"]')) return;
     run(
-      () =>
-        saveShiftAction({ weekday: draft.weekday, originalStart: draft.originalStart, start, end }),
-      () => {
-        if (isNew) {
-          setStart("");
-          setEnd("");
-        }
-        onDone?.();
-      }
+      () => saveShiftAction({ weekday: Number(weekday), originalStart: editing?.start, start, end }),
+      onDone
     );
   }
 
   const error = result && !result.ok ? (fieldErrors.start ?? fieldErrors.end ?? result.error) : undefined;
 
   return (
-    <form onSubmit={submit} noValidate>
-      {/* A field is as wide as its box, so the width sits on the div around
-          it. The row lines up at the top: a time that cannot be read puts a
-          message under its field. */}
-      <div className="flex flex-wrap items-start gap-2 [&>button]:mt-[3px]">
-        <div className="w-[96px]">
+    <Modal
+      open
+      // A save under way is not left half way.
+      onClose={() => {
+        if (!pending) onDone();
+      }}
+      title={editing ? "Rediger skift" : "Tilføj skift"}
+      width={520}
+      footer={
+        <>
+          <Button variant="secondary" disabled={pending} onClick={onDone}>
+            Annuller
+          </Button>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? "Gemmer…" : editing ? "Gem skift" : "Tilføj skift"}
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} onSubmit={submit} noValidate>
+        <div className="mb-4">
+          <Select
+            label="Ugedag"
+            value={weekday}
+            onValueChange={setWeekday}
+            items={WEEKDAY_ITEMS}
+            // A shift is moved to another day by removing it and adding it there.
+            disabled={editing !== null || pending}
+          />
+        </div>
+        <FieldRow minFieldWidth={140}>
           <TimeField
-            aria-label={`${label}, ${isNew ? "nyt skift" : "skift"} fra`}
+            label="Fra"
             placeholder="06:00"
             value={start}
             onChange={(value) => {
@@ -120,11 +136,8 @@ function ShiftForm({
             disabled={pending}
             validation={fieldErrors.start ? "error" : "none"}
           />
-        </div>
-        <span className="mt-[8px] text-[14px] text-[var(--ds-grey-medium-05)]">til</span>
-        <div className="w-[96px]">
           <TimeField
-            aria-label={`${label}, ${isNew ? "nyt skift" : "skift"} til`}
+            label="Til"
             placeholder="14:00"
             value={end}
             onChange={(value) => {
@@ -134,24 +147,16 @@ function ShiftForm({
             disabled={pending}
             validation={fieldErrors.end ? "error" : "none"}
           />
-        </div>
-        <Button type="submit" variant={isNew ? "secondary" : "primary"} size="compact" disabled={pending}>
-          {pending ? "Gemmer…" : isNew ? "Tilføj skift" : "Gem"}
-        </Button>
-        {!isNew && (
-          <Button variant="secondary" size="compact" disabled={pending} onClick={onDone}>
-            Annuller
-          </Button>
-        )}
-      </div>
-      {error && <FieldError message={error} />}
-    </form>
+        </FieldRow>
+        {error && <FieldError message={error} />}
+      </form>
+    </Modal>
   );
 }
 
 export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
-  // "weekday start" of the shift being edited.
-  const [editing, setEditing] = useState<string | null>(null);
+  // The form in the dialog: a shift to edit, "new" for a new one, null when closed.
+  const [form, setForm] = useState<Shift | "new" | null>(null);
   const confirm = useConfirm();
   const remove = useSettingsAction();
 
@@ -169,6 +174,11 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
     <SectionCard
       title="Skift"
       description="Arbejdstiden pr. ugedag, dansk tid. En dag kan have flere skift, men de må ikke overlappe. En dag uden skift er en fridag."
+      action={
+        <Button variant="secondary" size="compact" onClick={() => setForm("new")}>
+          Tilføj skift
+        </Button>
+      }
       bodyClassName="p-0"
     >
       {remove.result && !remove.result.ok && (
@@ -177,9 +187,8 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
       <TableFrame className="max-h-none border-0 shadow-none">
         <DataTable>
           <DataTableHead>
-            <DataTableHeader className="w-[120px]">Ugedag</DataTableHeader>
+            <DataTableHeader className="w-[160px]">Ugedag</DataTableHeader>
             <DataTableHeader>Skift</DataTableHeader>
-            <DataTableHeader>Nyt skift</DataTableHeader>
           </DataTableHead>
           <DataTableBody>
             {WEEKDAY_LABELS.map((label, index) => {
@@ -193,44 +202,28 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
                       <span className="text-[var(--ds-grey-medium-05)]">Ingen skift</span>
                     ) : (
                       <ul className="flex flex-col gap-2">
-                        {dayShifts.map((shift) => {
-                          const id = `${weekday} ${shift.start}`;
-                          return (
-                            <li key={id}>
-                              {editing === id ? (
-                                <ShiftForm
-                                  label={label}
-                                  draft={{ ...shift, originalStart: shift.start }}
-                                  onDone={() => setEditing(null)}
-                                />
-                              ) : (
-                                <span className="flex flex-wrap items-center gap-2">
-                                  <span className="min-w-[112px] tabular-nums">
-                                    {shift.start} til {shift.end}
-                                  </span>
-                                  <RowMenu
-                                    label={`Handlinger for ${label} ${shift.start}`}
-                                    align="left"
-                                    disabled={remove.pending}
-                                    actions={[
-                                      { id: "edit", label: "Rediger" },
-                                      { id: "remove", label: "Fjern", danger: true },
-                                    ]}
-                                    onAction={(action) => {
-                                      if (action === "edit") setEditing(id);
-                                      else void removeShift(shift, label);
-                                    }}
-                                  />
-                                </span>
-                              )}
-                            </li>
-                          );
-                        })}
+                        {dayShifts.map((shift) => (
+                          <li key={shift.start} className="flex flex-wrap items-center gap-2">
+                            <span className="min-w-[112px] tabular-nums">
+                              {shift.start} til {shift.end}
+                            </span>
+                            <RowMenu
+                              label={`Handlinger for ${label} ${shift.start}`}
+                              align="left"
+                              disabled={remove.pending}
+                              actions={[
+                                { id: "edit", label: "Rediger" },
+                                { id: "remove", label: "Fjern", danger: true },
+                              ]}
+                              onAction={(action) => {
+                                if (action === "edit") setForm(shift);
+                                else void removeShift(shift, label);
+                              }}
+                            />
+                          </li>
+                        ))}
                       </ul>
                     )}
-                  </DataTableCell>
-                  <DataTableCell className="align-top">
-                    <ShiftForm label={label} draft={{ weekday, start: "", end: "" }} />
                   </DataTableCell>
                 </DataTableRow>
               );
@@ -238,6 +231,14 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
           </DataTableBody>
         </DataTable>
       </TableFrame>
+
+      {form !== null && (
+        <ShiftForm
+          key={form === "new" ? "new" : `edit-${form.weekday}-${form.start}`}
+          editing={form === "new" ? null : form}
+          onDone={() => setForm(null)}
+        />
+      )}
     </SectionCard>
   );
 }
@@ -253,83 +254,65 @@ export type ClosedDayRow = {
   past: boolean;
 };
 
-function ClosedDayForm({
-  editing,
-  onDone,
-}: {
-  editing: ClosedDayRow | null;
-  onDone: () => void;
-}) {
+/** The dialog with one closed day: a new one, or `editing`. */
+function ClosedDayForm({ editing, onDone }: { editing: ClosedDayRow | null; onDone: () => void }) {
+  const formId = useId();
   const [day, setDay] = useState(editing?.day ?? "");
   const [name, setName] = useState(editing?.name ?? "");
-  // Remounts the date field after an add, to empty its text.
-  const [round, setRound] = useState(0);
-  const { pending, result, run, fieldErrors } = useSettingsAction({
-    okText: editing ? "Lukkedagen er gemt." : "Lukkedagen er tilføjet.",
-  });
+  const { pending, result, run, fieldErrors } = useSettingsAction();
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    run(
-      () => saveClosedDayAction({ originalDay: editing?.day, day, name }),
-      () => {
-        if (editing) {
-          onDone();
-        } else {
-          setDay("");
-          setName("");
-          setRound((n) => n + 1);
-        }
-      }
-    );
+    run(() => saveClosedDayAction({ originalDay: editing?.day, day, name }), onDone);
   }
 
   return (
-    <form
-      onSubmit={submit}
-      noValidate
-      className="flex flex-col gap-3 border-t border-[var(--ds-grey-light-02)] p-4"
-    >
-      <p className="text-[14px] font-bold leading-[21px] text-[var(--ds-grey-dark-09)]">
-        {editing ? `Rediger ${editing.label}` : "Tilføj lukkedag"}
-      </p>
-      <div className="grid gap-4 sm:grid-cols-[190px_1fr_auto] sm:items-end">
-        <div>
-          <DateField key={round} label="Dato" value={day} onChange={setDay} />
-        </div>
-        <div>
-          <TextField
-            label="Navn (valgfrit)"
-            placeholder="for eksempel Juleaften"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={pending}
-            maxLength={80}
-            validation={fieldErrors.name ? "error" : "none"}
-            aria-invalid={Boolean(fieldErrors.name)}
-          />
-        </div>
-        <div className="flex gap-2">
-          <Button type="submit" disabled={pending}>
+    <Modal
+      open
+      onClose={() => {
+        if (!pending) onDone();
+      }}
+      title={editing ? `Rediger ${editing.label}` : "Tilføj lukkedag"}
+      width={520}
+      footer={
+        <>
+          <Button variant="secondary" disabled={pending} onClick={onDone}>
+            Annuller
+          </Button>
+          <Button type="submit" form={formId} disabled={pending}>
             {pending ? "Gemmer…" : editing ? "Gem lukkedag" : "Tilføj lukkedag"}
           </Button>
-          {editing && (
-            <Button variant="secondary" disabled={pending} onClick={onDone}>
-              Annuller
-            </Button>
-          )}
+        </>
+      }
+    >
+      <form id={formId} onSubmit={submit} noValidate>
+        <div className="mb-4">
+          <DateField label="Dato" value={day} onChange={setDay} />
+          <FieldError message={fieldErrors.day} />
         </div>
-      </div>
-      <FieldError message={fieldErrors.day ?? fieldErrors.name} />
-      <FormMessage
-        result={result && !result.ok && (fieldErrors.day || fieldErrors.name) ? null : result}
-      />
-    </form>
+        <TextField
+          label="Navn (valgfrit)"
+          placeholder="for eksempel Juleaften"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={pending}
+          maxLength={80}
+          validation={fieldErrors.name ? "error" : "none"}
+          aria-invalid={Boolean(fieldErrors.name)}
+        />
+        <FieldError message={fieldErrors.name} />
+        <FormMessage
+          result={result && !result.ok && (fieldErrors.day || fieldErrors.name) ? null : result}
+          className="mt-4"
+        />
+      </form>
+    </Modal>
   );
 }
 
 export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
-  const [editing, setEditing] = useState<ClosedDayRow | null>(null);
+  // The form in the dialog: a day to edit, "new" for a new one, null when closed.
+  const [form, setForm] = useState<ClosedDayRow | "new" | null>(null);
   const confirm = useConfirm();
   const remove = useSettingsAction();
 
@@ -347,6 +330,11 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
     <SectionCard
       title="Lukkedage"
       description="Dage uden produktion, uanset ugedag: helligdage, ferielukning. De tæller ikke med i gennemløbstiden, når tid uden for skift trækkes fra."
+      action={
+        <Button variant="secondary" size="compact" onClick={() => setForm("new")}>
+          Tilføj lukkedag
+        </Button>
+      }
       bodyClassName="p-0"
     >
       {remove.result && !remove.result.ok && (
@@ -354,7 +342,7 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
       )}
       {days.length === 0 ? (
         <EmptyState title="Ingen lukkedage" className="m-4">
-          Tilføj helligdage og ferielukning herunder, så de ikke tæller som arbejdstid.
+          Tilføj helligdage og ferielukning med knappen Tilføj lukkedag, så de ikke tæller som arbejdstid.
         </EmptyState>
       ) : (
         <TableFrame className="max-h-[420px] border-0 shadow-none">
@@ -384,7 +372,7 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
                         { id: "remove", label: "Fjern", danger: true },
                       ]}
                       onAction={(action) => {
-                        if (action === "edit") setEditing(row);
+                        if (action === "edit") setForm(row);
                         else void removeDay(row);
                       }}
                     />
@@ -395,11 +383,14 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
           </DataTable>
         </TableFrame>
       )}
-      <ClosedDayForm
-        key={editing ? `edit-${editing.day}` : "new"}
-        editing={editing}
-        onDone={() => setEditing(null)}
-      />
+
+      {form !== null && (
+        <ClosedDayForm
+          key={form === "new" ? "new" : `edit-${form.day}`}
+          editing={form === "new" ? null : form}
+          onDone={() => setForm(null)}
+        />
+      )}
     </SectionCard>
   );
 }
