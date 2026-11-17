@@ -1,21 +1,38 @@
 import type { ReactNode } from "react";
-import { PillTabs } from "@optipeople/ui/blocks";
+import { FilterPanel, PillTabs } from "@optipeople/ui/blocks";
 import type { Clock } from "@/lib/reports";
 import { CLOCK_LABELS, hrefWith } from "@/lib/stations-view/params";
 
 // Every report page is laid out the same way:
 //   1. PageHeader: the title on the left, Download (and print) on the right.
-//   2. PageControls: the view tabs and the search on the left, Tid on the right.
-//   3. One filter card: the day, the period, the month or the list filters.
+//   2. PageControls: one white card with every control of the page. The view
+//      tabs, the search, then the day, period, month or list filters, and Tid
+//      pinned to the right.
 // Then the content. A page leaves out what it does not have, never moves it.
+// A picker built on FilterPanel draws no card of its own inside this one.
 
-/** The row right under the page header. `clock` is pinned to the right. */
-export function PageControls({ children, clock }: { children?: ReactNode; clock?: ReactNode }) {
+/**
+ * The page's one control card. `clock` is pinned to the right of the first
+ * row. `filters` is a second row, for a page whose first row is already full
+ * (Ordrer: tabs and search above, the list filters below).
+ */
+export function PageControls({
+  children,
+  clock,
+  filters,
+}: {
+  children?: ReactNode;
+  clock?: ReactNode;
+  filters?: ReactNode;
+}) {
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 print:hidden">
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-3">{children}</div>
-      {clock}
-    </div>
+    <FilterPanel className="print:hidden">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+        <div className="flex min-w-0 flex-1 flex-wrap items-end gap-x-6 gap-y-4">{children}</div>
+        {clock && <div className="flex h-[40px] items-center">{clock}</div>}
+      </div>
+      {filters && <div className="mt-4">{filters}</div>}
+    </FilterPanel>
   );
 }
 

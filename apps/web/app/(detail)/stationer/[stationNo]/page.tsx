@@ -141,16 +141,17 @@ async function StationDetail({
         clock={
           <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
         }
-      />
-      <DayPicker
-        day={day}
-        today={today}
-        param="day"
-        preserve={{ clock }}
-        labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
       >
-        {isToday && <AutoRefresh />}
-      </DayPicker>
+        <DayPicker
+          day={day}
+          today={today}
+          param="day"
+          preserve={{ clock }}
+          labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
+        >
+          {isToday && <AutoRefresh />}
+        </DayPicker>
+      </PageControls>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
       {hasDay ? (

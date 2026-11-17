@@ -16,7 +16,7 @@ export interface OrdersFilterSelect {
 }
 
 /**
- * The filter card of the Ordrer lists, kept in the URL: the selects, and for
+ * The list filters of Ordrer, the second row of the page card, kept in the URL: the selects, and for
  * the finished orders the same period field with presets as Overblik and
  * Stationer. No period means every packed order.
  */
@@ -66,7 +66,7 @@ export function OrdersFilters({
   }
 
   return (
-    <FilterPanel pending={pending} pendingLabel="Opdaterer…" className="flex flex-wrap items-start gap-4">
+    <FilterPanel pending={pending} pendingLabel="Opdaterer…" className="flex flex-wrap items-end gap-4">
       {period && (
         <DateRangePicker
           label="Pakket i perioden"
@@ -95,7 +95,7 @@ export function OrdersFilters({
         <Button
           variant="secondary"
           size="compact"
-          className="mb-[3px] self-end"
+          className="mb-[6px] self-end"
           onClick={() => {
             const cleared: Record<string, string | undefined> = { from: undefined, to: undefined };
             for (const select of selects) cleared[select.param] = undefined;

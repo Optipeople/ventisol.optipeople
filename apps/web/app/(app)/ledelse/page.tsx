@@ -137,8 +137,9 @@ export default async function ManagementPage({
             hrefs={{ working: monthHref(month, now, "working"), wall: monthHref(month, now, "wall") }}
           />
         }
-      />
-      <MonthPicker month={month} choices={choices} hrefs={hrefs} />
+      >
+        <MonthPicker month={month} choices={choices} hrefs={hrefs} />
+      </PageControls>
 
       <div className="mt-4 print:mt-0">
       <ReportSheet>

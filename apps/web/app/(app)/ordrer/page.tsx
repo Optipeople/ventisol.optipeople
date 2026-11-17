@@ -52,20 +52,56 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         intro="Ordrer i gang nu og pakkede ordrer. Klik på en ordre for ruten, afvigelserne og produktionslisten."
         actions={<ExportMenu entries={[exportEntry]} />}
       />
-      <PageControls clock={<ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />}>
-        <PillTabs
-          label="Visning"
-          selectedId={view.tab}
-          tabs={[
-            { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
-            { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
-          ]}
-        />
+      <PageControls
+        clock={<ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />}
+        filters={
+          view.tab === "finished" ? (
+            <OrdersFilters
+              basePath={ORDERS_PATH}
+              period={{
+                from: view.from,
+                to: view.to,
+                max: dayKey(now),
+                presets: periodPresets(dayKey(now)).map(({ label, from, to }) => ({ label, from, to })),
+              }}
+              selects={[statusSelect(view)]}
+              preserve={preserveFor(view, "status", "from", "to")}
+              hasActiveFilters={Boolean(view.status || view.from || view.to)}
+            />
+          ) : (
+            <OrdersFilters
+              basePath={ORDERS_PATH}
+              selects={[
+                statusSelect(view),
+                {
+                  param: "active",
+                  label: "Seneste scanning",
+                  value: view.activeOnly ? "" : "all",
+                  emptyLabel: `Seneste ${ACTIVE_DAYS} dage`,
+                  options: [{ value: "all", label: "Alle ordrer, der ikke er pakket" }],
+                },
+              ]}
+              preserve={preserveFor(view, "status", "active")}
+              hasActiveFilters={Boolean(view.status || !view.activeOnly)}
+            />
+          )
+        }
+      >
+        <div className="flex h-[40px] items-center">
+          <PillTabs
+            label="Visning"
+            selectedId={view.tab}
+            tabs={[
+              { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
+              { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
+            ]}
+          />
+        </div>
         <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />
       </PageControls>
 
       {view.tab === "finished" ? (
-        <FinishedList view={view} claims={ctx.claims} today={dayKey(now)} />
+        <FinishedList view={view} claims={ctx.claims} />
       ) : (
         <InProgressList view={view} claims={ctx.claims} now={now} />
       )}
@@ -142,26 +178,13 @@ function PastLastPage({ view }: { view: OrdersView }) {
   );
 }
 
-async function FinishedList({ view, claims, today }: { view: FinishedView; claims: Claims; today: string }) {
+async function FinishedList({ view, claims }: { view: FinishedView; claims: Claims }) {
   const params = finishedParams(view);
   const list = await listFinishedOrders(claims, { ...params, page: view.page, pageSize: PAGE_SIZE });
   const filtered = Boolean(view.search || view.status || view.from || view.to);
 
   return (
     <>
-      <OrdersFilters
-        basePath={ORDERS_PATH}
-        period={{
-          from: view.from,
-          to: view.to,
-          max: today,
-          presets: periodPresets(today).map(({ label, from, to }) => ({ label, from, to })),
-        }}
-        selects={[statusSelect(view)]}
-        preserve={preserveFor(view, "status", "from", "to")}
-        hasActiveFilters={Boolean(view.status || view.from || view.to)}
-      />
-
       <SectionTitle
         title="Afsluttede ordrer"
         aside={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : undefined}
@@ -193,22 +216,6 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
 
   return (
     <>
-      <OrdersFilters
-        basePath={ORDERS_PATH}
-        selects={[
-          statusSelect(view),
-          {
-            param: "active",
-            label: "Seneste scanning",
-            value: view.activeOnly ? "" : "all",
-            emptyLabel: `Seneste ${ACTIVE_DAYS} dage`,
-            options: [{ value: "all", label: "Alle ordrer, der ikke er pakket" }],
-          },
-        ]}
-        preserve={preserveFor(view, "status", "active")}
-        hasActiveFilters={Boolean(view.status || !view.activeOnly)}
-      />
-
       <SectionTitle
         title="Ordrer i gang nu"
         aside={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : undefined}

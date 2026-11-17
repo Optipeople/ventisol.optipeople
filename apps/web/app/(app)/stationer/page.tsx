@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import {
   AutoRefresh,
   DayPicker,
@@ -85,15 +86,16 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
           tabs={tabs}
           clock={report.clock}
           params={{ view: "period", from: period.from, to: period.to }}
-        />
-        <PeriodPicker
-          from={period.from}
-          to={period.to}
-          max={today}
-          preserve={{ view: "period", clock }}
-          presets={periodPresets(today)}
-          defaults={defaultPeriod(today)}
-        />
+        >
+          <PeriodPicker
+            from={period.from}
+            to={period.to}
+            max={today}
+            preserve={{ view: "period", clock }}
+            presets={periodPresets(today)}
+            defaults={defaultPeriod(today)}
+          />
+        </Controls>
         {period.clamped && <Note>Perioden er rettet, så den ender senest i dag og højst er et år lang.</Note>}
 
         {report.rows.length === 0 ? (
@@ -124,17 +126,18 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
         intro={`${INTRO} ${capitalize(formatLongDay(day))}.`}
         actions={<ExportMenu entries={[{ report: "station_day", params: { day, clock } }]} />}
       />
-      <Controls view="day" tabs={tabs} clock={report.clock} params={{ day: isToday ? undefined : day }} />
-      <DayPicker
-        day={day}
-        today={today}
-        param="day"
-        preserve={{ clock }}
-        labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
-      >
-        {/* Today's numbers move while the page is open; a past day's do not. */}
-        {isToday && <AutoRefresh />}
-      </DayPicker>
+      <Controls view="day" tabs={tabs} clock={report.clock} params={{ day: isToday ? undefined : day }}>
+        <DayPicker
+          day={day}
+          today={today}
+          param="day"
+          preserve={{ clock }}
+          labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
+        >
+          {/* Today's numbers move while the page is open; a past day's do not. */}
+          {isToday && <AutoRefresh />}
+        </DayPicker>
+      </Controls>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
       {report.rows.length === 0 ? (
@@ -177,15 +180,21 @@ function Controls({
   tabs,
   clock,
   params,
+  children,
 }: {
   view: "day" | "period";
   tabs: { dayHref: string; periodHref: string };
   clock: Clock;
   params: Record<string, string | undefined>;
+  /** The day or period picker, after the tabs. */
+  children: ReactNode;
 }) {
   return (
     <PageControls clock={<ClockToggle clock={clock} path="/stationer" params={params} />}>
-      <ViewTabs view={view} {...tabs} />
+      <div className="flex h-[40px] items-center">
+        <ViewTabs view={view} {...tabs} />
+      </div>
+      {children}
     </PageControls>
   );
 }

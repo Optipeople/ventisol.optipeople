@@ -12,7 +12,7 @@ export type MonthChoice = { month: string; label: string };
  * every month the page reaches, locked ones marked.
  * The hrefs are made on the server, so the bare path stays the last full month.
  *
- * The page's filter card, like the day and period pickers of the other pages.
+ * Sits in the page card, like the day and period pickers of the other pages.
  */
 export function MonthPicker({
   month,

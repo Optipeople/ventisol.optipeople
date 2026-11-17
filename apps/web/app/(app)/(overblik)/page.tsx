@@ -107,16 +107,17 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
 
       <PageControls
         clock={<ClockToggle clock={clock} hrefs={{ working: selfHref({ clock: "working" }), wall: selfHref({ clock: "wall" }) }} />}
-      />
-      <PeriodPicker
-        from={from}
-        to={to}
-        max={today}
-        presets={periodPresets(today).map(({ label, from: f, to: t }) => ({ label, from: f, to: t }))}
-        defaults={defaultPeriod(today)}
-        preserve={keep}
-        basePath="/"
-      />
+      >
+        <PeriodPicker
+          from={from}
+          to={to}
+          max={today}
+          presets={periodPresets(today).map(({ label, from: f, to: t }) => ({ label, from: f, to: t }))}
+          defaults={defaultPeriod(today)}
+          preserve={keep}
+          basePath="/"
+        />
+      </PageControls>
       {filters.correction && <Note>{filters.correction}</Note>}
 
       <div className="mt-6">
