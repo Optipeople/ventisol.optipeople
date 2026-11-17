@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useTransition } from "react";
+import { useMemo, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button, DateRangePicker, Select, type DateRangePreset } from "@optipeople/ui";
 import { FilterPanel } from "@optipeople/ui/blocks";
@@ -26,6 +26,7 @@ export function OrdersFilters({
   period,
   preserve,
   hasActiveFilters,
+  search,
 }: {
   basePath: string;
   selects: ReadonlyArray<OrdersFilterSelect>;
@@ -39,6 +40,8 @@ export function OrdersFilters({
   /** The other search params to keep. */
   preserve: Record<string, string>;
   hasActiveFilters: boolean;
+  /** The search field, first in the row. */
+  search?: ReactNode;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -67,6 +70,7 @@ export function OrdersFilters({
 
   return (
     <FilterPanel pending={pending} pendingLabel="Opdaterer…" className="flex flex-wrap items-end gap-4">
+      {search}
       {period && (
         <DateRangePicker
           label="Pakket i perioden"

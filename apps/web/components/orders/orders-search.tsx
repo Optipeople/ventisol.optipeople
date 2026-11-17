@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { SearchField, Spinner } from "@optipeople/ui";
+import { Field, SearchField, Spinner } from "@optipeople/ui";
 
 /**
  * The order search, kept in the URL as `q`. Typing waits a moment before
@@ -32,9 +32,12 @@ export function OrdersSearch({
     setSeen(value);
     if (value !== sent) setText(value);
   }
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
 
   function go(next: string) {
     if (timer.current) clearTimeout(timer.current);
@@ -55,29 +58,29 @@ export function OrdersSearch({
   return (
     <form
       role="search"
-      className="flex w-full max-w-[420px] items-center gap-2"
+      className="flex w-[300px] max-w-full items-end gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         go(text);
       }}
     >
-      <label htmlFor="orders-search" className="sr-only">
-        Søg efter ordre, kunde eller sag
-      </label>
-      <SearchField
-        id="orders-search"
-        size="medium"
-        value={text}
-        placeholder="Ordrenummer, kunde eller sag"
-        onChange={(e) => change(e.target.value)}
-        onClear={() => {
-          setText("");
-          go("");
-        }}
-        maxLength={200}
-        autoComplete="off"
-      />
-      <span className="w-4" aria-live="polite">
+      <Field label="Søg" htmlFor="orders-search">
+        <SearchField
+          id="orders-search"
+          size="medium"
+          className="h-[36px] min-w-0"
+          value={text}
+          placeholder="Ordrenummer, kunde eller sag"
+          onChange={(e) => change(e.target.value)}
+          onClear={() => {
+            setText("");
+            go("");
+          }}
+          maxLength={200}
+          autoComplete="off"
+        />
+      </Field>
+      <span className="flex h-[36px] w-4 shrink-0 items-center" aria-live="polite">
         {pending ? <Spinner className="h-4 w-4" aria-label="Søger" /> : null}
       </span>
     </form>

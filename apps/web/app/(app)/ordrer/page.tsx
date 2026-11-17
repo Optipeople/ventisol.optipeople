@@ -45,6 +45,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
       ? { report: "finished_orders", params: finishedParams(view) }
       : { report: "orders_in_progress", params: inProgressParams(view, now) };
 
+  const search = <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />;
+
   return (
     <PageShell width="wide">
       <PageHeader
@@ -58,6 +60,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
           view.tab === "finished" ? (
             <OrdersFilters
               basePath={ORDERS_PATH}
+              search={search}
               period={{
                 from: view.from,
                 to: view.to,
@@ -71,6 +74,7 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
           ) : (
             <OrdersFilters
               basePath={ORDERS_PATH}
+              search={search}
               selects={[
                 statusSelect(view),
                 {
@@ -97,7 +101,6 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
             ]}
           />
         </div>
-        <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />
       </PageControls>
 
       {view.tab === "finished" ? (
