@@ -16,11 +16,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Maximize2, MessageSquare, SquarePen } from "lucide-react";
 import { buttonClasses, cn, Spinner, XIcon } from "@optipeople/ui";
-import { openDockConversation, type DockConversation } from "./dock-actions";
+import type { DockConversation } from "@/app/api/chat/dock/route";
 
 // The chat brings Markdown, maths and the AI SDK with it. They are fetched
 // when the panel opens, so the other pages do not carry them.
 const ChatView = lazy(() => import("./chat-view").then((m) => ({ default: m.ChatView })));
+
+/** The conversation the panel opens with (app/api/chat/dock/route.ts). */
+async function openDockConversation(fresh: boolean, signal: AbortSignal): Promise<DockConversation> {
+  const response = await fetch(fresh ? "/api/chat/dock?ny=1" : "/api/chat/dock", { signal, cache: "no-store" });
+  if (!response.ok) throw new Error(`dock: ${response.status}`);
+  return (await response.json()) as DockConversation;
+}
 
 const OPEN_KEY = "ventisol.chat-dock.open";
 
@@ -107,15 +114,13 @@ export function ChatDock() {
   const loadedN = loaded?.n;
   useEffect(() => {
     if (!active || loadedN === wanted.n) return;
-    let cancelled = false;
+    const abort = new AbortController();
     const done = (chat: DockConversation | null) => {
-      if (cancelled) return;
+      if (abort.signal.aborted) return;
       setLoaded((before) => ({ n: wanted.n, chat: sameConversation(before?.chat, chat) ? before!.chat : chat }));
     };
-    openDockConversation(wanted.fresh).then(done, () => done(null));
-    return () => {
-      cancelled = true;
-    };
+    openDockConversation(wanted.fresh, abort.signal).then(done, () => done(null));
+    return () => abort.abort();
   }, [active, wanted, loadedN]);
 
   // What was asked on the chat page is not in a copy read before it: read

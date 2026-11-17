@@ -3,7 +3,7 @@
 // server, so this file knows nothing about the report types.
 
 import Link from "next/link";
-import { BarList, KpiRow, KpiTile, Note } from "@optipeople/ui/blocks";
+import { BarList, KpiTile, Note } from "@optipeople/ui/blocks";
 import {
   CheckIcon,
   CircleExclamationIcon,
@@ -59,11 +59,19 @@ function View({ view }: { view: ToolView }) {
       return (
         <div>
           <p className={VIEW_TITLE}>{view.title}</p>
-          <KpiRow>
+          {/* By the width of the chat, not of the window: two across in the
+              small chat on every page and on a phone, four in the wide chat. */}
+          <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4 @xl:gap-4">
             {view.items.map((item) => (
-              <KpiTile key={item.label} label={item.label} value={item.value} hint={item.note} />
+              <KpiTile
+                key={item.label}
+                label={item.label}
+                value={item.value}
+                hint={item.note}
+                className="min-w-0 px-4 py-3 [overflow-wrap:anywhere] @xl:px-5 @xl:py-4"
+              />
             ))}
-          </KpiRow>
+          </div>
         </div>
       );
     case "bars": {
@@ -173,7 +181,7 @@ export function ToolFailedLine({ name }: { name: string }) {
 export function ToolResultCard({ name, result }: { name: string; result: ToolResult | undefined }) {
   const views = result?.views ?? [];
   return (
-    <div className="msg-in flex flex-col gap-3">
+    <div className="@container msg-in flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
         <span className="flex items-center gap-2">
           <CheckIcon className="h-3.5 w-3.5 shrink-0" />
