@@ -4,6 +4,10 @@ import { formatDuration, NO_DATA, type StepTime } from "@/lib/reports";
 
 type StepKey = StepTime["step"];
 
+/** Diagonal stripes for an assumed step, so it reads as a bar and not an empty field. */
+const HATCH =
+  "repeating-linear-gradient(135deg, color-mix(in srgb, var(--ds-grey-medium-04) 40%, transparent) 0 2px, transparent 2px 6px)";
+
 /**
  * The seven steps of an order as averages per order: one bar per step, work
  * and waiting side by side, on one shared scale. Assumed steps (a setting,
@@ -18,7 +22,11 @@ export function StepBreakdown({ steps, bottleneck }: { steps: StepTime[]; bottle
         <Legend color={CHART_BLUE} label="Arbejde" />
         <Legend color={CHART_GREY} label="Ventetid" />
         <span className="flex items-center gap-[6px]">
-          <span aria-hidden className="h-[10px] w-[10px] rounded-[2px] border border-dashed border-[var(--ds-grey-medium-04)]" />
+          <span
+            aria-hidden
+            className="h-[10px] w-[10px] rounded-[2px] border border-dashed border-[var(--ds-grey-medium-04)]"
+            style={{ background: HATCH }}
+          />
           Antaget, tæller ikke med
         </span>
       </div>
@@ -45,7 +53,8 @@ function StepRow({ step, max, isBottleneck }: { step: StepTime; max: number; isB
   const work = step.work.seconds ?? 0;
   const wait = step.wait.seconds ?? 0;
   const assumed = step.source === "assumed";
-  const scale = (v: number) => (max > 0 ? `${(v / max) * 100}%` : "0%");
+  // A non-zero step keeps at least 4px, so a minute next to nine hours still reads as a bar.
+  const scale = (v: number) => (max > 0 ? `max(4px, ${(v / max) * 100}%)` : "0%");
 
   let value: string;
   if (total == null) value = NO_DATA;
@@ -72,8 +81,8 @@ function StepRow({ step, max, isBottleneck }: { step: StepTime; max: number; isB
         {total != null && total > 0 &&
           (assumed || !step.countsInLead ? (
             <div
-              className="h-full rounded-r-[3px] border border-dashed border-[var(--ds-grey-medium-04)]"
-              style={{ width: scale(total) }}
+              className="h-full rounded-[3px] border border-dashed border-[var(--ds-grey-medium-04)]"
+              style={{ width: scale(total), background: HATCH }}
             />
           ) : (
             <div className="flex h-full gap-[2px]" style={{ width: scale(total) }}>
