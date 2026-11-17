@@ -150,10 +150,26 @@ export function ChatDock() {
     if (active && chatKey && wantsFocus.current) panel.current?.querySelector("textarea")?.focus();
   }, [active, chatKey]);
 
+  // The panel grows out of the button's corner and shrinks back into it.
+  // Only after a click: a panel that is open from an earlier page is just there.
+  const [animated, setAnimated] = useState(false);
+  // Important: the theme sets a transition on every button, outside the
+  // utility layer, which would otherwise win on the round button.
+  const motion =
+    animated &&
+    "transition-[opacity,scale,translate,visibility]! ease-[var(--ease-apple)]! motion-reduce:transition-none!";
+
+  function openPanel() {
+    wantsFocus.current = true;
+    setAnimated(true);
+    writeOpen(true);
+  }
+
   function close() {
     wantsFocus.current = false;
+    setAnimated(true);
     writeOpen(false);
-    // The button is drawn after this render.
+    // The button can take the focus once this render has shown it.
     window.setTimeout(() => launcher.current?.focus(), 0);
   }
 
@@ -175,41 +191,43 @@ export function ChatDock() {
 
   return (
     <>
-      {!open && (
-        <button
-          ref={launcher}
-          type="button"
-          onClick={() => {
-            wantsFocus.current = true;
-            writeOpen(true);
-          }}
-          aria-expanded={false}
-          aria-controls="chat-dock"
-          className={buttonClasses({
+      <button
+        ref={launcher}
+        type="button"
+        onClick={openPanel}
+        aria-expanded={open}
+        aria-controls="chat-dock"
+        className={cn(
+          buttonClasses({
             variant: "primary",
             className:
-              "fixed bottom-4 right-4 z-30 h-12 gap-2 rounded-full px-5 text-[16px] shadow-[var(--shadow-lg)] print:hidden",
-          })}
-        >
-          <MessageSquare className="h-5 w-5" aria-hidden />
-          Spørg chatten
-        </button>
-      )}
+              "fixed bottom-4 right-4 z-30 h-12 origin-bottom-right gap-2 rounded-full px-5 text-[16px] shadow-[var(--shadow-lg)] print:hidden",
+          }),
+          motion,
+          // It comes back a moment after the panel has started to leave.
+          open ? "invisible scale-75 opacity-0 duration-150!" : "delay-100! duration-300!"
+        )}
+      >
+        <MessageSquare className="h-5 w-5" aria-hidden />
+        Spørg chatten
+      </button>
 
       <section
         id="chat-dock"
         ref={panel}
         role="dialog"
         aria-label="Chat"
-        hidden={!open}
+        aria-hidden={!open}
         onKeyDown={(event) => {
           if (event.key === "Escape" && !event.defaultPrevented) close();
         }}
         className={cn(
-          "fixed inset-0 z-40 flex-col overflow-hidden bg-[var(--color-background)] print:hidden",
+          "fixed inset-0 z-40 flex origin-bottom-right flex-col overflow-hidden bg-[var(--color-background)] print:hidden",
           "sm:inset-auto sm:bottom-4 sm:right-4 sm:h-[min(720px,calc(100dvh-2rem))] sm:w-[440px]",
           "sm:rounded-[var(--radius-lg)] sm:border sm:border-[var(--color-border)] sm:shadow-[var(--shadow-lg)]",
-          open ? "flex" : "hidden"
+          motion,
+          // `invisible` also takes the closed panel out of the tab order.
+          open ? "duration-300!" : "invisible translate-y-3 scale-95 opacity-0 duration-200!"
         )}
       >
         <header className="flex h-12 shrink-0 items-center gap-1 bg-[var(--color-brand)] pl-4 pr-2 text-white">
