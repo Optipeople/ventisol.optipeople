@@ -270,7 +270,7 @@ export interface StationAttention {
   count: number;
   stationNos: number[];
   names: string[];
-  /** "3 steder at kigge på: Buffer, Station 30 og Montagebord 2" or "Ingen steder at kigge på". */
+  /** "3 stationer afviger fra det normale: Buffer, Station 30 og Montagebord 2" or "Alle stationer kører normalt". */
   sentence: string;
 }
 

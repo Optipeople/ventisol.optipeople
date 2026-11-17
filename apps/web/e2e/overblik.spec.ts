@@ -21,6 +21,17 @@ test.describe("Overblik", () => {
     expect(await bars.locator("tbody tr").count()).toBeGreaterThan(1);
   });
 
+  test("one Hent menu holds every file of the page", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Hent" }).click();
+    const menu = page.getByRole("menu", { name: "Hent" });
+    await expect(menu.getByRole("menuitem")).toHaveText(["Nøgletal (Excel)", "Nøgletal (PDF)", "Gennemløbstid (Excel)"]);
+    await expect(menu.getByRole("menuitem", { name: "Nøgletal (PDF)" })).toHaveAttribute(
+      "href",
+      /^\/api\/export\/pdf\?report=kpi_summary/
+    );
+  });
+
   test("a period preset sets from and to in the URL", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("link", { name: "Sidste måned" }).click();

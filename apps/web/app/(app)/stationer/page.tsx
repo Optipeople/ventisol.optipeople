@@ -10,9 +10,9 @@ import {
   PeriodFilter,
   SectionTitle,
 } from "@optipeople/ui/blocks";
-import { ExportButtons } from "@/components/export/export-buttons";
+import { ExportMenu } from "@/components/export/export-menu";
 import { MissingScanOutsTable } from "@/components/stations/missing-scan-outs";
-import { StationBoard } from "@/components/stations/station-board";
+import { attentionHeadline, StationBoard } from "@/components/stations/station-board";
 import { StationsTable } from "@/components/stations/stations-table";
 import { ClockToggle, ViewTabs } from "@/components/stations/view-controls";
 import { requireCapability } from "@/lib/auth";
@@ -74,10 +74,8 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
           title="Stationer"
           intro={`${INTRO} ${capitalize(formatShortDay(period.from))} til ${formatShortDay(period.to)}`.replace(/\.?$/, ".")}
           actions={
-            <ExportButtons
-              report="station_performance"
-              params={{ from: period.from, to: period.to, clock }}
-              label="Hent"
+            <ExportMenu
+              entries={[{ report: "station_performance", params: { from: period.from, to: period.to, clock } }]}
             />
           }
         />
@@ -103,10 +101,7 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
           <NoStations />
         ) : (
           <>
-            <SectionTitle
-              title={report.attention.sentence}
-              aside={`${formatCount(report.rows.length, "station", "stationer")} · ${clockWords(report.clock)}`}
-            />
+            <SectionTitle title={attentionHeadline(report.attention, report.rows.length)} />
             <StationsTable rows={report.rows} mode="period" hrefFor={hrefFor} />
             <Explain clock={report.clock} period />
           </>
@@ -128,7 +123,7 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Stationer"
         intro={`${INTRO} ${capitalize(formatLongDay(day))}.`}
-        actions={<ExportButtons report="station_day" params={{ day, clock }} label="Hent" />}
+        actions={<ExportMenu entries={[{ report: "station_day", params: { day, clock } }]} />}
       />
       <Controls view="day" tabs={tabs} clock={report.clock} params={{ day: isToday ? undefined : day }} />
       <DayPicker
@@ -152,25 +147,18 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
               rows={report.rows}
               attention={report.attention}
               hrefFor={hrefFor}
-              caption={isToday ? "I dag, opdateres hvert minut" : capitalize(formatShortDay(day))}
+              caption={isToday ? "Opdateres automatisk hvert minut" : capitalize(formatShortDay(day))}
             />
           </div>
 
-          <SectionTitle
-            title="Alle tal"
-            aside={`${formatCount(report.rows.length, "station", "stationer")} · ${clockWords(report.clock)}`}
-          />
+          <SectionTitle title="Alle tal" />
           <StationsTable rows={report.rows} mode="day" hrefFor={hrefFor} />
           <Explain clock={report.clock} />
 
-          <SectionTitle
-            title="Mangler ud-scanning"
-            aside={missing.total > 0 ? formatCount(missing.total, "passage", "passager") : undefined}
-          />
-          {missing.total === 0 ? (
-            <EmptyState>Alt, der blev scannet ind denne dag, er scannet ud eller stadig i gang.</EmptyState>
-          ) : (
+          {/* Nothing missing: no heading and no empty box. */}
+          {missing.total > 0 && (
             <>
+              <SectionTitle title="Mangler ud-scanning" aside={formatCount(missing.total, "passage", "passager")} />
               <MissingScanOutsTable rows={missing.rows} day={day} />
               {missing.total > missing.rows.length && (
                 <Note>
@@ -183,10 +171,6 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
       )}
     </PageShell>
   );
-}
-
-function clockWords(clock: Clock): string {
-  return clock === "wall" ? "hele døgnet tæller" : "kun arbejdstid tæller";
 }
 
 function Controls({
@@ -224,7 +208,8 @@ function Explain({ clock, period = false }: { clock: Clock; period?: boolean }) 
   return (
     <Note>
       Tid pr. stk. er medianen af passagerne fra ind til ud. Normalt er normaltiderne vægtet efter de elementtyper, der
-      kom igennem. Stod stille er pauser i vagten over grænseværdien, lagt sammen. Udnyttelse er tid i arbejde i forhold
+      kom igennem. Stod stille er pauser i vagten over grænseværdien, lagt sammen. Stationen får først mærket, når de fylder
+      mindst en tiendedel af vagten indtil nu. Udnyttelse er tid i arbejde i forhold
       til vagtens tid.{" "}
       {clock === "working" ? "Kun tid i vagterne tæller." : "Al tid tæller, også nætter og weekender."}
       {period ? " Ventetid før er tiden fra elementets forrige ud-scanning til ind-scanningen her." : ""}

@@ -34,7 +34,7 @@ function Customer({ customer, caseName }: { customer: string | null; caseName: s
   return (
     <div className="min-w-[160px] max-w-[280px]">
       <div className="truncate" title={customer ?? undefined}>
-        {customer ?? <span className={muted}>{NO_DATA}</span>}
+        {customer ?? <span className={muted}>Ukendt kunde</span>}
       </div>
       {caseName && (
         <div className={`truncate text-[12px] leading-[16px] ${muted}`} title={caseName}>

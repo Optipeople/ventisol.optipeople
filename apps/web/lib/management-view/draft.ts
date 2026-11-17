@@ -90,7 +90,7 @@ export function monthDigest(report: MonthReport, opts: { frozen: boolean; includ
 
   return {
     maaned: monthTitle(report.month),
-    tal: opts.frozen ? "frosset" : "beregnet nu, kan stadig ændre sig",
+    tal: opts.frozen ? "låst" : "beregnet nu, kan stadig ændre sig",
     tid: report.clock === "working" ? "arbejdstid (kun tid i vagterne)" : "hele døgnet",
     noegletal: {
       ordrerPakket: { denne: formatNumber(now.ordersPacked), foer: formatNumber(before.ordersPacked), aendring: formatSignedPercent(change.ordersPercent) },

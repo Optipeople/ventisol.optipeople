@@ -1,7 +1,7 @@
 // The route of one order as a Gantt: a lane per step, Arbejde / Ventetid /
 // Afvigelse, the "Nu" line while in progress and the forecast. The geometry
 // is lib/orders-view/gantt.ts; this file only draws it. A table with the same
-// numbers sits beside it (StepsTable), so nothing is in the chart alone.
+// numbers can be opened under it (StepsTable), so nothing is in the chart alone.
 
 import {
   DataTable,
@@ -152,8 +152,25 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
   );
 }
 
-/** The same steps as a table: the chart's text equivalent. */
+/**
+ * The same steps as a table: the chart's text equivalent, closed until asked
+ * for. A step without a time says why once, in the last column, in the
+ * chart's words.
+ */
 export function StepsTable({ steps }: { steps: OrderStep[] }) {
+  return (
+    <details className="mt-3">
+      <summary className="cursor-pointer text-[14px] font-bold leading-[21px] text-[var(--ds-midnight-green)]">
+        Vis trinene som tabel
+      </summary>
+      <div className="mt-3">
+        <StepsTableBody steps={steps} />
+      </div>
+    </details>
+  );
+}
+
+function StepsTableBody({ steps }: { steps: OrderStep[] }) {
   return (
     <TableFrame>
       <DataTable>
@@ -168,7 +185,7 @@ export function StepsTable({ steps }: { steps: OrderStep[] }) {
         </DataTableHead>
         <DataTableBody>
           {steps.map((s) => {
-            const measured = s.source === "scans" || s.source === "machine";
+            const reached = s.duration.seconds != null || s.startAt != null;
             return (
               <DataTableRow key={s.step} className={s.deviation ? "bg-[var(--ds-red-bg)]" : undefined}>
                 <DataTableCell className={s.kind === "work" ? "font-bold" : undefined}>
@@ -181,7 +198,7 @@ export function StepsTable({ steps }: { steps: OrderStep[] }) {
                   {s.isOpen ? "nu" : s.endAt ? formatDayTime(s.endAt) : ""}
                 </DataTableCell>
                 <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                  {measured || s.duration.seconds != null ? formatDuration(s.duration.seconds) : NO_DATA}
+                  {s.duration.seconds != null ? formatDuration(s.duration.seconds) : ""}
                 </DataTableCell>
                 <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
                   {s.kind === "work" && s.work.seconds != null ? formatDuration(s.work.seconds) : ""}
@@ -190,13 +207,15 @@ export function StepsTable({ steps }: { steps: OrderStep[] }) {
                   {s.wait.seconds != null ? formatDuration(s.wait.seconds) : ""}
                 </DataTableCell>
                 <DataTableCell className="text-[var(--ds-grey-medium-05)]">
-                  {s.source === "scans"
-                    ? "Scanninger"
-                    : s.source === "machine"
-                      ? "Maskine"
-                      : s.source === "assumed"
-                        ? "Antaget"
-                        : "Ingen data endnu"}
+                  {!reached
+                    ? sourceText(s)
+                    : s.source === "scans"
+                      ? "Scanninger"
+                      : s.source === "machine"
+                        ? "Maskine"
+                        : s.source === "assumed"
+                          ? "Antaget"
+                          : NO_DATA}
                 </DataTableCell>
               </DataTableRow>
             );

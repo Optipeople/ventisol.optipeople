@@ -109,6 +109,7 @@ export function toStationRow(raw: StationRaw, ctx: ReportContext): StationRow {
         gaps,
         longestWaitBeforeSeconds: raw.longestWaitBeforeSeconds,
         longestWaitBeforeWorkingSeconds: raw.longestWaitBeforeWorkingSeconds,
+        observedSeconds: raw.observedSeconds ?? undefined,
       }
     : null;
   const normalByType = Object.fromEntries(raw.normalTimes.map((n) => [n.elementTypeId, n.seconds]));
@@ -152,14 +153,14 @@ export function toStationRow(raw: StationRaw, ctx: ReportContext): StationRow {
   };
 }
 
-/** "N steder at kigge på" and which ones: the stations with data whose status is not Normal. */
+/** "N stationer afviger fra det normale" and which ones: the stations with data whose status is not Normal. */
 export function stationAttention(stationRows: StationRow[]): StationAttention {
   const flagged = stationRows.filter((r) => ATTENTION.has(r.status));
   const names = flagged.map((r) => r.name);
   const sentence =
     flagged.length === 0
-      ? "Ingen steder at kigge på"
-      : `${flagged.length} ${flagged.length === 1 ? "sted" : "steder"} at kigge på: ${joinDanish(names)}`;
+      ? "Alle stationer kører normalt"
+      : `${flagged.length} ${flagged.length === 1 ? "station afviger" : "stationer afviger"} fra det normale: ${joinDanish(names)}`;
   return { count: flagged.length, stationNos: flagged.map((r) => r.stationNo), names, sentence };
 }
 
@@ -241,7 +242,7 @@ export async function listStations(claims: Claims): Promise<StationInfo[]> {
 
 export const stationDayParams = z.object({ day: daySchema, clock: clockSchema });
 
-/** The Stationer table for one day, with "N steder at kigge på". Any role. */
+/** The Stationer table for one day, with "N stationer afviger fra det normale". Any role. */
 export async function getStationDay(
   claims: Claims,
   params: z.input<typeof stationDayParams>

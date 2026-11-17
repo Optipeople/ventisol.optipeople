@@ -74,7 +74,7 @@ describe("getStationDay", () => {
       count: 2,
       stationNos: [1, 7],
       names: ["Station 10", "Pakning"],
-      sentence: "2 steder at kigge på: Station 10 og Pakning",
+      sentence: "2 stationer afviger fra det normale: Station 10 og Pakning",
     });
   });
 

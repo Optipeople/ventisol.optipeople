@@ -88,9 +88,16 @@ export default async function OrderPage({ params, searchParams }: { params: Para
         intro={<OrderIntro order={order} />}
       />
 
-      <KpiRow>
-        {packed ? <PackedTiles order={order} /> : <InProgressTiles order={order} />}
-      </KpiRow>
+      {packed ? (
+        <KpiRow>
+          <PackedTiles order={order} />
+        </KpiRow>
+      ) : (
+        // Five tiles: one row on a wide screen, three and two on a narrower one.
+        <KpiRow className="lg:grid-cols-3 xl:grid-cols-5">
+          <InProgressTiles order={order} />
+        </KpiRow>
+      )}
 
       <div className="mt-6">
         <DeviationNotes notes={detail.notes} headline={detail.notesHeadline} />
@@ -101,9 +108,7 @@ export default async function OrderPage({ params, searchParams }: { params: Para
         aside={`De syv trin fra start til pakning. Tider i ${CLOCK_LABELS[detail.clock].toLowerCase()}.`}
       />
       <RouteGantt order={order} steps={detail.steps} now={now} />
-      <div className="mt-4">
-        <StepsTable steps={detail.steps} />
-      </div>
+      <StepsTable steps={detail.steps} />
 
       <SectionTitle
         title="Passager på stationerne"
@@ -207,8 +212,8 @@ function PackedTiles({ order }: { order: OrderHeader }) {
       <KpiTile label="Pakket" value={formatDayTime(order.packedAt)} hint={`Start ${formatDayTime(order.startAt)}`} />
       <KpiTile label="Leveringsuge" value={due.value} hint={due.hint} bad={order.onTime === false} />
       <KpiTile
-        label="Elementer"
-        value={`${formatNumber(order.elementsPacked)} af ${formatNumber(order.elements)} pakket`}
+        label="Elementer pakket"
+        value={`${formatNumber(order.elementsPacked)} af ${formatNumber(order.elements)}`}
         hint={elementsHint(order)}
         bad={order.elementsPacked < order.elements}
       />
@@ -247,8 +252,8 @@ function InProgressTiles({ order }: { order: OrderHeader }) {
       />
       <KpiTile label="Leveringsuge" value={due.value} hint={due.hint} bad={order.deliveryStatus === "late"} />
       <KpiTile
-        label="Elementer"
-        value={`${formatNumber(order.elementsPacked)} af ${formatNumber(order.elements)} pakket`}
+        label="Elementer pakket"
+        value={`${formatNumber(order.elementsPacked)} af ${formatNumber(order.elements)}`}
         hint={`${formatNumber(order.elementsAssembled)} samlet. ${elementsHint(order)}`}
       />
     </>

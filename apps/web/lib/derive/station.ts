@@ -188,6 +188,12 @@ export interface StationThresholds {
   slowPercent: number;
   /** A gap counts as standstill from this length. config: standstill_threshold_minutes * 60. */
   standstillMinGapSeconds: number;
+  /**
+   * Stod stille as a status: the standstill must add up to at least this many
+   * percent of the shift time so far. One pause over the threshold is shown
+   * as a figure, but does not mark the station for the rest of the day.
+   */
+  standstillSharePercent: number;
   /** Lang liggetid: an element waited longer than this before the station. config: long_dwell_threshold_minutes * 60. */
   longDwellSeconds: number;
   /** Judge waits and time per piece in shift time (config: deduct_off_shift). */
@@ -197,6 +203,7 @@ export interface StationThresholds {
 export const DEFAULT_THRESHOLDS: StationThresholds = {
   slowPercent: 20,
   standstillMinGapSeconds: 15 * 60,
+  standstillSharePercent: 10,
   longDwellSeconds: 480 * 60,
   useWorkingTime: true,
 };
@@ -226,7 +233,8 @@ export interface StationStatus {
 
 /**
  * The status of a station day. One label, the most pressing first:
- * Stod stille, then Lang liggetid, then Langsommere, else Normal.
+ * Stod stille (the standstill is at least standstillSharePercent of the
+ * shift time so far), then Lang liggetid, then Langsommere, else Normal.
  * `facts` null (a machine with no connector yet) gives "Ingen data endnu".
  */
 export function stationStatus(
@@ -237,7 +245,8 @@ export function stationStatus(
     | "gaps"
     | "longestWaitBeforeSeconds"
     | "longestWaitBeforeWorkingSeconds"
-  > | null,
+  > &
+    Partial<Pick<StationDayFactsRow, "observedSeconds">> | null,
   normalSeconds: number | null,
   thresholds: Partial<StationThresholds> = {}
 ): StationStatus {
@@ -266,8 +275,10 @@ export function stationStatus(
     perPiece != null && normalSeconds != null && normalSeconds > 0
       ? Math.round(((perPiece - normalSeconds) / normalSeconds) * 100)
       : null;
+  // Without the shift time (older rows), any standstill counts.
+  const standstillFloor = ((facts.observedSeconds ?? 0) * t.standstillSharePercent) / 100;
   const status: StationStatusKey =
-    standstillSeconds > 0
+    standstillSeconds > 0 && standstillSeconds >= standstillFloor
       ? "stood_still"
       : wait != null && wait > t.longDwellSeconds
         ? "long_dwell"

@@ -1,4 +1,5 @@
 import {
+  ChevronRightIcon,
   DataTable,
   DataTableBody,
   DataTableCell,
@@ -12,7 +13,7 @@ import { formatDuration, formatMinutes, formatNumber, formatSignedPercent, NO_DA
 import { trendScaleMax } from "@/lib/stations-view/timeline";
 
 // Time per piece week by week against normal: a column per ISO week with the
-// week's normal as a dashed mark, and the table twin under it. Plain
+// week's normal as a dashed mark, and the table twin folded away under it. Plain
 // server-rendered divs like the charts of @optipeople/ui; those have no
 // column-with-reference-mark chart.
 
@@ -101,43 +102,53 @@ export function StationTrendChart({ points }: { points: StationTrendPoint[] }) {
   );
 }
 
+/** The chart's weeks as numbers, closed until asked for: the chart already shows them. */
 export function StationTrendTable({ points }: { points: StationTrendPoint[] }) {
   return (
-    <TableFrame>
-      <DataTable stickyHeader>
-        <DataTableHead>
-          <DataTableHeader>Uge</DataTableHeader>
-          <DataTableHeader align="right">Gennem</DataTableHeader>
-          <DataTableHeader align="right">Tid pr. stk.</DataTableHeader>
-          <DataTableHeader align="right">Normalt</DataTableHeader>
-          <DataTableHeader align="right">Mod normalt</DataTableHeader>
-          <DataTableHeader align="right">Stod stille</DataTableHeader>
-        </DataTableHead>
-        <DataTableBody>
-          {[...points].reverse().map((p) => (
-            <DataTableRow key={p.weekStart}>
-              <DataTableCell className="whitespace-nowrap">
-                Uge {p.isoWeek} <span className="text-[var(--ds-grey-medium-05)]">{p.isoYear}</span>
-              </DataTableCell>
-              <DataTableCell align="right" className="tabular-nums">
-                {formatNumber(p.countThrough)}
-              </DataTableCell>
-              <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                {formatMinutes(p.timePerPiece.seconds)}
-              </DataTableCell>
-              <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                {formatMinutes(p.normalSeconds)}
-              </DataTableCell>
-              <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                {formatSignedPercent(p.deviationPercent)}
-              </DataTableCell>
-              <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                {p.standstillSeconds === 0 ? "Ingen" : formatDuration(p.standstillSeconds)}
-              </DataTableCell>
-            </DataTableRow>
-          ))}
-        </DataTableBody>
-      </DataTable>
-    </TableFrame>
+    <details className="group mt-4">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-[6px] rounded-[2px] text-[13px] font-bold leading-[18px] text-[var(--ds-midnight-green)] hover:underline focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)] [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon size={10} strokeWidth={2.5} className="transition-transform group-open:rotate-90" />
+        <span className="group-open:hidden">Vis ugerne som tabel</span>
+        <span className="hidden group-open:inline">Skjul tabellen</span>
+      </summary>
+      <div className="mt-3">
+        <TableFrame>
+          <DataTable stickyHeader>
+            <DataTableHead>
+              <DataTableHeader>Uge</DataTableHeader>
+              <DataTableHeader align="right">Gennem</DataTableHeader>
+              <DataTableHeader align="right">Tid pr. stk.</DataTableHeader>
+              <DataTableHeader align="right">Normalt</DataTableHeader>
+              <DataTableHeader align="right">Mod normalt</DataTableHeader>
+              <DataTableHeader align="right">Stod stille</DataTableHeader>
+            </DataTableHead>
+            <DataTableBody>
+              {[...points].reverse().map((p) => (
+                <DataTableRow key={p.weekStart}>
+                  <DataTableCell className="whitespace-nowrap">
+                    Uge {p.isoWeek} <span className="text-[var(--ds-grey-medium-05)]">{p.isoYear}</span>
+                  </DataTableCell>
+                  <DataTableCell align="right" className="tabular-nums">
+                    {formatNumber(p.countThrough)}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                    {formatMinutes(p.timePerPiece.seconds)}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                    {formatMinutes(p.normalSeconds)}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                    {formatSignedPercent(p.deviationPercent)}
+                  </DataTableCell>
+                  <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                    {p.standstillSeconds === 0 ? "Ingen" : formatDuration(p.standstillSeconds)}
+                  </DataTableCell>
+                </DataTableRow>
+              ))}
+            </DataTableBody>
+          </DataTable>
+        </TableFrame>
+      </div>
+    </details>
   );
 }

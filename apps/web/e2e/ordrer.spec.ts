@@ -16,6 +16,16 @@ test.describe("Ordrer", () => {
     expect((await orderNumbers(page)).length).toBeGreaterThan(0);
   });
 
+  test("the clock toggle shows the clock in use and keeps the choice in the URL", async ({ page }) => {
+    await page.goto("/ordrer");
+    const clock = page.getByRole("navigation", { name: "Tid" });
+    await expect(clock.getByRole("button", { name: "Arbejdstid" })).toBeVisible();
+    await expect(page.getByText("Som indstillet")).toHaveCount(0);
+    await clock.getByRole("button", { name: "Hele døgnet" }).click();
+    await expect(page).toHaveURL(/[?&]clock=wall/);
+    await expect(page.getByRole("heading", { level: 2, name: "Ordrer i gang nu" })).toBeVisible();
+  });
+
   test("search narrows the list and is kept in the URL", async ({ page }) => {
     await page.goto("/ordrer?view=finished");
     const search = page.getByRole("searchbox", { name: "Søg efter ordre, kunde eller sag" });
@@ -46,7 +56,7 @@ test.describe("Ordrer", () => {
     await page.getByRole("navigation", { name: "Sider" }).getByRole("button", { name: "Side 2" }).click();
     await expect(page).toHaveURL(/[?&]page=2/);
     await expect(page).toHaveURL(/[?&]sort=order/);
-    await expect(page.getByText(/^Alle pakkede ordrer\. 51 til/)).toBeVisible();
+    await expect(page.getByText(/^51 til \d+ af \d+ ordrer$/)).toBeVisible();
     const secondPage = await orderNumbers(page);
     expect(secondPage[0]).toBeGreaterThan(firstPage[firstPage.length - 1]);
   });
@@ -60,6 +70,11 @@ test.describe("Ordrer", () => {
     await expect(page.getByRole("heading", { level: 1, name: new RegExp(`^Ordre ${orderNo}`) })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Ruten gennem fabrikken" })).toBeVisible();
     await expect(page.getByText("Montage", { exact: true }).first()).toBeVisible();
+    // The steps as a table are closed until asked for.
+    const stepsHeader = page.getByRole("columnheader", { name: "Kilde" });
+    await expect(stepsHeader).toBeHidden();
+    await page.getByText("Vis trinene som tabel").click();
+    await expect(stepsHeader).toBeVisible();
     await expect(page.getByRole("region", { name: "Afvigelser" })).toBeVisible();
   });
 
@@ -79,7 +94,7 @@ test.describe("Ordrer", () => {
 
   test("the Excel export answers with an xlsx file", async ({ page, request }) => {
     await page.goto("/ordrer?view=finished");
-    const href = await page.getByRole("group", { name: "Eksport" }).getByRole("link", { name: "Excel" }).getAttribute("href");
+    const href = await page.getByRole("link", { name: "Hent Excel" }).getAttribute("href");
     expect(href).toContain("/api/export/xlsx");
     const res = await request.get(href!);
     expect(res.status()).toBe(200);

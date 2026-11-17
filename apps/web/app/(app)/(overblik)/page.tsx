@@ -5,7 +5,6 @@ import {
   AutoRefresh,
   BarList,
   CHART_GREY,
-  EmptyState,
   KpiRow,
   KpiTile,
   Note,
@@ -16,7 +15,7 @@ import {
   PillTabs,
   SectionCard,
 } from "@optipeople/ui/blocks";
-import { ExportButtons } from "@/components/export/export-buttons";
+import { ExportMenu } from "@/components/export/export-menu";
 import { KpiChange } from "@/components/overview/kpi-change";
 import { LeadTimeChart } from "@/components/overview/lead-time-chart";
 import { StepBreakdown } from "@/components/overview/step-breakdown";
@@ -98,17 +97,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </>
         }
         actions={
-          <div className="flex flex-col items-start gap-2 sm:items-end">
-            <ExportButtons report="kpi_summary" params={{ from, to, now, clock: filters.clock }} pdf label="Hent" />
-            <div className="flex gap-2">
-              <Link href={filterHref("/stationer", carry)} className={buttonClasses({ variant: "secondary", size: "sm" })}>
-                Stationer
-              </Link>
-              <Link href={filterHref("/ordrer", carry)} className={buttonClasses({ variant: "secondary", size: "sm" })}>
-                Ordrer
-              </Link>
-            </div>
-          </div>
+          <ExportMenu
+            entries={[
+              { report: "kpi_summary", params: { from, to, now, clock: filters.clock }, name: "Nøgletal", pdf: true },
+              { report: "lead_time_series", params: { from, to, bucket, clock: filters.clock }, name: "Gennemløbstid" },
+            ]}
+          />
         }
       />
 
@@ -124,8 +118,10 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </Link>
       </Note>
 
-      <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
+      {/* One card for the whole filter: the period, and the clock beside it. */}
+      <div className="mt-6 flex flex-wrap items-start gap-x-8 gap-y-4 rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-4 shadow-sm">
         <PeriodFilter
+          className="min-w-0 flex-1 basis-[420px] border-0 bg-transparent p-0 shadow-none"
           from={from}
           to={to}
           max={today}
@@ -136,20 +132,18 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           basePath="/"
           labels={{ from: "Fra", to: "Til", reset: "Seneste 4 uger", updating: "Opdaterer…" }}
         />
-        <div className="flex flex-col gap-3">
-          <div>
-            <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
-              Tid
-            </p>
-            <PillTabs
-              label="Tid"
-              selectedId={clock}
-              tabs={[
-                { id: "working", label: "Arbejdstid", href: selfHref({ clock: "working" }) },
-                { id: "wall", label: "Hele døgnet", href: selfHref({ clock: "wall" }) },
-              ]}
-            />
-          </div>
+        <div>
+          <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
+            Tid
+          </p>
+          <PillTabs
+            label="Tid"
+            selectedId={clock}
+            tabs={[
+              { id: "working", label: "Arbejdstid", href: selfHref({ clock: "working" }) },
+              { id: "wall", label: "Hele døgnet", href: selfHref({ clock: "wall" }) },
+            ]}
+          />
         </div>
       </div>
       {filters.correction && <Note>{filters.correction}</Note>}
@@ -207,9 +201,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           }
         >
           <LeadTimeChart points={series} />
-          <div className="mt-4 flex justify-end">
-            <ExportButtons report="lead_time_series" params={{ from, to, bucket, clock: filters.clock }} />
-          </div>
         </SectionCard>
 
         <SectionCard
@@ -218,14 +209,12 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           description={`Gennemsnit pr. ordre over ${formatCount(bottleneck.ordersPacked, "pakket ordre", "pakkede ordrer")}`}
         >
           <p className="mb-1 text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">{bottleneck.sentence}</p>
-          {bottleneck.missingSteps.length > 0 && (
+          {!noOrders && bottleneck.missingSteps.length > 0 && (
             <p className="mb-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
               Ingen data endnu for {joinDanish(bottleneck.missingSteps)}.
             </p>
           )}
-          {noOrders ? (
-            <EmptyState className="mt-3">Ingen data endnu i perioden.</EmptyState>
-          ) : (
+          {!noOrders && (
             <div className="mt-3">
               <StepBreakdown steps={bottleneck.steps} bottleneck={bottleneck.bottleneck?.step ?? null} />
               <p className="mt-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">

@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { EmptyState, FilterBar, PageHeader, PageShell, PillTabs, SectionTitle, type FilterBarSelect } from "@optipeople/ui/blocks";
-import { ExportButtons } from "@/components/export/export-buttons";
+import { ExportMenu } from "@/components/export/export-menu";
 import { OrdersSearch } from "@/components/orders/orders-search";
 import { FinishedOrdersTable, InProgressOrdersTable } from "@/components/orders/orders-tables";
 import { AuditPager } from "@/components/settings/audit-pager";
+import { ClockToggle } from "@/components/stations/view-controls";
 import { requireCapability } from "@/lib/auth";
 import type { Claims } from "@/lib/db";
 import {
   ACTIVE_DAYS,
-  CLOCK_LABELS,
   FINISHED_STATUSES,
   IN_PROGRESS_STATUSES,
   ORDERS_PATH,
@@ -24,8 +25,9 @@ import {
   type OrdersView,
   type SearchParams,
 } from "@/lib/orders-view/params";
-import { formatCount, listFinishedOrders, listInProgressOrders } from "@/lib/reports";
-import { dayKey, formatDisplayDay, requestTime } from "@/lib/time";
+import { formatCount, listFinishedOrders, listInProgressOrders, type Clock } from "@/lib/reports";
+import { report } from "@/lib/reports/shared";
+import { dayKey, requestTime } from "@/lib/time";
 
 export const metadata: Metadata = { title: "Ordrer" };
 
@@ -35,6 +37,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   const view = parseOrdersView(await searchParams);
   const ctx = await requireCapability(viewHref(view), "reports.view");
   const now = requestTime();
+  // The clock the lists are read on: the URL's, else the setting's.
+  const clock: Clock = view.clock ?? (await report(ctx.claims, undefined, async (_db, c) => c.clock));
 
   return (
     <PageShell width="wide">
@@ -43,14 +47,17 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         intro="Ordrer i gang nu og pakkede ordrer. Klik på en ordre for ruten, afvigelserne og produktionslisten."
       >
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <PillTabs
-            label="Visning"
-            selectedId={view.tab}
-            tabs={[
-              { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
-              { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
-            ]}
-          />
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <PillTabs
+              label="Visning"
+              selectedId={view.tab}
+              tabs={[
+                { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
+                { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
+              ]}
+            />
+            <ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />
+          </div>
           <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />
         </div>
       </PageHeader>
@@ -74,19 +81,6 @@ function statusSelect(view: OrdersView): FilterBarSelect {
   };
 }
 
-function clockSelect(view: OrdersView): FilterBarSelect {
-  return {
-    param: "clock",
-    label: "Tid",
-    value: view.clock ?? "",
-    emptyLabel: "Som indstillet",
-    options: [
-      { value: "working", label: CLOCK_LABELS.working },
-      { value: "wall", label: CLOCK_LABELS.wall },
-    ],
-  };
-}
-
 function Pager({ view, total }: { view: OrdersView; total: number }) {
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (pageCount <= 1) return null;
@@ -103,10 +97,21 @@ function Pager({ view, total }: { view: OrdersView; total: number }) {
   );
 }
 
-/** "1 til 50 af 312 ordrer". */
+/** "1 til 50 af 312 ordrer", or just "7 ordrer" when they all fit on the page. */
 function rangeText(page: number, shown: number, total: number): string {
+  if (shown === total) return formatCount(total, "ordre", "ordrer");
   const first = (page - 1) * PAGE_SIZE + 1;
   return `${first} til ${first + shown - 1} af ${formatCount(total, "ordre", "ordrer")}`;
+}
+
+/** The count and the download, to the right of the list's title. */
+function ListAside({ range, children }: { range: string | null; children: ReactNode }) {
+  return (
+    <span className="flex flex-wrap items-center gap-3">
+      {range && <span>{range}</span>}
+      {children}
+    </span>
+  );
 }
 
 function PastLastPage({ view }: { view: OrdersView }) {
@@ -119,12 +124,6 @@ function PastLastPage({ view }: { view: OrdersView }) {
       .
     </EmptyState>
   );
-}
-
-function periodText(view: FinishedView): string {
-  if (!view.from && !view.to) return "Alle pakkede ordrer";
-  if (view.from && view.to) return `Pakket ${formatDisplayDay(view.from)} til ${formatDisplayDay(view.to)}`;
-  return view.from ? `Pakket fra ${formatDisplayDay(view.from)}` : `Pakket til og med ${formatDisplayDay(view.to!)}`;
 }
 
 async function FinishedList({ view, claims, today }: { view: FinishedView; claims: Claims; today: string }) {
@@ -146,22 +145,17 @@ async function FinishedList({ view, claims, today }: { view: FinishedView; claim
         basePath={ORDERS_PATH}
         selects={[statusSelect(view)]}
         dateRange={{ from: view.from ?? "", to: view.to ?? "", max: today }}
-        trailingSelects={[clockSelect(view)]}
-        preserve={preserveFor(view, "status", "from", "to", "clock")}
-        hasActiveFilters={Boolean(view.status || view.from || view.to || view.clock)}
+        preserve={preserveFor(view, "status", "from", "to")}
+        hasActiveFilters={Boolean(view.status || view.from || view.to)}
         labels={FILTER_LABELS}
       />
 
       <SectionTitle
         title="Afsluttede ordrer"
         aside={
-          <span className="flex flex-wrap items-center gap-3">
-            <span>
-              {periodText(view)}
-              {list.rows.length > 0 ? `. ${rangeText(list.page, list.rows.length, list.total)}.` : "."}
-            </span>
-            {list.total > 0 && <ExportButtons report="finished_orders" params={params} />}
-          </span>
+          <ListAside range={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : null}>
+            {list.total > 0 && <ExportMenu entries={[{ report: "finished_orders", params }]} />}
+          </ListAside>
         }
       />
 
@@ -169,7 +163,7 @@ async function FinishedList({ view, claims, today }: { view: FinishedView; claim
         <>
           <FinishedOrdersTable rows={list.rows} view={view} />
           <Pager view={view} total={list.total} />
-          <Footnote />
+          <Footnote partial={list.rows.some((r) => r.expectedSource === "scans")} />
         </>
       ) : list.total > 0 ? (
         <PastLastPage view={view} />
@@ -211,22 +205,17 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
             options: [{ value: "all", label: "Alle ordrer, der ikke er pakket" }],
           },
         ]}
-        trailingSelects={[clockSelect(view)]}
-        preserve={preserveFor(view, "status", "active", "clock")}
-        hasActiveFilters={Boolean(view.status || !view.activeOnly || view.clock)}
+        preserve={preserveFor(view, "status", "active")}
+        hasActiveFilters={Boolean(view.status || !view.activeOnly)}
         labels={FILTER_LABELS}
       />
 
       <SectionTitle
         title="Ordrer i gang nu"
         aside={
-          <span className="flex flex-wrap items-center gap-3">
-            <span>
-              {view.activeOnly ? `Scannet de seneste ${ACTIVE_DAYS} dage` : "Alle ordrer, der ikke er pakket"}
-              {list.rows.length > 0 ? `. ${rangeText(list.page, list.rows.length, list.total)}.` : "."}
-            </span>
-            {list.total > 0 && <ExportButtons report="orders_in_progress" params={params} />}
-          </span>
+          <ListAside range={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : null}>
+            {list.total > 0 && <ExportMenu entries={[{ report: "orders_in_progress", params }]} />}
+          </ListAside>
         }
       />
 
@@ -234,7 +223,10 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
         <>
           <InProgressOrdersTable rows={list.rows} view={view} />
           <Pager view={view} total={list.total} />
-          <Footnote forecast />
+          <Footnote
+            partial={list.rows.some((r) => r.expectedSource === "scans" || r.forecastBasis === "seen_elements")}
+            forecast
+          />
         </>
       ) : list.total > 0 ? (
         <PastLastPage view={view} />
@@ -251,11 +243,14 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
   );
 }
 
-function Footnote({ forecast = false }: { forecast?: boolean }) {
+/** `partial`: a row on the page carries the asterisk. */
+function Footnote({ partial, forecast = false }: { partial: boolean; forecast?: boolean }) {
+  if (!partial && !forecast) return null;
   return (
     <p className="mt-3 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
-      * Uden produktionsliste: tallet gælder kun de scannede elementer.
-      {forecast && " Forventet klar er et skøn ud fra de typiske tider."}
+      {partial && "* Uden produktionsliste: tallet gælder kun de scannede elementer."}
+      {partial && forecast && " "}
+      {forecast && "Forventet klar er et skøn ud fra de typiske tider."}
     </p>
   );
 }

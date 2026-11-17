@@ -10,18 +10,18 @@ function Inner({ month, monthName, onFreeze }: FreezeButtonProps) {
 
   async function freeze() {
     const yes = await confirm({
-      title: `Frys ${monthName}?`,
+      title: `Lås ${monthName}?`,
       description:
         "Månedens tal gemmes, som de er nu, og ændrer sig ikke længere, heller ikke hvis der kommer scanninger eller rettelser bagefter. Noterne kan stadig rettes.",
-      confirmLabel: "Frys måned",
+      confirmLabel: "Lås måned",
     });
     if (yes) run(() => onFreeze(month));
   }
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button size="compact" disabled={pending} onClick={() => void freeze()}>
-        {pending ? "Fryser…" : "Frys måned"}
+      <Button variant="secondary" size="compact" disabled={pending} onClick={() => void freeze()}>
+        {pending ? "Låser…" : "Lås måned"}
       </Button>
       <FormMessage result={result} />
     </div>
@@ -36,7 +36,7 @@ type FreezeButtonProps = {
   onFreeze: (month: string) => Promise<ActionResult>;
 };
 
-/** "Frys måned" with a confirmation. The page shows it to an admin, for a month that is over and not frozen. */
+/** "Lås måned" with a confirmation. The page shows it to an admin, for a month that is over and not frozen. */
 export function FreezeButton(props: FreezeButtonProps) {
   return (
     <ConfirmProvider>

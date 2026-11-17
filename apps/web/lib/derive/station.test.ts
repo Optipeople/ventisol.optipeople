@@ -215,6 +215,15 @@ describe("stationStatus", () => {
     expect(stationStatus(f, 600, { standstillMinGapSeconds: 2 * H })).toMatchObject({ status: "slower", standstillSeconds: 0 });
   });
 
+  it("Stod stille as a status needs a share of the shift time so far", () => {
+    const f = { ...base, gaps: [gap(20 * MIN)], observedSeconds: 8 * H };
+    // 20 minutes of 8 hours is under 10 percent: the figure is there, the status is not.
+    expect(stationStatus(f, 600)).toMatchObject({ status: "normal", standstillSeconds: 20 * MIN });
+    expect(stationStatus({ ...f, gaps: [gap(20 * MIN), gap(30 * MIN)] }, 600).status).toBe("stood_still");
+    expect(stationStatus({ ...f, observedSeconds: 2 * H }, 600).status).toBe("stood_still");
+    expect(stationStatus(f, 600, { standstillSharePercent: 0 }).status).toBe("stood_still");
+  });
+
   it("Lang liggetid when an element waited too long before the station", () => {
     const f = { ...base, longestWaitBeforeSeconds: 20 * H, longestWaitBeforeWorkingSeconds: 4 * H };
     expect(stationStatus(f, 600).status).toBe("normal"); // 4 shift hours, under one shift

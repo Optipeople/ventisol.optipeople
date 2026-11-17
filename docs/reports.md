@@ -139,7 +139,7 @@ SQL: `rpt.station_day`. One `StationRow` per active station:
 - A station without scans that day is a row with `hasData: false`, status
   `no_data` ("Ingen data endnu") and null numbers.
 
-`attention` is "N steder at kigge på": the stations with data whose status is
+`attention` is "N stationer afviger fra det normale": the stations with data whose status is
 `slower`, `stood_still` or `long_dwell`. Any role.
 
 ### `getStationPerformance(claims, { from, to, stationNo?, clock? })`: `StationPeriodReport`

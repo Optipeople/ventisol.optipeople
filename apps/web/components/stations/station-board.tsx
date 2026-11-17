@@ -8,6 +8,19 @@ import { StationStatusTag, STATUS_DOT } from "./station-status";
 // and time per piece against normal. The numbers in full are in the table
 // below. Light @optipeople/ui look, like the rest of the portal.
 
+/** Above this many flagged stations the headline counts them instead of naming them. */
+const NAMED_AT_MOST = 3;
+
+/**
+ * The attention headline: the report's sentence while it names few stations,
+ * otherwise "6 af 7 stationer afviger fra det normale". The tiles and the
+ * table mark each one.
+ */
+export function attentionHeadline(attention: StationAttention, total: number): string {
+  if (attention.count <= NAMED_AT_MOST) return attention.sentence;
+  return `${attention.count} af ${total} stationer afviger fra det normale`;
+}
+
 function Tile({ row, href }: { row: StationRow; href: string }) {
   const flagged = row.status !== "normal" && row.status !== "no_data";
   return (
@@ -60,7 +73,7 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <StationStatusTag status={row.status} />
+        <StationStatusTag status={row.status} standstillSeconds={row.standstillSeconds} />
         {(row.openCount ?? 0) > 0 && (
           <span className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">{row.openCount} i gang</span>
         )}
@@ -96,7 +109,7 @@ export function StationBoard({
             className="h-[10px] w-[10px] shrink-0 rounded-full"
             style={{ background: ok ? STATUS_DOT.normal : STATUS_DOT.slower }}
           />
-          {attention.sentence}
+          {attentionHeadline(attention, rows.length)}
         </h2>
         {caption && <p className="text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">{caption}</p>}
       </div>

@@ -62,7 +62,7 @@ export async function saveNotesAction(month: string, highlights: string, decisio
 }
 
 /**
- * "Frys måned": admin only, and only for a month that is over. freezeMonth
+ * "Lås måned": admin only, and only for a month that is over. freezeMonth
  * runs as service and does not audit, so the audit row (snapshot.freeze) is
  * written here as the user, right after.
  */
@@ -73,21 +73,21 @@ export async function freezeMonthAction(month: string): Promise<ActionResult> {
     if (!hasAnyRole(a.role, ["admin"])) return fail(FORBIDDEN_MESSAGE);
     const now = Date.now();
     if (!isMonth(month)) return fail(MONTH_MESSAGE);
-    if (!isMonthOver(month, now)) return fail("Måneden er ikke slut endnu og kan ikke fryses.");
+    if (!isMonthOver(month, now)) return fail("Måneden er ikke slut endnu og kan ikke låses.");
 
     const result = await freezeMonth(month, now);
     if (!result.written) {
       revalidatePath(PATH);
-      return { ok: true, message: "Måneden var allerede frosset." };
+      return { ok: true, message: "Måneden var allerede låst." };
     }
     await withUser(a.claims, (db) =>
       audit(db, "snapshot.freeze", `${month}-01`, { frozenAt: result.frozenAt })
     );
     revalidatePath(PATH);
-    return { ok: true, message: "Måneden er frosset." };
+    return { ok: true, message: "Måneden er låst." };
   } catch (error) {
     console.error("Ledelse: freezing the month failed:", error);
-    return fail("Måneden kunne ikke fryses. Prøv igen om lidt.");
+    return fail("Måneden kunne ikke låses. Prøv igen om lidt.");
   }
 }
 

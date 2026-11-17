@@ -19,7 +19,9 @@ import { StationStatusTag } from "./station-status";
 
 // The Stationer table: one row per station and machine for a day or a
 // period, every figure from lib/reports. A station without data says so
-// once across the row instead of in every cell.
+// once across the row instead of in every cell. The day view sits under the
+// station tiles, which already show status, in progress and missing scan-outs,
+// so the day table leaves those three columns out.
 
 type Mode = "day" | "period";
 
@@ -41,6 +43,12 @@ function Deviation({ row }: { row: StationRow }) {
   );
 }
 
+/** A wait before the station. Null with data: no element came here from an earlier station. */
+function Wait({ seconds }: { seconds: number | null }) {
+  if (seconds == null) return <span className="font-normal text-[var(--ds-grey-medium-05)]">Ingen</span>;
+  return <>{formatDuration(seconds)}</>;
+}
+
 function Count({ value, warn = false }: { value: number | null; warn?: boolean }) {
   if (value == null) return <>{NO_DATA}</>;
   if (value === 0) return <span className="text-[var(--ds-grey-medium-05)]">0</span>;
@@ -57,14 +65,14 @@ export function StationsTable({
   hrefFor: (row: StationRow) => string;
 }) {
   const period = mode === "period";
-  // Columns after Station and Status, for the colSpan of a row without data.
-  const figureColumns = period ? 12 : 9;
+  // Columns after Station (and Status in a period), for the colSpan of a row without data.
+  const figureColumns = period ? 12 : 6;
   return (
     <TableFrame>
       <DataTable stickyHeader stickyFirstColumn>
         <DataTableHead>
           <DataTableHeader>Station</DataTableHeader>
-          <DataTableHeader>Status</DataTableHeader>
+          {period && <DataTableHeader>Status</DataTableHeader>}
           <DataTableHeader align="right">{period ? "Gennem" : "Gennem i dag"}</DataTableHeader>
           {period && <DataTableHeader align="right">Dage</DataTableHeader>}
           <DataTableHeader align="right">Tid pr. stk.</DataTableHeader>
@@ -74,13 +82,13 @@ export function StationsTable({
           {period && <DataTableHeader align="right">Gns. ventetid før</DataTableHeader>}
           <DataTableHeader align="right">Længste ventetid før</DataTableHeader>
           <DataTableHeader>Udnyttelse</DataTableHeader>
-          {period ? (
-            <DataTableHeader align="right">Omarbejde</DataTableHeader>
-          ) : (
-            <DataTableHeader align="right">I gang</DataTableHeader>
+          {period && (
+            <>
+              <DataTableHeader align="right">Omarbejde</DataTableHeader>
+              <DataTableHeader align="right">Mangler ud-scanning</DataTableHeader>
+              <DataTableHeader align="right">Elementer</DataTableHeader>
+            </>
           )}
-          <DataTableHeader align="right">Mangler ud-scanning</DataTableHeader>
-          {period && <DataTableHeader align="right">Elementer</DataTableHeader>}
         </DataTableHead>
         <DataTableBody>
           {rows.map((row) => (
@@ -89,9 +97,11 @@ export function StationsTable({
                 <span className="font-bold">{row.name}</span>
                 <span className="ml-2 text-[12px] text-[var(--ds-grey-medium-05)]">{row.kindLabel}</span>
               </DataTableCell>
-              <DataTableCell className="whitespace-nowrap">
-                <StationStatusTag status={row.status} />
-              </DataTableCell>
+              {period && (
+                <DataTableCell className="whitespace-nowrap">
+                  <StationStatusTag status={row.status} standstillSeconds={row.standstillSeconds} />
+                </DataTableCell>
+              )}
               {row.hasData ? (
                 <>
                   <DataTableCell align="right" className="tabular-nums">
@@ -120,7 +130,7 @@ export function StationsTable({
                   </DataTableCell>
                   {period && (
                     <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
-                      {formatDuration(row.avgWaitBefore.seconds)}
+                      <Wait seconds={row.avgWaitBefore.seconds} />
                     </DataTableCell>
                   )}
                   <DataTableCell
@@ -129,7 +139,7 @@ export function StationsTable({
                       row.status === "long_dwell" ? "font-bold text-[var(--ds-orange-text)]" : ""
                     }`}
                   >
-                    {formatDuration(row.longestWaitBeforeSeconds)}
+                    <Wait seconds={row.longestWaitBeforeSeconds} />
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap">
                     {row.utilisationPercent == null ? (
@@ -138,16 +148,18 @@ export function StationsTable({
                       <MeterBar ratio={row.utilisationPercent / 100} label={`${row.utilisationPercent} %`} />
                     )}
                   </DataTableCell>
-                  <DataTableCell align="right" className="tabular-nums">
-                    <Count value={period ? row.reworkPasses : row.openCount} />
-                  </DataTableCell>
-                  <DataTableCell align="right" className="tabular-nums">
-                    <Count value={row.missingScanOutCount} warn />
-                  </DataTableCell>
                   {period && (
-                    <DataTableCell align="right" className="tabular-nums">
-                      {formatNumber(row.elementsThrough)}
-                    </DataTableCell>
+                    <>
+                      <DataTableCell align="right" className="tabular-nums">
+                        <Count value={row.reworkPasses} />
+                      </DataTableCell>
+                      <DataTableCell align="right" className="tabular-nums">
+                        <Count value={row.missingScanOutCount} warn />
+                      </DataTableCell>
+                      <DataTableCell align="right" className="tabular-nums">
+                        {formatNumber(row.elementsThrough)}
+                      </DataTableCell>
+                    </>
                   )}
                 </>
               ) : (

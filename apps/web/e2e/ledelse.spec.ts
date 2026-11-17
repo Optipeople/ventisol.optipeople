@@ -19,6 +19,18 @@ test.describe("Ledelse", () => {
     await expect(page.getByRole("heading", { name: new RegExp(`^Nøgletal, ${month}`) })).toBeVisible();
   });
 
+  test("one Hent menu holds every file of the report", async ({ page }) => {
+    await page.goto("/ledelse");
+    await page.getByRole("button", { name: "Hent" }).click();
+    const menu = page.getByRole("menu", { name: "Hent" });
+    await expect(menu.getByRole("menuitem", { name: "Månedsrapport (Excel)" })).toHaveAttribute(
+      "href",
+      /^\/api\/export\/xlsx\?report=management_kpis/
+    );
+    await expect(menu.getByRole("menuitem", { name: "Månedsrapport (PDF)" })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Gennemløbstid pr. måned (Excel)" })).toBeVisible();
+  });
+
   test("notes are saved", async ({ page }) => {
     const point = `E2E punkt ${Date.now()}`;
     await page.goto("/ledelse");

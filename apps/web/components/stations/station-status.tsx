@@ -1,5 +1,6 @@
 import { StatusTag, type StatusTagOption } from "@optipeople/ui/blocks";
 import type { StationStatusKey } from "@/lib/derive";
+import { formatDuration } from "@/lib/reports/format";
 
 // The station statuses of lib/derive, as tags and as the dot colours of the
 // station tiles. This file only decides colour and the explanation on hover.
@@ -19,12 +20,26 @@ const OPTIONS: Record<StationStatusKey, StatusTagOption> = {
   stood_still: {
     label: "Stod stille",
     variant: "issue",
-    title: "Stationen holdt pause længere end grænseværdien inden for vagten",
+    title: "Pauserne over grænseværdien fylder mindst en tiendedel af vagten indtil nu",
   },
   no_data: { label: "Ingen data endnu", variant: "default", title: "Ingen scanninger eller maskinedata" },
 };
 
-export function StationStatusTag({ status }: { status: StationStatusKey }) {
+/** `standstillSeconds` puts the length on the tag: "Stod stille 1 t 27 min". */
+export function StationStatusTag({
+  status,
+  standstillSeconds,
+}: {
+  status: StationStatusKey;
+  standstillSeconds?: number | null;
+}) {
+  if (status === "stood_still" && standstillSeconds) {
+    const withLength = {
+      ...OPTIONS,
+      stood_still: { ...OPTIONS.stood_still, label: `Stod stille ${formatDuration(standstillSeconds)}` },
+    };
+    return <StatusTag status={status} options={withLength} />;
+  }
   return <StatusTag status={status} options={OPTIONS} />;
 }
 

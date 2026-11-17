@@ -15,7 +15,7 @@ import {
   SectionCard,
   SectionTitle,
 } from "@optipeople/ui/blocks";
-import { ExportButtons } from "@/components/export/export-buttons";
+import { ExportMenu } from "@/components/export/export-menu";
 import { GapsList, PassesTable } from "@/components/stations/passes-table";
 import { StationStatusTag } from "@/components/stations/station-status";
 import { StationTimeline } from "@/components/stations/station-timeline";
@@ -99,6 +99,14 @@ async function StationDetail({
   const backHref = hrefWith("/stationer", { day: isToday ? undefined : day, clock });
   const period = detail.distributionPeriod;
 
+  // Three cases. The day has passes: everything. The day is empty but the
+  // trend weeks are not: one line for the day, then the weeks. The trend weeks
+  // are empty too: one empty state, and the day picker to look elsewhere.
+  const hasDay = station.hasData || timeline.length > 0;
+  const hasTrend = trend.some((p) => p.countThrough != null);
+  const hasWeeks = hasTrend || distribution.length > 0;
+  const awaitsConnection = station.kind === "machine" || station.kind === "buffer";
+
   return (
     <PageShell width="wide">
       <PageHeader
@@ -107,14 +115,20 @@ async function StationDetail({
         title={station.name}
         intro={`${capitalize(formatLongDay(day))}.`}
         actions={
-          <ExportButtons
-            report="station_performance"
-            params={{ from: period.from, to: period.to, stationNo, clock }}
-            label="Hent 12 uger"
-          />
+          (hasDay || hasWeeks) && (
+            <ExportMenu
+              entries={[
+                {
+                  report: "station_performance",
+                  params: { from: period.from, to: period.to, stationNo, clock },
+                  name: `${TREND_WEEKS} uger`,
+                },
+              ]}
+            />
+          )
         }
       >
-        <StationStatusTag status={station.status} />
+        <StationStatusTag status={station.status} standstillSeconds={station.standstillSeconds} />
       </PageHeader>
 
       {!station.configured && (
@@ -137,104 +151,119 @@ async function StationDetail({
       </DayPicker>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
-      <div className="mt-5">
-        <KpiRow>
-          <KpiTile
-            label={isToday ? "Gennem i dag" : "Gennem"}
-            value={formatNumber(station.countThrough)}
-            hint={
-              station.hasData
-                ? [
-                    (station.openCount ?? 0) > 0 ? `${station.openCount} i gang` : null,
-                    (station.reworkPasses ?? 0) > 0 ? `${station.reworkPasses} omarbejde` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || undefined
-                : undefined
-            }
-            explain="Færdige passager, der sluttede denne dag"
-          />
-          <KpiTile
-            label="Tid pr. stk."
-            value={formatMinutes(station.timePerPiece.seconds)}
-            hint={
-              station.normalSeconds == null
-                ? station.hasData
-                  ? "Intet normalt sat"
-                  : undefined
-                : `Normalt ${formatMinutes(station.normalSeconds)}${
-                    station.deviationPercent == null ? "" : `, ${formatSignedPercent(station.deviationPercent)}`
-                  }`
-            }
-            bad={station.status === "slower"}
-            explain="Medianen af passagerne fra ind til ud, mod normaltiderne vægtet efter elementtyperne"
-          />
-          <KpiTile
-            label="Stod stille"
-            value={station.standstillSeconds === 0 ? "Ingen" : formatDuration(station.standstillSeconds)}
-            hint={
-              station.longestWaitBeforeSeconds != null
-                ? `Længste ventetid før: ${formatDuration(station.longestWaitBeforeSeconds)}`
-                : undefined
-            }
-            bad={station.status === "stood_still"}
-            explain="Pauser i vagten over grænseværdien, lagt sammen"
-          />
-          <KpiTile
-            label="Udnyttelse"
-            value={station.utilisationPercent == null ? NO_DATA : `${station.utilisationPercent} %`}
-            hint={
-              (station.missingScanOutCount ?? 0) > 0 ? `${station.missingScanOutCount} mangler ud-scanning` : undefined
-            }
-            explain="Tid i arbejde i forhold til vagtens tid"
-          />
-        </KpiRow>
-      </div>
-
-      <SectionTitle title="Dagen" aside={timeline.length > 0 ? passesAside(timeline) : undefined} />
-      {timeline.length === 0 ? (
-        <EmptyState>
-          {station.kind === "machine" || station.kind === "buffer"
-            ? `${NO_DATA}. Tallene kommer, når forbindelsen leverer data.`
-            : "Ingen passager på stationen denne dag."}
-        </EmptyState>
-      ) : (
+      {hasDay ? (
         <>
-          <StationTimeline day={day} intervals={timeline} now={now} />
-          {station.gaps.length > 0 && (
-            <div className="mt-4">
-              <p className="mb-2 text-[13px] font-bold leading-[18px] text-[var(--ds-grey-dark-09)]">
-                Pauser i vagten på mindst 5 min
-              </p>
-              <GapsList gaps={station.gaps} day={day} />
-            </div>
-          )}
-          <div className="mt-4">
-            <PassesTable day={day} intervals={timeline} />
+          <div className="mt-5">
+            <KpiRow>
+              <KpiTile
+                label={isToday ? "Gennem i dag" : "Gennem"}
+                value={formatNumber(station.countThrough)}
+                hint={
+                  station.hasData
+                    ? [
+                        (station.openCount ?? 0) > 0 ? `${station.openCount} i gang` : null,
+                        (station.reworkPasses ?? 0) > 0 ? `${station.reworkPasses} omarbejde` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(", ") || undefined
+                    : undefined
+                }
+                explain="Færdige passager, der sluttede denne dag"
+              />
+              <KpiTile
+                label="Tid pr. stk."
+                value={formatMinutes(station.timePerPiece.seconds)}
+                hint={
+                  station.normalSeconds == null
+                    ? station.hasData
+                      ? "Intet normalt sat"
+                      : undefined
+                    : `Normalt ${formatMinutes(station.normalSeconds)}${
+                        station.deviationPercent == null ? "" : `, ${formatSignedPercent(station.deviationPercent)}`
+                      }`
+                }
+                bad={station.status === "slower"}
+                explain="Medianen af passagerne fra ind til ud, mod normaltiderne vægtet efter elementtyperne"
+              />
+              <KpiTile
+                label="Stod stille"
+                value={station.standstillSeconds === 0 ? "Ingen" : formatDuration(station.standstillSeconds)}
+                hint={
+                  station.longestWaitBeforeSeconds != null
+                    ? `Længste ventetid før: ${formatDuration(station.longestWaitBeforeSeconds)}`
+                    : undefined
+                }
+                bad={station.status === "stood_still"}
+                explain="Pauser i vagten over grænseværdien, lagt sammen"
+              />
+              <KpiTile
+                label="Udnyttelse"
+                value={station.utilisationPercent == null ? NO_DATA : `${station.utilisationPercent} %`}
+                hint={
+                  (station.missingScanOutCount ?? 0) > 0 ? `${station.missingScanOutCount} mangler ud-scanning` : undefined
+                }
+                explain="Tid i arbejde i forhold til vagtens tid"
+              />
+            </KpiRow>
           </div>
+
+          <SectionTitle title="Dagen" aside={timeline.length > 0 ? passesAside(timeline) : undefined} />
+          {timeline.length === 0 ? (
+            <EmptyState>Ingen passager på stationen denne dag.</EmptyState>
+          ) : (
+            <>
+              <StationTimeline day={day} intervals={timeline} now={now} />
+              {station.gaps.length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-[13px] font-bold leading-[18px] text-[var(--ds-grey-dark-09)]">
+                    Pauser i vagten på mindst 5 min
+                  </p>
+                  <GapsList gaps={station.gaps} day={day} />
+                </div>
+              )}
+              <div className="mt-4">
+                <PassesTable day={day} intervals={timeline} />
+              </div>
+            </>
+          )}
         </>
+      ) : (
+        <EmptyState
+          className="mt-5"
+          title={hasWeeks ? "Ingen passager denne dag" : `Ingen passager de ${TREND_WEEKS} uger op til denne dag`}
+        >
+          {awaitsConnection
+            ? "Tallene kommer, når forbindelsen leverer data."
+            : hasWeeks
+              ? "Ugerne op til dagen står herunder."
+              : "Vælg en anden dag for at se længere tilbage."}
+        </EmptyState>
       )}
 
-      <div className="mt-8 grid gap-5">
-        <SectionCard
-          title={`Tid pr. stk. uge for uge, ${TREND_WEEKS} uger`}
-          description="Medianen pr. uge mod det normale for den uges elementtyper."
-        >
-          <StationTrendChart points={trend} />
-        </SectionCard>
-        {trend.some((p) => p.countThrough != null) && <StationTrendTable points={trend} />}
-
-        <SectionCard
-          title="Tider pr. elementtype"
-          description={`${capitalize(formatShortDay(period.from))} til ${formatShortDay(period.to)}`.replace(/\.?$/, ".")}
-        >
-          {distribution.length === 0 ? (
-            <p className="text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)]">{NO_DATA}</p>
-          ) : (
-            <TypeDistributionTable rows={distribution} />
+      {hasWeeks && (
+        <div className="mt-8 grid gap-5">
+          {hasTrend && (
+            <SectionCard
+              title={`Tid pr. stk. uge for uge, ${TREND_WEEKS} uger`}
+              description="Medianen pr. uge mod det normale for den uges elementtyper."
+            >
+              <StationTrendChart points={trend} />
+              <StationTrendTable points={trend} />
+            </SectionCard>
           )}
-        </SectionCard>
-      </div>
+          {distribution.length > 0 && (
+            <SectionCard
+              title="Tider pr. elementtype"
+              description={`${capitalize(formatShortDay(period.from))} til ${formatShortDay(period.to)}`.replace(
+                /\.?$/,
+                "."
+              )}
+            >
+              <TypeDistributionTable rows={distribution} />
+            </SectionCard>
+          )}
+        </div>
+      )}
     </PageShell>
   );
 }

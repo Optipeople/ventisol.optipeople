@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Note, Notice, PageHeader, PageShell, PillTabs, SectionCard, SectionTitle } from "@optipeople/ui/blocks";
 import { aiConfigured } from "@/app/api/chat/config";
-import { ExportButtons } from "@/components/export/export-buttons";
+import { ExportMenu, type ExportEntry } from "@/components/export/export-menu";
 import { FreezeButton } from "@/components/management/freeze-button";
 import { MonthPicker } from "@/components/management/month-picker";
 import { NotesEditor } from "@/components/management/notes-editor";
@@ -11,7 +11,6 @@ import {
   LeadTimeChart,
   LeadTimeTable,
   ManagementKpis,
-  SectionHeading,
   StationsTable,
 } from "@/components/management/report-sections";
 import { requireCapability } from "@/lib/auth";
@@ -79,7 +78,7 @@ export default async function ManagementPage({
 
   const choices = monthChoices(now).map((m) => ({
     month: m,
-    label: `${capitalize(monthTitle(`${m}-01`))}${frozenMonths.has(m) ? " (frosset)" : m === currentMonth(now) ? " (i gang)" : ""}`,
+    label: `${capitalize(monthTitle(`${m}-01`))}${frozenMonths.has(m) ? " (låst)" : m === currentMonth(now) ? " (i gang)" : ""}`,
   }));
   const hrefs = Object.fromEntries(choices.map((c) => [c.month, monthHref(c.month, now, askedClock)]));
   // A snapshot is stored on the clock it was frozen with and cannot switch.
@@ -87,12 +86,25 @@ export default async function ManagementPage({
   const clockLocked = result.frozen;
   const period = report.period;
 
+  // Every file of the page, in the one "Hent" menu of the header.
+  const exports: ExportEntry[] = [
+    { report: "management_kpis", params: { month, clock: askedClock }, name: "Månedsrapport", pdf: true },
+    { report: "monthly_lead_time", params: { month, clock: askedClock }, name: "Gennemløbstid pr. måned" },
+  ];
+  if (can(ctx.role, "costs.view")) {
+    exports.push({
+      report: "calc_vs_measured",
+      params: { from: period.from, to: period.to, clock: askedClock },
+      name: "Kalkule mod målt",
+    });
+  }
+
   return (
     <PageShell width="wide">
       <PageHeader
         title="Ledelse"
-        intro={`Månedsrapport for ${name}: nøgletal mod måneden før, gennemløbstid, flaskehals, stationer og kalkule mod målt.`}
-        actions={<ExportButtons report="management_kpis" params={{ month, clock: askedClock }} pdf label="Hent" />}
+        intro={`Månedsrapport for ${name}.`}
+        actions={<ExportMenu entries={exports} />}
       />
 
       <MonthPicker month={month} choices={choices} hrefs={hrefs}>
@@ -102,7 +114,7 @@ export default async function ManagementPage({
           </p>
           {clockLocked ? (
             <p className="text-[14px] leading-[28px] text-[var(--ds-grey-dark-09)]">
-              {clock === "working" ? "Arbejdstid" : "Hele døgnet"} (frosset)
+              {clock === "working" ? "Arbejdstid" : "Hele døgnet"} (låst)
             </p>
           ) : (
             <PillTabs
@@ -119,44 +131,43 @@ export default async function ManagementPage({
       {clamped && <Note>Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
       {clockLocked && askedClock && askedClock !== clock && (
         <Note>
-          En frosset måned vises med den tid, den blev frosset med ({clock === "working" ? "arbejdstid" : "hele døgnet"}).
+          En låst måned vises med den tid, den blev låst med ({clock === "working" ? "arbejdstid" : "hele døgnet"}).
         </Note>
       )}
 
       <div className="mt-4">
         {result.frozen ? (
           <Notice tone="info">
-            <strong>Frosset.</strong> Tallene for {name} blev låst {formatDayTime(result.frozenAt)} og ændrer sig ikke
-            længere. Noterne kan stadig rettes.
+            <strong>Låste tal.</strong> Tallene for {name} blev gemt {formatDayTime(result.frozenAt)} og ændrer sig
+            ikke længere, heller ikke ved sene scanninger eller rettelser. Noterne kan stadig rettes.
           </Notice>
         ) : isCurrent ? (
           <Notice tone="warning">
-            <strong>Live.</strong> {capitalize(name)} er ikke slut. Tallene er beregnet nu og ændrer sig, indtil
-            måneden fryses den 1. i næste måned. Ændringerne er mod hele måneden før, så antal ordrer ligger lavt, indtil
-            måneden er omme.
+            <strong>Foreløbige tal.</strong> {capitalize(name)} er ikke slut, så tallene ændrer sig dag for dag. De
+            låses automatisk den 1. i næste måned. Ændringerne er mod hele måneden før, så antal ordrer ligger lavt,
+            indtil måneden er omme.
           </Notice>
         ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <Notice tone="warning" className="min-w-0 flex-1">
-              <strong>Ikke frosset.</strong> {capitalize(name)} er slut, men tallene er beregnet nu og kan stadig
-              ændre sig.
-              {canFreeze ? "" : " Månedens tal fryses automatisk den 1. i måneden efter, eller af en administrator."}
-            </Notice>
-            {canFreeze && <FreezeButton month={month} monthName={name} onFreeze={freezeMonthAction} />}
+          // Notice is a paragraph and cannot hold the button, so this is the same box as a div.
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-4 py-3 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]">
+              <p className="min-w-0 flex-1 basis-[320px]">
+                <strong>Foreløbige tal.</strong> {capitalize(name)} er slut, men sene scanninger og rettelser kan
+                stadig ændre tallene. Når måneden låses, gemmes tallene, som de er, så rapporten ikke ændrer sig
+                bagefter.
+                {canFreeze ? "" : " Det sker automatisk den 1. i måneden efter, eller når en administrator gør det."}
+              </p>
+              {canFreeze && <FreezeButton month={month} monthName={name} onFreeze={freezeMonthAction} />}
           </div>
         )}
       </div>
 
       <SectionTitle
         title={`Nøgletal, ${name}`}
-        aside={`Mod måneden før. ${clock === "working" ? "Kun tid i vagterne tæller." : "Al tid tæller, også nætter og weekender."}`}
+        aside={clock === "working" ? "Kun tid i vagterne tæller." : "Al tid tæller, også nætter og weekender."}
       />
       <ManagementKpis kpis={report.kpis} />
 
-      <SectionHeading
-        title="Gennemløbstid pr. ordre, måned for måned"
-        actions={<ExportButtons report="monthly_lead_time" params={{ month, clock: askedClock }} />}
-      />
+      <SectionTitle title="Gennemløbstid pr. ordre, måned for måned" />
       <SectionCard>
         <LeadTimeChart points={report.leadTimeMonthly} kind="month" />
       </SectionCard>
@@ -179,10 +190,7 @@ export default async function ManagementPage({
 
       {can(ctx.role, "costs.view") && (
         <>
-          <SectionHeading
-            title="Kalkule mod målt"
-            actions={<ExportButtons report="calc_vs_measured" params={{ from: period.from, to: period.to, clock: askedClock }} />}
-          />
+          <SectionTitle title="Kalkule mod målt" />
           {report.calcVsMeasured.byElementType.length > 0 ? (
             <>
               <CalcVsMeasuredTable calc={report.calcVsMeasured} />

@@ -2,8 +2,6 @@
 // what lib/reports returned and only format it (lib/reports/format), so a
 // null reads "Ingen data endnu" and never 0.
 
-import type { ReactNode } from "react";
-
 import {
   DataTable,
   DataTableBody,
@@ -41,19 +39,6 @@ import {
 } from "@/lib/reports";
 
 const MOD = "mod sidste måned";
-
-/**
- * SectionTitle with buttons on the right. SectionTitle puts its aside in a
- * <p>, which cannot hold the export links' <div>.
- */
-export function SectionHeading({ title, actions }: { title: string; actions: ReactNode }) {
-  return (
-    <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-      <h2 className="text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">{title}</h2>
-      {actions}
-    </div>
-  );
-}
 
 /** The change line under a KPI, or why there is none. */
 function change(text: string, value: number | null): string {
