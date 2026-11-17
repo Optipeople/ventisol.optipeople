@@ -44,7 +44,7 @@ Which tabs a user sees depends on the portal role (`admin`, `ledelse`,
 - Sync jobs (Vercel Cron, `vercel.json`) read OptiCloud with a service account
   into `raw.*`, derive `core.*` and `doc.*`, and the pages read `rpt.*` SQL
   functions through `lib/reports`.
-- AI SDK through the Vercel AI Gateway for the chat and the Ledelse draft.
+- AI SDK with the Anthropic API (`@ai-sdk/anthropic`) for the chat and the Ledelse draft.
 - Vitest for unit and database tests (PGlite, Postgres in WASM, in process:
   no Docker, no network).
 
@@ -103,7 +103,7 @@ npm run test:e2e       # Playwright against a fixture server
 CI (`.github/workflows/web-ci.yml`) runs `next typegen`, typecheck, lint,
 tests and build. After moving a page, a stale `.next/types` can make `tsc`
 fail until `next typegen`, a dev server or a build regenerates it. The model
-evals in `lib/tools/evals` skip unless `AI_GATEWAY_API_KEY` is exported in the
+evals in `lib/tools/evals` skip unless `ANTHROPIC_API_KEY` is exported in the
 shell (vitest does not read `.env.local`). `VENTISOL_TEST_DB_CACHE=0` turns
 off the cached migrated PGlite the database tests start from.
 
@@ -116,8 +116,8 @@ off the cached migrated PGlite the database tests start from.
 | `POSTGRES_URL` | no | Read when `DATABASE_URL` is empty; the Vercel Supabase integration sets it. |
 | `OPTICLOUD_SERVICE_USER`, `OPTICLOUD_SERVICE_PASSWORD` | yes, for the sync | The OptiCloud service account the sync jobs (`lib/sync`) read scans and order documents with. |
 | `CRON_SECRET` | yes, for the sync | Vercel Cron sends `Authorization: Bearer <value>` to `app/api/cron/*`. Without it every cron call is refused. Vercel sets it in production; locally any long random string. |
-| `AI_GATEWAY_API_KEY` | for the chat, locally | AI Gateway key. Not needed on Vercel, where OIDC is used (`VERCEL_OIDC_TOKEN` after `vercel env pull` works too). Without either the chat says "AI er ikke konfigureret". |
-| `CHAT_MODEL` | no | AI Gateway model id for the chat and the Ledelse draft, default `anthropic/claude-sonnet-5.5`. |
+| `ANTHROPIC_API_KEY` | for the chat | Anthropic API key, locally and on Vercel. Without it the chat says "AI er ikke konfigureret". |
+| `CHAT_MODEL` | no | Anthropic model id for the chat and the Ledelse draft, default `claude-sonnet-5-5`. |
 | `CHAT_DAILY_TOKEN_BUDGET` | no | Tokens one user may spend per Copenhagen day, default 2000000. |
 | `OPTIPEOPLE_API_URL` | no | Optipeople API base, default `https://api.optipeople.dk`. Login and the service account. |
 | `SITE_URL` | no | Public address, default `https://ventisol.optipeople.dk`. The password-reset email links here; `http://localhost:3000` in dev. Never taken from the Host header. |

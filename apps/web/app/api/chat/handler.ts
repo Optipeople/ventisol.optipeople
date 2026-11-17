@@ -24,8 +24,8 @@ import type { PortalAccess } from "@/lib/auth";
 import { can } from "@/lib/portal/roles";
 import { allowAttempt, clientIp, createAttemptLimits } from "@/lib/rate-limit";
 import { buildSystemPrompt, type ToolContext } from "@/lib/tools";
-import { dailyTokenBudget, FALLBACK_CHAT_MODELS } from "./config";
-import { estimateCostUsd, gatewayCost } from "./pricing";
+import { dailyTokenBudget } from "./config";
+import { estimateCostUsd } from "./pricing";
 import { beginTurn, finishTurn, tokensUsedToday, UUID_RE, type TurnUsage } from "./store";
 import { aiTools } from "./tools";
 
@@ -67,13 +67,12 @@ export const defaultAllow = (ip: string, user: string) => allowAttempt(chatLimit
 /** What a finished step tells about its cost (a slice of the AI SDK's StepResult). */
 export interface StepUsage {
   usage: LanguageModelUsage;
-  providerMetadata?: unknown;
   response?: { modelId?: string };
 }
 
 /**
- * The usage of the finished steps, summed. The cost is the gateway's own
- * when every step reports one, else the list price. Null without steps.
+ * The usage of the finished steps, summed. The cost is the list price of
+ * those tokens. Null without steps.
  */
 export function usageFromSteps(steps: readonly StepUsage[], fallbackModel: string): TurnUsage | null {
   if (steps.length === 0) return null;
@@ -84,11 +83,7 @@ export function usageFromSteps(steps: readonly StepUsage[], fallbackModel: strin
     tokens.outputTokens += step.usage.outputTokens ?? 0;
     tokens.cachedTokens += step.usage.inputTokenDetails?.cacheReadTokens ?? 0;
   }
-  const reported = steps.map((s) => gatewayCost(s.providerMetadata));
-  const costUsd = reported.every((c) => c != null)
-    ? reported.reduce<number>((sum, c) => sum + (c ?? 0), 0)
-    : estimateCostUsd(model, tokens);
-  return { model, ...tokens, costUsd };
+  return { model, ...tokens, costUsd: estimateCostUsd(model, tokens) };
 }
 
 /** About 4 characters per token: the prompt was sent even when no step finished. */
@@ -176,11 +171,10 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
     stopWhen: isStepCount(MAX_STEPS),
     reasoning: "medium",
     providerOptions: {
-      gateway: {
-        caching: "auto",
-        models: FALLBACK_CHAT_MODELS,
-        user: claims.optiUserId,
-        tags: ["ventisol-chat"],
+      // Prompt caching of the system prompt, the tools and the history.
+      anthropic: {
+        cacheControl: { type: "ephemeral" },
+        metadata: { userId: claims.optiUserId },
       },
     },
     onToolExecutionEnd: ({ toolCall, toolExecutionMs }) => {

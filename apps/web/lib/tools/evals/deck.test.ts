@@ -1,26 +1,26 @@
 // The six questions from the sales deck (docs/web-portal-plan.md section 1
-// and 5.2) against the real model through the AI Gateway, on the seeded
+// and 5.2) against the real model on the Anthropic API, on the seeded
 // test database. Asserts tool choice: the right tool is called, and a role
 // never reaches a tool it may not use.
 //
 // Costs real money, so it runs only with a key in the shell (vitest does not
 // read .env.local):
 //
-//   AI_GATEWAY_API_KEY=... npx vitest run lib/tools/evals
+//   ANTHROPIC_API_KEY=... npx vitest run lib/tools/evals
 //
 // Without the key every case is skipped. CHAT_MODEL picks the model as in
 // the route.
 
 import { generateText, isStepCount } from "ai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { chatModelId, FALLBACK_CHAT_MODELS } from "@/app/api/chat/config";
+import { chatModel } from "@/app/api/chat/config";
 import { aiTools } from "@/app/api/chat/tools";
 import type { Claims } from "@/lib/db";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
 import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
 import { buildSystemPrompt } from "@/lib/tools";
 
-const enabled = Boolean(process.env.AI_GATEWAY_API_KEY?.trim());
+const enabled = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 
 interface DeckCase {
   question: string;
@@ -52,13 +52,13 @@ const CASES: DeckCase[] = [
 async function ask(c: { question: string; claims: Claims }) {
   const tools = aiTools({ claims: c.claims, now: NOW });
   const result = await generateText({
-    model: chatModelId(),
+    model: chatModel(),
     instructions: buildSystemPrompt({ now: NOW, role: c.claims.role }),
     prompt: c.question,
     tools,
     stopWhen: isStepCount(6),
     reasoning: "medium",
-    providerOptions: { gateway: { caching: "auto", models: FALLBACK_CHAT_MODELS, tags: ["ventisol-chat-eval"] } },
+    providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
   });
   return { called: result.toolCalls.map((t) => t.toolName), text: result.text };
 }

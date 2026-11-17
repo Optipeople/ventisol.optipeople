@@ -1,12 +1,12 @@
 // POST /api/chat: the streaming chat (docs/web-portal-plan.md section 5).
-// The work is in handler.ts; this file wires in the session, the AI Gateway
+// The work is in handler.ts; this file wires in the session, the Anthropic
 // model and the clock.
 //
 // DELETE /api/chat?id=<conversation>: hides a conversation from the list.
 
 import { getPortalAccess } from "@/lib/auth";
 import { can } from "@/lib/portal/roles";
-import { aiConfigured, chatModelId } from "./config";
+import { aiConfigured, chatModel, chatModelId } from "./config";
 import { defaultAllow, handleChat } from "./handler";
 import { archiveConversation } from "./store";
 
@@ -16,7 +16,7 @@ export const maxDuration = 120;
 export async function POST(request: Request): Promise<Response> {
   return handleChat(request, {
     access: getPortalAccess,
-    model: chatModelId,
+    model: chatModel,
     modelId: chatModelId,
     configured: aiConfigured,
     now: Date.now,

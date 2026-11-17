@@ -28,7 +28,7 @@ function mockModel(text = JSON.stringify(ANSWER)): MockLanguageModelV4 {
         inputTokens: { total: 1200, noCache: 1000, cacheRead: 200, cacheWrite: undefined },
         outputTokens: { total: 150, text: 150, reasoning: undefined },
       },
-      response: { id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+      response: { id: "r1", modelId: "claude-sonnet-5-5", timestamp: new Date(NOW) },
       warnings: [],
     }),
   });
@@ -38,7 +38,7 @@ function deps(claims: Claims | null, model: MockLanguageModelV4, over: Partial<D
   return {
     access: async () => (claims ? { role: claims.role, claims, roleDegraded: false } : null),
     model: () => model as unknown as LanguageModel,
-    modelId: () => "anthropic/claude-sonnet-5.5",
+    modelId: () => "claude-sonnet-5-5",
     configured: () => true,
     now: () => NOW,
     ip: async () => "127.0.0.1",
@@ -115,7 +115,7 @@ describe("draftManagementNotes", () => {
     expect(await usageRows()).toEqual([
       {
         opti_user_id: ledelse.optiUserId,
-        model: "anthropic/claude-sonnet-5.5",
+        model: "claude-sonnet-5-5",
         input_tokens: 1200,
         output_tokens: 150,
         cached_tokens: 200,

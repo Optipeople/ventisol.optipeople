@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 
-// playwright.config.ts starts the server with no AI Gateway key and no OIDC token.
+// playwright.config.ts starts the server with no Anthropic API key.
 test("chat says AI is not configured without a key", async ({ page }) => {
   await page.goto("/chat");
   await expect(page.getByRole("heading", { level: 1, name: "Chat" })).toBeVisible();

@@ -31,12 +31,12 @@ function mockModel(): MockLanguageModelV4 {
       const chunks: LanguageModelV4StreamPart[] =
         call === 1
           ? [
-              { type: "response-metadata", id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+              { type: "response-metadata", id: "r1", modelId: "claude-sonnet-5-5", timestamp: new Date(NOW) },
               { type: "tool-call", toolCallId: "call-1", toolName: "order_status", input: '{"orderNo":50006}' },
               { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
             ]
           : [
-              { type: "response-metadata", id: "r2", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+              { type: "response-metadata", id: "r2", modelId: "claude-sonnet-5-5", timestamp: new Date(NOW) },
               { type: "text-start", id: "t1" },
               { type: "text-delta", id: "t1", delta: "Ordre 50006 er i gang." },
               { type: "text-end", id: "t1" },
@@ -51,7 +51,7 @@ function deps(claims: Claims | null, model: MockLanguageModelV4, overrides: Part
   return {
     access: async () => (claims ? { role: claims.role, claims, roleDegraded: false } : null),
     model: () => model as unknown as LanguageModel,
-    modelId: () => "anthropic/claude-sonnet-5.5",
+    modelId: () => "claude-sonnet-5-5",
     configured: () => true,
     now: () => NOW,
     allow: async () => true,
@@ -99,7 +99,7 @@ describe("refusals", () => {
     expect(res.status).toBe(401);
   });
 
-  it("503 when the AI Gateway is not configured", async () => {
+  it("503 when the Anthropic API is not configured", async () => {
     const res = await handleChat(post(question("Hej")), deps(viewer, mockModel(), { configured: () => false }));
     expect(res.status).toBe(503);
   });
@@ -180,7 +180,7 @@ describe("a turn", () => {
       );
       return rows.length > 0 ? rows : null;
     });
-    expect(usageRow).toMatchObject({ model: "anthropic/claude-sonnet-5.5", input_tokens: 2000, output_tokens: 200, cached_tokens: 400 });
+    expect(usageRow).toMatchObject({ model: "claude-sonnet-5-5", input_tokens: 2000, output_tokens: 200, cached_tokens: 400 });
     // List price: 1600 uncached at $2, 400 cached at $0.20, 200 out at $10 per million.
     expect(Number(usageRow.cost_usd)).toBeCloseTo(0.00528, 6);
   });
@@ -310,7 +310,7 @@ describe("usage when the stream fails", () => {
         call += 1;
         if (call > 1) throw new Error("provider down");
         const chunks: LanguageModelV4StreamPart[] = [
-          { type: "response-metadata", id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+          { type: "response-metadata", id: "r1", modelId: "claude-sonnet-5-5", timestamp: new Date(NOW) },
           { type: "tool-call", toolCallId: "call-1", toolName: "order_status", input: '{"orderNo":50006}' },
           { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage },
         ];
@@ -328,7 +328,7 @@ describe("usage when the stream fails", () => {
       doStream: async () => ({
         stream: simulateReadableStream({
           chunks: [
-            { type: "response-metadata", id: "r1", modelId: "anthropic/claude-sonnet-5.5", timestamp: new Date(NOW) },
+            { type: "response-metadata", id: "r1", modelId: "claude-sonnet-5-5", timestamp: new Date(NOW) },
             { type: "error", error: new Error("overloaded") },
             { type: "finish", finishReason: { unified: "error", raw: undefined }, usage },
           ] satisfies LanguageModelV4StreamPart[],

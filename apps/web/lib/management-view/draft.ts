@@ -13,8 +13,8 @@
 
 import { generateText, Output, type LanguageModel } from "ai";
 import { z } from "zod";
-import { dailyTokenBudget, FALLBACK_CHAT_MODELS } from "@/app/api/chat/config";
-import { estimateCostUsd, gatewayCost } from "@/app/api/chat/pricing";
+import { dailyTokenBudget } from "@/app/api/chat/config";
+import { estimateCostUsd } from "@/app/api/chat/pricing";
 import { tokensUsedToday } from "@/app/api/chat/store";
 import type { PortalAccess } from "@/lib/auth";
 import { withUser, type Claims } from "@/lib/db";
@@ -201,11 +201,7 @@ export async function draftManagementNotes(month: unknown, deps: DraftDeps): Pro
       prompt: `Lav udkastet for ${digest.maaned}. Månedens tal:\n${JSON.stringify(digest, null, 2)}`,
       output: Output.object({ schema: draftSchema }),
       providerOptions: {
-        gateway: {
-          models: FALLBACK_CHAT_MODELS,
-          user: claims.optiUserId,
-          tags: ["ventisol-ledelse-draft"],
-        },
+        anthropic: { metadata: { userId: claims.optiUserId } },
       },
     });
 
@@ -215,10 +211,7 @@ export async function draftManagementNotes(month: unknown, deps: DraftDeps): Pro
       outputTokens: result.totalUsage.outputTokens ?? 0,
       cachedTokens: result.totalUsage.inputTokenDetails?.cacheReadTokens ?? 0,
     };
-    const reported = result.steps.map((s) => gatewayCost(s.providerMetadata));
-    const costUsd = reported.every((c) => c != null)
-      ? reported.reduce<number>((sum, c) => sum + (c ?? 0), 0)
-      : estimateCostUsd(model, tokens);
+    const costUsd = estimateCostUsd(model, tokens);
     try {
       await recordUsage(claims, { model, ...tokens, costUsd });
     } catch (error) {

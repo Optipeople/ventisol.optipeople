@@ -7,7 +7,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { ZodError } from "zod";
-import { aiConfigured, chatModelId } from "@/app/api/chat/config";
+import { aiConfigured, chatModel, chatModelId } from "@/app/api/chat/config";
 import { getPortalAccess } from "@/lib/auth";
 import { withUser } from "@/lib/db";
 import { defaultDraftAllow, draftManagementNotes, type DraftResult } from "@/lib/management-view/draft";
@@ -99,7 +99,7 @@ export async function freezeMonthAction(month: string): Promise<ActionResult> {
 export async function draftNotesAction(month: string): Promise<DraftResult> {
   return draftManagementNotes(month, {
     access: getPortalAccess,
-    model: chatModelId,
+    model: chatModel,
     modelId: chatModelId,
     configured: aiConfigured,
     now: Date.now,

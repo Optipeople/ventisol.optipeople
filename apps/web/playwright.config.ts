@@ -42,8 +42,7 @@ export default defineConfig({
       VENTISOL_DIST_DIR: ".next-e2e",
       NEXT_TELEMETRY_DISABLED: "1",
       // The chat page must show "AI er ikke konfigureret".
-      AI_GATEWAY_API_KEY: "",
-      VERCEL_OIDC_TOKEN: "",
+      ANTHROPIC_API_KEY: "",
     },
   },
 });

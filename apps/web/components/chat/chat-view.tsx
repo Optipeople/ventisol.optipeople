@@ -83,7 +83,7 @@ export function ChatView({
 }: {
   conversationId: string;
   initialMessages: UIMessage[];
-  /** False: no AI Gateway credentials on the server. The page says so and the field is off. */
+  /** False: no Anthropic API key on the server. The page says so and the field is off. */
   configured: boolean;
   /** The conversation does not exist yet: the URL gets its id after the first question. */
   isNew: boolean;
@@ -125,8 +125,8 @@ export function ChatView({
     <div className="flex min-h-[60vh] flex-col">
       {!configured && (
         <Notice tone="warning" className="mb-4">
-          AI er ikke konfigureret på denne server, så chatten kan ikke svare. Sæt AI_GATEWAY_API_KEY lokalt; på Vercel
-          bruges OIDC. Tidligere samtaler kan stadig læses.
+          AI er ikke konfigureret på denne server, så chatten kan ikke svare. Sæt ANTHROPIC_API_KEY på
+          serveren. Tidligere samtaler kan stadig læses.
         </Notice>
       )}
 

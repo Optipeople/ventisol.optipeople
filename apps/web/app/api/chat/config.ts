@@ -1,14 +1,14 @@
 // Chat configuration from the environment. Server only.
 //
-//   AI_GATEWAY_API_KEY   local runs and tests against the real model. On
-//                        Vercel the Gateway authenticates with OIDC instead.
-//   CHAT_MODEL           AI Gateway model id, default anthropic/claude-sonnet-5.5.
+//   ANTHROPIC_API_KEY    the Anthropic API key. The chat and the Ledelse draft
+//                        call the Anthropic API directly.
+//   CHAT_MODEL           Anthropic model id, default claude-sonnet-5-5.
 //   CHAT_DAILY_TOKEN_BUDGET  tokens one user may spend per Copenhagen day.
 
-export const DEFAULT_CHAT_MODEL = "anthropic/claude-sonnet-5.5";
+import { anthropic } from "@ai-sdk/anthropic";
+import type { LanguageModel } from "ai";
 
-/** Tried by the Gateway when the main model fails. */
-export const FALLBACK_CHAT_MODELS = ["anthropic/claude-sonnet-5"];
+export const DEFAULT_CHAT_MODEL = "claude-sonnet-5-5";
 
 export const DEFAULT_DAILY_TOKEN_BUDGET = 2_000_000;
 
@@ -16,15 +16,14 @@ export function chatModelId(): string {
   return process.env.CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
 }
 
-/**
- * Whether the AI Gateway can be reached with credentials: a key, or OIDC on
- * Vercel (VERCEL_OIDC_TOKEN locally after `vercel env pull`, or a Vercel
- * deployment, where the token comes with each request).
- */
+/** The chat model on the Anthropic API; the key is read from ANTHROPIC_API_KEY. */
+export function chatModel(): LanguageModel {
+  return anthropic(chatModelId());
+}
+
+/** Whether the Anthropic API can be reached: a key is set. */
 export function aiConfigured(): boolean {
-  return Boolean(
-    process.env.AI_GATEWAY_API_KEY?.trim() || process.env.VERCEL_OIDC_TOKEN?.trim() || process.env.VERCEL === "1"
-  );
+  return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 }
 
 export function dailyTokenBudget(): number {

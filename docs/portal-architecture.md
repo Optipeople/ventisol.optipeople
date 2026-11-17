@@ -143,5 +143,5 @@ Every variable, with defaults and examples, is in `apps/web/README.md` and `apps
 | `DATABASE_URL` or `POSTGRES_URL` | `lib/db` | pooled Postgres connection string |
 | `OPTICLOUD_SERVICE_USER`, `OPTICLOUD_SERVICE_PASSWORD` | `lib/sync` | the service account that reads scans and documents |
 | `CRON_SECRET` | `app/api/cron/*` | Vercel sets and sends it; without it every cron call is refused |
-| `AI_GATEWAY_API_KEY` | chat, Ledelse draft | not needed on Vercel, where OIDC is used |
-| `CHAT_MODEL`, `CHAT_DAILY_TOKEN_BUDGET` | `app/api/chat/config.ts` | model id (default `anthropic/claude-sonnet-5.5`), tokens per user per day (default 2,000,000) |
+| `ANTHROPIC_API_KEY` | chat, Ledelse draft | the Anthropic API key, also on Vercel |
+| `CHAT_MODEL`, `CHAT_DAILY_TOKEN_BUDGET` | `app/api/chat/config.ts` | Anthropic model id (default `claude-sonnet-5-5`), tokens per user per day (default 2,000,000) |
