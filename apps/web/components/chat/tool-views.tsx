@@ -2,7 +2,6 @@
 // prepared (ToolView in lib/tools/types.ts). Values come formatted from the
 // server, so this file knows nothing about the report types.
 
-import Link from "next/link";
 import { BarList, KpiTile, Note } from "@optipeople/ui/blocks";
 import {
   CheckIcon,
@@ -176,23 +175,16 @@ export function ToolFailedLine({ name }: { name: string }) {
 
 /**
  * One finished tool call, without a box around it: a finished step line as in
- * Opti Assist, a link to the page with the same numbers, then its views.
+ * Opti Assist, then its views.
  */
 export function ToolResultCard({ name, result }: { name: string; result: ToolResult | undefined }) {
   const views = result?.views ?? [];
   return (
     <div className="@container msg-in flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
-        <span className="flex items-center gap-2">
-          <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-          {toolLabel(name)}
-        </span>
-        {result?.href && (
-          <Link href={result.href} className="font-medium text-[var(--color-brand)] underline underline-offset-2">
-            Se i portalen
-          </Link>
-        )}
-      </div>
+      <p className="flex items-center gap-2 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
+        <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+        {toolLabel(name)}
+      </p>
       {views.length === 0 ? (
         <p className="text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">Data hentet.</p>
       ) : (
