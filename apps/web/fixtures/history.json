@@ -1,6 +1,6 @@
 {"version":1,
 "days":65,
-"stations":[{"no":1,"name":"Station 10","kind":"Assembly","seconds":420},{"no":2,"name":"Station 20","kind":"Assembly","seconds":540},{"no":3,"name":"Station 30","kind":"Assembly","seconds":420},{"no":4,"name":"Station 40","kind":"Assembly","seconds":360},{"no":5,"name":"Montagebord 1","kind":"Assembly","seconds":1080},{"no":6,"name":"Montagebord 2","kind":"Assembly","seconds":1080},{"no":7,"name":"Pakning","kind":"Packing","seconds":180}],
+"stations":[{"no":1,"name":"Station 10","kind":"Assembly","seconds":420},{"no":2,"name":"Station 20","kind":"Assembly","seconds":540},{"no":3,"name":"Station 30","kind":"Assembly","seconds":420},{"no":4,"name":"Station 40","kind":"Assembly","seconds":360},{"no":5,"name":"Station 50","kind":"Assembly","seconds":1080},{"no":6,"name":"Station 60","kind":"Assembly","seconds":1080},{"no":7,"name":"Station 70","kind":"Packing","seconds":180}],
 "typeFactors":{"vindue-1-fag":1,"vindue-2-fag":1.1,"vindue-3-fag":1.25,"doer":1.4,"terrassedoer":1.3,"andet":0.8},
 "orders":[
 {"no":61000,"document":true,"customer":["Tømrerfirmaet Egholm ApS","Eksempelvej 80","0001 Prøveby"],"address":["Tømrerfirmaet Egholm ApS","Prøvegade 96","0002 Eksempelstrup"],"handler":"EF","printBack":4,"dueDay":2,"positions":[{"n":1,"q":2,"system":"Profil 70 Classic","w":560,"h":1060,"kg":21,"fields":["Topstyret"]}]},

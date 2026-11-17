@@ -8,7 +8,7 @@ test.describe("Stationer", () => {
     const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "Gennem i dag" }) });
     const rows = table.getByRole("row");
     await expect(rows.filter({ hasText: "Station 10" })).toHaveCount(1);
-    await expect(rows.filter({ hasText: "Pakning" }).first()).toBeVisible();
+    await expect(rows.filter({ hasText: "Station 70" }).first()).toBeVisible();
   });
 
   test("switches to the period view", async ({ page }) => {

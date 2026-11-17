@@ -25,9 +25,9 @@ const STATIONS = [
   { no: 2, name: "Station 20", kind: "Assembly", min: 4, max: 7 },
   { no: 3, name: "Station 30", kind: "Assembly", min: 3, max: 6 },
   { no: 4, name: "Station 40", kind: "Assembly", min: 2, max: 5 },
-  { no: 5, name: "Montagebord 1", kind: "Assembly", min: 7, max: 12 },
-  { no: 6, name: "Montagebord 2", kind: "Assembly", min: 7, max: 12 },
-  { no: 7, name: "Pakning", kind: "Packing", min: 1, max: 3 },
+  { no: 5, name: "Station 50", kind: "Assembly", min: 7, max: 12 },
+  { no: 6, name: "Station 60", kind: "Assembly", min: 7, max: 12 },
+  { no: 7, name: "Station 70", kind: "Packing", min: 1, max: 3 },
 ];
 
 // mulberry32
@@ -176,9 +176,9 @@ console.log(`${rows.length} rows, ${new Set(rows.map((r) => r.values.orderNo)).s
     { no: 2, name: "Station 20", kind: "Assembly", min: 7, max: 11 },
     { no: 3, name: "Station 30", kind: "Assembly", min: 5, max: 9 },
     { no: 4, name: "Station 40", kind: "Assembly", min: 4, max: 8 },
-    { no: 5, name: "Montagebord 1", kind: "Assembly", min: 14, max: 22 },
-    { no: 6, name: "Montagebord 2", kind: "Assembly", min: 14, max: 22 },
-    { no: 7, name: "Pakning", kind: "Packing", min: 2, max: 4 },
+    { no: 5, name: "Station 50", kind: "Assembly", min: 14, max: 22 },
+    { no: 6, name: "Station 60", kind: "Assembly", min: 14, max: 22 },
+    { no: 7, name: "Station 70", kind: "Packing", min: 2, max: 4 },
   ];
   const byNo = new Map(H_STATIONS.map((s) => [s.no, s]));
 
