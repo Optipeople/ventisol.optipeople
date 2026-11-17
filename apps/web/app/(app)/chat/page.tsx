@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { randomUUID } from "node:crypto";
-import { PageHeader, PageShell } from "@optipeople/ui/blocks";
 import { aiConfigured } from "@/app/api/chat/config";
 import { listConversations, loadConversation, UUID_RE } from "@/app/api/chat/store";
+import { ChatShell } from "@/components/chat/chat-shell";
 import { ChatView } from "@/components/chat/chat-view";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { requireCapability } from "@/lib/auth";
@@ -24,29 +24,27 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
   ]);
   const conversationId = conversation?.id ?? randomUUID();
 
+  // No PageShell here: like Opti Assist, the chat fills the window under the
+  // header and the tabs, with its own sidebar and its own scrolling column.
   return (
-    <PageShell width="wide">
-      <PageHeader
-        title="Chat"
-        intro="Stil spørgsmål til produktionens tal og ordrer. Svarene bygger kun på portalens egne data."
-      />
-      <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="lg:sticky lg:top-4 lg:self-start">
-          <ConversationList
-            activeId={conversation?.id ?? null}
-            items={conversations.map((c) => ({ id: c.id, title: c.title, when: formatDayTime(c.updatedAt) }))}
-          />
-        </aside>
-        <section aria-label={conversation?.title ?? "Ny samtale"} className="min-w-0">
-          <ChatView
-            key={conversationId}
-            conversationId={conversationId}
-            initialMessages={conversation?.messages ?? []}
-            configured={aiConfigured()}
-            isNew={!conversation}
-          />
-        </section>
-      </div>
-    </PageShell>
+    <ChatShell
+      sidebar={
+        <ConversationList
+          activeId={conversation?.id ?? null}
+          items={conversations.map((c) => ({ id: c.id, title: c.title, when: formatDayTime(c.updatedAt) }))}
+        />
+      }
+    >
+      <h1 className="sr-only">Chat</h1>
+      <section aria-label={conversation?.title ?? "Ny samtale"} className="flex min-h-0 flex-1 flex-col">
+        <ChatView
+          key={conversationId}
+          conversationId={conversationId}
+          initialMessages={conversation?.messages ?? []}
+          configured={aiConfigured()}
+          isNew={!conversation}
+        />
+      </section>
+    </ChatShell>
   );
 }

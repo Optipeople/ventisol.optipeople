@@ -4,7 +4,15 @@
 
 import Link from "next/link";
 import { BarList, KpiRow, KpiTile, Note } from "@optipeople/ui/blocks";
-import { DataTable, DataTableBody, DataTableCell, DataTableHead, DataTableHeader, DataTableRow } from "@optipeople/ui";
+import {
+  CheckIcon,
+  DataTable,
+  DataTableBody,
+  DataTableCell,
+  DataTableHead,
+  DataTableHeader,
+  DataTableRow,
+} from "@optipeople/ui";
 import type { ToolResult, ToolView } from "@/lib/tools/types";
 
 /** What the user sees while a tool runs and above its result. */
@@ -37,14 +45,18 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name;
 }
 
+// The heading over one view, set like the small uppercase heading in an answer.
+const VIEW_TITLE =
+  "mb-2 text-[13px] font-semibold uppercase tracking-[0.06em] text-[var(--ds-grey-medium-05)]";
+
 function View({ view }: { view: ToolView }) {
   switch (view.kind) {
     case "note":
-      return <p className="text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]">{view.text}</p>;
+      return <p className="text-[14px] leading-[1.5] text-[var(--color-foreground)] sm:text-[15px]">{view.text}</p>;
     case "kpis":
       return (
         <div>
-          <p className="mb-2 text-[12px] font-bold text-[var(--ds-grey-medium-05)]">{view.title}</p>
+          <p className={VIEW_TITLE}>{view.title}</p>
           <KpiRow>
             {view.items.map((item) => (
               <KpiTile key={item.label} label={item.label} value={item.value} hint={item.note} />
@@ -56,7 +68,7 @@ function View({ view }: { view: ToolView }) {
       const display = new Map(view.items.map((i) => [i.value, i.display]));
       return (
         <div>
-          <p className="mb-2 text-[12px] font-bold text-[var(--ds-grey-medium-05)]">{view.title}</p>
+          <p className={VIEW_TITLE}>{view.title}</p>
           <BarList
             items={view.items.map((i) => ({ label: i.label, value: i.value, title: `${i.label}: ${i.display}` }))}
             formatValue={(v) => display.get(v) ?? String(v)}
@@ -68,11 +80,11 @@ function View({ view }: { view: ToolView }) {
     case "table":
       return (
         <div>
-          <p className="mb-2 text-[12px] font-bold text-[var(--ds-grey-medium-05)]">{view.title}</p>
+          <p className={VIEW_TITLE}>{view.title}</p>
           {view.rows.length === 0 ? (
             <Note className="mt-0">Ingen rækker.</Note>
           ) : (
-            <div className="max-h-[360px] overflow-auto rounded-[2px] border border-[var(--ds-grey-light-02)]">
+            <div className="scroll-area max-h-[360px] overflow-auto rounded-[var(--radius-sm)] border border-[var(--color-hairline)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
               <DataTable>
                 <DataTableHead>
                   {view.columns.map((c) => (
@@ -105,28 +117,30 @@ function View({ view }: { view: ToolView }) {
   }
 }
 
-/** One finished tool call: its views and a link to the page with the same numbers. */
+/**
+ * One finished tool call, without a box around it: a finished step line as in
+ * Opti Assist, a link to the page with the same numbers, then its views.
+ */
 export function ToolResultCard({ name, result }: { name: string; result: ToolResult | undefined }) {
   const views = result?.views ?? [];
   return (
-    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-[11px] font-bold uppercase tracking-[0.04em] text-[var(--ds-grey-medium-04)]">
+    <div className="msg-in flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
+        <span className="flex items-center gap-2">
+          <CheckIcon className="h-3.5 w-3.5 shrink-0" />
           {toolLabel(name)}
         </span>
         {result?.href && (
-          <Link href={result.href} className="text-[12px] text-[var(--ds-blue-primary)] hover:underline">
+          <Link href={result.href} className="font-medium text-[var(--color-brand)] underline underline-offset-2">
             Se i portalen
           </Link>
         )}
       </div>
-      <div className="flex flex-col gap-3">
-        {views.length === 0 ? (
-          <p className="text-[13px] text-[var(--ds-grey-medium-05)]">Data hentet.</p>
-        ) : (
-          views.map((view, i) => <View key={i} view={view} />)
-        )}
-      </div>
+      {views.length === 0 ? (
+        <p className="text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">Data hentet.</p>
+      ) : (
+        views.map((view, i) => <View key={i} view={view} />)
+      )}
     </div>
   );
 }
