@@ -188,7 +188,7 @@ export function ChatDock() {
           className={buttonClasses({
             variant: "primary",
             className:
-              "fixed bottom-11 right-4 z-30 h-12 gap-2 rounded-full px-5 text-[16px] shadow-[var(--shadow-lg)] sm:right-6 print:hidden",
+              "fixed bottom-4 right-4 z-30 h-12 gap-2 rounded-full px-5 text-[16px] shadow-[var(--shadow-lg)] print:hidden",
           })}
         >
           <MessageSquare className="h-5 w-5" aria-hidden />
