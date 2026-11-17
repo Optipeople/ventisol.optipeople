@@ -40,7 +40,7 @@ import {
   type TodayStrip,
   type BaselineSuggestion,
 } from "@/lib/reports";
-import { compact } from "./compact";
+import { compactResult } from "./compact";
 import type { ChatTool, ToolResult, ToolView, ViewColumn } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -593,7 +593,7 @@ export function reportTool(name: ReportQueryName): ChatTool {
       const params = { ...(input as object), now: ctx.now };
       const result = await runReportQuery(ctx.claims, name, params);
       const views = d.views?.(result, input as Record<string, unknown>) ?? [];
-      return { data: compact(result), views, href: d.href?.(input as Record<string, unknown>) };
+      return { data: compactResult(result), views, href: d.href?.(input as Record<string, unknown>) };
     },
   };
 }

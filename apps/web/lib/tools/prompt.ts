@@ -1,6 +1,6 @@
 // The chat's system prompt, in Danish. The fixed part comes first and the
-// date part last, so the long fixed part stays the same between requests
-// (prompt caching).
+// date part last, so the tools and the fixed part stay the same between
+// requests and are cached across conversations and users of one role.
 
 import type { PortalRole } from "@/lib/db";
 import { addDays, dayKey, isoWeek } from "@/lib/time";
@@ -34,8 +34,21 @@ const FIXED = `Du er produktionsassistenten i Ventisols portal (Opticloud MES). 
 
 const WEEKDAYS = ["søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"];
 
+/**
+ * The system prompt in its two parts: `fixed` is the same for everyone and
+ * every day (the chat route puts a cache point after it), `current` holds
+ * the dates and the role.
+ */
+export function buildSystemPromptParts(ctx: PromptContext): { fixed: string; current: string } {
+  return { fixed: FIXED, current: currentPart(ctx) };
+}
+
 /** The Danish system prompt for this user and moment. */
-export function buildSystemPrompt({ now, role }: PromptContext): string {
+export function buildSystemPrompt(ctx: PromptContext): string {
+  return `${FIXED}\n\n${currentPart(ctx)}`;
+}
+
+function currentPart({ now, role }: PromptContext): string {
   const today = dayKey(now);
   const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
   const monday = addDays(today, -((weekday + 6) % 7));
@@ -52,9 +65,7 @@ export function buildSystemPrompt({ now, role }: PromptContext): string {
           ? "Brugeren har rollen Ledelse."
           : "Brugeren har rollen Administrator.";
 
-  return `${FIXED}
-
-## Nu
+  return `## Nu
 - I dag er ${WEEKDAYS[weekday]} ${today}, uge ${isoWeek(today)}.
 - Denne uge: ${monday} til ${addDays(monday, 6)}. Sidste uge: ${addDays(monday, -7)} til ${addDays(monday, -1)}. Næste uge: ${addDays(monday, 7)} til ${addDays(monday, 13)}.
 - Denne måned starter ${monthStart}. Sidste måned: ${lastMonthStart} til ${lastMonthEnd}.

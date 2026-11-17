@@ -3,8 +3,12 @@
 // model gets the headline figure, explicit units and capped lists, so a tool
 // result stays a few kilobytes.
 
-/** Longest list the model sees. The rest is counted, not sent. */
-export const MAX_LIST = 40;
+/**
+ * Longest list the model sees. The rest is counted, not sent. Above the
+ * largest page a tool may ask for (50) and a year of weeks (53), so neither
+ * is cut.
+ */
+export const MAX_LIST = 60;
 
 /** Fields the model never needs: storage references and per-gap detail. */
 const DROP_KEYS = new Set(["blobReference", "blobName", "gaps", "intervalId", "parserVersion", "sha256"]);
@@ -13,6 +17,18 @@ function isDuration(value: unknown): value is { seconds: number | null } {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const keys = Object.keys(value);
   return keys.length === 3 && "seconds" in value && "wallSeconds" in value && "workingSeconds" in value;
+}
+
+/**
+ * A whole tool result as compact JSON. A result that is itself a list longer
+ * than `maxList` becomes `{ rows, rowsOmitted }`, so the model is told about
+ * the cut; `compact` alone would drop the rest without a word.
+ */
+export function compactResult(value: unknown, maxList = MAX_LIST): unknown {
+  if (Array.isArray(value) && value.length > maxList) {
+    return { rows: compact(value, maxList), rowsOmitted: value.length - maxList };
+  }
+  return compact(value, maxList);
 }
 
 /**

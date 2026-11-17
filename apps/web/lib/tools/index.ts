@@ -14,9 +14,9 @@ import { searchDocumentsTool } from "./search-documents";
 import type { ChatTool, ToolContext, ToolResult } from "./types";
 
 export type { ChatTool, ToolContext, ToolResult, ToolView, ViewColumn } from "./types";
-export { compact, MAX_LIST } from "./compact";
-export { searchDocuments, searchDocumentsTool } from "./search-documents";
-export { buildSystemPrompt, type PromptContext } from "./prompt";
+export { compact, compactResult, MAX_LIST } from "./compact";
+export { findDocuments, searchDocuments, searchDocumentsTool } from "./search-documents";
+export { buildSystemPrompt, buildSystemPromptParts, type PromptContext } from "./prompt";
 
 /** The tools this role may use, in a fixed order (stable for prompt caching). */
 export function chatToolsFor(claims: Claims): ChatTool[] {

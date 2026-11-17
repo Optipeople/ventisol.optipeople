@@ -17,13 +17,14 @@ import {
   validateUIMessages,
   type LanguageModel,
   type LanguageModelUsage,
+  type SystemModelMessage,
   type UIMessage,
 } from "ai";
 import { z } from "zod";
 import type { PortalAccess } from "@/lib/auth";
 import { can } from "@/lib/portal/roles";
 import { allowAttempt, clientIp, createAttemptLimits } from "@/lib/rate-limit";
-import { buildSystemPrompt, type ToolContext } from "@/lib/tools";
+import { buildSystemPromptParts, chatToolsFor, type ChatTool, type ToolContext } from "@/lib/tools";
 import { dailyTokenBudget } from "./config";
 import { estimateCostUsd } from "./pricing";
 import { beginTurn, finishTurn, tokensUsedToday, UUID_RE, type TurnUsage } from "./store";
@@ -78,15 +79,35 @@ export function usageFromSteps(steps: readonly StepUsage[], fallbackModel: strin
   if (steps.length === 0) return null;
   const model = steps.at(-1)?.response?.modelId || fallbackModel;
   const tokens = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  let cacheWriteTokens = 0;
   for (const step of steps) {
     tokens.inputTokens += step.usage.inputTokens ?? 0;
     tokens.outputTokens += step.usage.outputTokens ?? 0;
     tokens.cachedTokens += step.usage.inputTokenDetails?.cacheReadTokens ?? 0;
+    cacheWriteTokens += step.usage.inputTokenDetails?.cacheWriteTokens ?? 0;
   }
-  return { model, ...tokens, costUsd: estimateCostUsd(model, tokens) };
+  return { model, ...tokens, costUsd: estimateCostUsd(model, { ...tokens, cacheWriteTokens }) };
 }
 
-/** About 4 characters per token: the prompt was sent even when no step finished. */
+/** The characters the tool definitions add to every request: names, descriptions and schemas. */
+export function toolDefinitionChars(tools: readonly ChatTool[]): number {
+  let chars = 0;
+  for (const t of tools) {
+    chars += t.name.length + t.description.length;
+    try {
+      chars += JSON.stringify(z.toJSONSchema(t.inputSchema)).length;
+    } catch {
+      // A schema that does not convert is left out of the estimate.
+    }
+  }
+  return chars;
+}
+
+/**
+ * About 4 characters per token: the prompt was sent even when no step
+ * finished. `promptChars` counts the tool definitions too, which are most of
+ * a short request.
+ */
 export function estimatedUsage(model: string, promptChars: number): TurnUsage {
   const tokens = { inputTokens: Math.ceil(promptChars / 4), outputTokens: 0, cachedTokens: 0 };
   return { model, ...tokens, costUsd: estimateCostUsd(model, tokens) };
@@ -142,7 +163,17 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
 
   const assistantId = randomUUID();
   const toolDurations = new Map<string, number>();
-  const instructions = buildSystemPrompt({ now, role: claims.role });
+  // Two cache points. The first sits after the tools and the fixed part of
+  // the system prompt, which are the same for every user of one role, so a
+  // new conversation reads them from the cache instead of paying for them
+  // again. The second (providerOptions on the request, below) follows the
+  // end of the conversation. The dates and the role come after the first
+  // point, so a new day does not empty the cache.
+  const prompt = buildSystemPromptParts({ now, role: claims.role });
+  const instructions: SystemModelMessage[] = [
+    { role: "system", content: prompt.fixed, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
+    { role: "system", content: prompt.current },
+  ];
   const modelMessages = await convertToModelMessages(messages, { tools, ignoreIncompleteToolCalls: true });
 
   // The usage row is always written, also when the stream fails or is
@@ -161,7 +192,13 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
   };
   const fallbackUsage = () =>
     usageFromSteps(finishedSteps, deps.modelId()) ??
-    estimatedUsage(deps.modelId(), instructions.length + JSON.stringify(modelMessages).length);
+    estimatedUsage(
+      deps.modelId(),
+      prompt.fixed.length +
+        prompt.current.length +
+        toolDefinitionChars(chatToolsFor(claims)) +
+        JSON.stringify(modelMessages).length
+    );
 
   const result = streamText({
     model: deps.model(),
@@ -171,7 +208,8 @@ export async function handleChat(request: Request, deps: ChatDeps): Promise<Resp
     stopWhen: isStepCount(MAX_STEPS),
     reasoning: "medium",
     providerOptions: {
-      // Prompt caching of the system prompt, the tools and the history.
+      // Prompt caching of the history: the cache point at the end of the
+      // conversation. The one after the system prompt is set above.
       anthropic: {
         cacheControl: { type: "ephemeral" },
         metadata: { userId: claims.optiUserId },

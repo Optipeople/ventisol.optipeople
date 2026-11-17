@@ -7,7 +7,17 @@ import { z } from "zod";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
 import { REPORT_QUERY_NAMES, type ReportQueryName } from "@/lib/reports";
 import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
-import { buildSystemPrompt, chatToolsFor, compact, runChatTool, type ToolContext } from "./index";
+import { estimateCostUsd } from "@/app/api/chat/pricing";
+import {
+  buildSystemPrompt,
+  buildSystemPromptParts,
+  chatToolsFor,
+  compact,
+  compactResult,
+  MAX_LIST,
+  runChatTool,
+  type ToolContext,
+} from "./index";
 
 const admin = testClaims("admin");
 const ledelse = testClaims("ledelse");
@@ -167,6 +177,36 @@ describe("compact", () => {
 
   it("drops storage references and rounds floats", () => {
     expect(compact({ blobReference: "x", gaps: [1], value: 1.234 })).toEqual({ value: 1.2 });
+  });
+
+  it("says so when a result that is itself a list is cut", () => {
+    const list = Array.from({ length: 50 }, (_, i) => ({ n: i }));
+    expect(compactResult(list, 10)).toEqual({ rows: list.slice(0, 10), rowsOmitted: 40 });
+    expect(compactResult(list.slice(0, 10), 10)).toEqual(list.slice(0, 10));
+  });
+
+  it("keeps a full page (50 rows) and a year of weeks (53) whole", () => {
+    expect(MAX_LIST).toBeGreaterThanOrEqual(53);
+  });
+});
+
+describe("the system prompt in parts", () => {
+  it("has a fixed part that is the same for every role and day", () => {
+    const a = buildSystemPromptParts({ now: NOW, role: "admin" });
+    const b = buildSystemPromptParts({ now: NOW + 86_400_000 * 40, role: "viewer" });
+    expect(a.fixed).toBe(b.fixed);
+    expect(a.current).not.toBe(b.current);
+    expect(buildSystemPrompt({ now: NOW, role: "admin" })).toBe(`${a.fixed}
+
+${a.current}`);
+  });
+});
+
+describe("estimateCostUsd", () => {
+  it("prices cache writes at 1.25 times the input price and cache reads at the read price", () => {
+    const tokens = { inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 400_000, cacheWriteTokens: 200_000 };
+    // 400k uncached at 2, 200k written at 2.5, 400k read at 0.2 (USD per million).
+    expect(estimateCostUsd("claude-sonnet-5-5", tokens)).toBeCloseTo(0.8 + 0.5 + 0.08, 6);
   });
 });
 

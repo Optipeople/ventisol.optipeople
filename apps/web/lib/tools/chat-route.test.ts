@@ -279,8 +279,14 @@ describe("a turn", () => {
     const model = mockModel();
     await (await handleChat(post(question("Og hvornår er den klar?", first.id)), deps(viewer, model))).text();
     const prompt = model.doStreamCalls[0].prompt;
-    const system = prompt.find((m) => m.role === "system");
-    expect(JSON.stringify(system)).toContain("Alle tal skal komme fra værktøjerne");
+    // Two system messages: the fixed part with a cache point, then the dates and the role.
+    const system = prompt.filter((m) => m.role === "system");
+    expect(system).toHaveLength(2);
+    expect(system[0].content).toContain("Alle tal skal komme fra værktøjerne");
+    expect(system[0].providerOptions?.anthropic?.cacheControl).toEqual({ type: "ephemeral" });
+    expect(system[0].content).not.toContain("## Nu");
+    expect(system[1].content).toContain("## Nu");
+    expect(system[1].providerOptions?.anthropic?.cacheControl).toBeUndefined();
     const userTurns = prompt.filter((m) => m.role === "user");
     expect(userTurns).toHaveLength(2);
     // The model saw the earlier tool result as compact data, without the views.
@@ -355,7 +361,8 @@ describe("usage when the stream fails", () => {
     expect(rows).toHaveLength(1);
     // No answer to point at; the prompt (system prompt and tools) was estimated.
     expect(rows[0].message_id).toBeNull();
-    expect(rows[0].input_tokens).toBeGreaterThan(100);
+    // The tool definitions are most of a short request: far above the system prompt alone.
+    expect(rows[0].input_tokens).toBeGreaterThan(2000);
     expect(rows[0].output_tokens).toBe(0);
 
     // A failed turn stores no empty assistant message.

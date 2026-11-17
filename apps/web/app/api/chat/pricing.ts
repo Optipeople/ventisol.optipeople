@@ -16,10 +16,16 @@ const PRICES: Record<string, Price> = {
 };
 
 export interface TokenCounts {
+  /** All input tokens: uncached, read from the cache and written to it. */
   inputTokens: number;
   outputTokens: number;
+  /** Read from the cache. */
   cachedTokens: number;
+  /** Written to the cache (5 minute cache): 1.25 times the input price. */
+  cacheWriteTokens?: number;
 }
+
+const CACHE_WRITE_FACTOR = 1.25;
 
 /** The price of a model id; the API may answer with a dated one (claude-sonnet-5-5-20261001). */
 function priceOf(model: string): Price | undefined {
@@ -34,7 +40,13 @@ function priceOf(model: string): Price | undefined {
 export function estimateCostUsd(model: string, t: TokenCounts): number | null {
   const price = priceOf(model);
   if (!price) return null;
-  const uncached = Math.max(0, t.inputTokens - t.cachedTokens);
-  const usd = (uncached * price.input + t.cachedTokens * price.cacheRead + t.outputTokens * price.output) / 1_000_000;
+  const written = t.cacheWriteTokens ?? 0;
+  const uncached = Math.max(0, t.inputTokens - t.cachedTokens - written);
+  const usd =
+    (uncached * price.input +
+      written * price.input * CACHE_WRITE_FACTOR +
+      t.cachedTokens * price.cacheRead +
+      t.outputTokens * price.output) /
+    1_000_000;
   return Math.round(usd * 1_000_000) / 1_000_000;
 }
