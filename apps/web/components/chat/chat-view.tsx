@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { buttonClasses, CircleInfoIcon, Tag } from "@optipeople/ui";
+import { buttonClasses, CircleInfoIcon } from "@optipeople/ui";
 import { Notice } from "@optipeople/ui/blocks";
 import {
   ChatComposer,
@@ -186,9 +186,8 @@ export function ChatView({
         </Notice>
       )}
       {rows.length === 0 && <SuggestionChips questions={SUGGESTIONS} onAsk={ask} disabled={!configured} />}
-      <div className="msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5">
-        <Tag size="small">Portalens data</Tag>
-        {rows.length > 0 && (
+      {rows.length > 0 && (
+        <div className="msg-in mb-4 flex flex-wrap items-end gap-2 sm:mb-5">
           <Link
             href="/chat"
             className={buttonClasses({
@@ -199,8 +198,8 @@ export function ChatView({
           >
             Ny samtale
           </Link>
-        )}
-      </div>
+        </div>
+      )}
       <ChatComposer
         value={input}
         onChange={(value) => setInput(value.slice(0, MAX_QUESTION))}

@@ -149,14 +149,14 @@ export default async function ManagementPage({
             />
           }
           toolbar={toolbar}
-          // The days and the clock of the report. Printed, which the toolbar is not.
-          periodRow={
+        >
+          {/* The days and the clock, only on paper: on screen the month and the clock are in the toolbar. */}
+          <div className="mb-6 hidden print:block">
             <ReportPeriodBadge
               value={{ preset: REPORT_CUSTOM_RANGE, from: period.from, to: period.to }}
               zoneLabel={clockName}
             />
-          }
-        >
+          </div>
           {clamped && <Note className="mt-0 mb-3">Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
           {clockLocked && askedClock && askedClock !== clock && (
             <Note className="mt-0 mb-3">

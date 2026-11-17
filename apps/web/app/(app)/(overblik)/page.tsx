@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { buttonClasses } from "@optipeople/ui";
 import {
   CHART_GREY,
   AutoRefresh,
@@ -114,7 +113,10 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       />
       <Note>
         <Link href={filterHref("/stationer", carry)} className="underline-offset-2 hover:underline">
-          {summary.stationsToday.sentence}
+          {/* The names only when they are few. The Stationer tab marks each one. */}
+          {summary.stationsToday.count <= 3
+            ? summary.stationsToday.sentence
+            : `${summary.stationsToday.count} stationer afviger fra det normale`}
         </Link>
       </Note>
 
@@ -186,16 +188,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           id="gennemloebstid"
           title={`Gennemløbstid pr. ordre, ${bucket === "week" ? "uge for uge" : "måned for måned"}`}
           description="Gennemsnit af de ordrer, der blev pakket i hver periode"
-          action={
-            <PillTabs
-              label="Inddeling"
-              selectedId={bucket}
-              tabs={[
-                { id: "week", label: "Uge", href: selfHref({ bucket: "week" }) },
-                { id: "month", label: "Måned", href: selfHref({ bucket: "month" }) },
-              ]}
-            />
-          }
         >
           <LeadTimeChart points={series} />
         </SectionCard>
@@ -213,7 +205,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           )}
           {!noOrders && (
             <div className="mt-3">
-              <StepBreakdown steps={bottleneck.steps} bottleneck={bottleneck.bottleneck?.step ?? null} />
+              <StepBreakdown steps={bottleneck.steps.filter((s) => s.source !== "none")} bottleneck={bottleneck.bottleneck?.step ?? null} />
               <p className="mt-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
                 Gennemløbstid i alt: <span className="font-bold tabular-nums">{formatDuration(bottleneck.lead.seconds)}</span>
               </p>
@@ -228,11 +220,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           className="mt-4"
           title="Ventetid før hver station"
           description="Hvor længe et element i snit venter, fra det forlod forrige station til det kom hertil"
-          action={
-            <Link href={filterHref("/stationer", carry)} className={buttonClasses({ variant: "secondary", size: "sm" })}>
-              Se stationer
-            </Link>
-          }
         >
           <BarList
             color={CHART_GREY}

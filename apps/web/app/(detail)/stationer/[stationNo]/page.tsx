@@ -44,10 +44,10 @@ const TREND_WEEKS = 12;
 type Claims = Parameters<typeof getStationDetail>[0];
 
 /** "39 passager", or "40 passager, 1 uden ud-scanning". */
-function passesAside(timeline: TimelineInterval[]): string {
+/** The timeline's own header counts the passes, so this only adds what it does not say. */
+function passesAside(timeline: TimelineInterval[]): string | undefined {
   const missing = timeline.filter((iv) => iv.status === "missing_out").length;
-  const all = `${timeline.length} ${timeline.length === 1 ? "passage" : "passager"}`;
-  return missing > 0 ? `${all}, ${missing} uden ud-scanning` : all;
+  return missing > 0 ? `${missing} uden ud-scanning` : undefined;
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ stationNo: string }> }): Promise<Metadata> {
@@ -137,9 +137,6 @@ async function StationDetail({
         </Notice>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
-        <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
-      </div>
       <DayPicker
         day={day}
         today={today}
@@ -148,6 +145,9 @@ async function StationDetail({
         labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
       >
         {isToday && <AutoRefresh />}
+        <div className="ml-auto">
+          <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
+        </div>
       </DayPicker>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
