@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button, ConfirmProvider, Textarea, useConfirm } from "@optipeople/ui";
+import { FieldRow } from "@optipeople/ui/blocks";
 import { FieldError, FormMessage, useSettingsAction } from "@/components/settings/use-settings-action";
 import type { DraftResult } from "@/lib/management-view/draft";
 import type { ActionResult } from "@/lib/settings/result";
@@ -64,7 +65,7 @@ function Editor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ highlights: "", decisions: "" });
   const [fromAi, setFromAi] = useState(false);
-  const { pending, result, run, clear, fieldErrors } = useSettingsAction();
+  const { pending, result, run, clear, fieldErrors } = useSettingsAction({ okText: "Noterne er gemt." });
   const [drafting, startDrafting] = useTransition();
   const [draftError, setDraftError] = useState<ActionResult | null>(null);
   const confirm = useConfirm();
@@ -133,15 +134,15 @@ function Editor({
       <div className="space-y-4">
         <div className="grid gap-6 md:grid-cols-2">
           <section>
-            <h3 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Det vigtigste</h3>
+            <h4 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Det vigtigste</h4>
             <NoteList lines={highlights} empty="Ingen punkter skrevet endnu." />
           </section>
           <section>
-            <h3 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Til beslutning</h3>
+            <h4 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Til beslutning</h4>
             <NoteList lines={decisions} empty="Intet til beslutning endnu." />
           </section>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div data-print-hidden="" className="flex flex-wrap items-center gap-3 print:hidden">
           <Button variant="secondary" size="compact" onClick={start}>
             Rediger noter
           </Button>
@@ -167,7 +168,7 @@ function Editor({
           {DRAFT_HINT}
         </p>
       )}
-      <div className="grid gap-6 md:grid-cols-2">
+      <FieldRow minFieldWidth={280} className="mb-0">
         <div>
           <Textarea
             name="highlights"
@@ -194,8 +195,8 @@ function Editor({
           />
           <FieldError message={fieldErrors.decisions} />
         </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+      </FieldRow>
+      <div data-print-hidden="" className="flex flex-wrap items-center gap-2 print:hidden">
         <Button type="submit" size="compact" disabled={pending || drafting}>
           {pending ? "Gemmer…" : "Gem noter"}
         </Button>
@@ -203,7 +204,7 @@ function Editor({
           Annuller
         </Button>
         {draftButton}
-        <FormMessage result={result && !result.ok ? result : null} />
+        <FormMessage result={result} />
         <FormMessage result={draftError} />
       </div>
     </form>

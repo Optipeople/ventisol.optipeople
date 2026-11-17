@@ -8,7 +8,7 @@ import {
   DataTableRow,
   Tag,
 } from "@optipeople/ui";
-import { EmptyState, SectionCard, TableFrame } from "@optipeople/ui/blocks";
+import { EmptyState, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
 import { SyncActions } from "@/components/settings/sync-actions";
 import { requireCapability } from "@/lib/auth";
 import { getSyncStatus, type SyncStatusRow } from "@/lib/sync/status";
@@ -68,15 +68,21 @@ export default async function SyncPage() {
       bodyClassName="p-0"
     >
       {!configured && (
-        <p
-          role="status"
-          className="m-4 rounded-[2px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] px-3 py-2 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]"
-        >
-          Servicekontoen til OptiCloud er ikke sat op, så der kan ikke hentes nye data. Mangler i
-          miljøet: {missing.join(", ")}.
-        </p>
+        <div role="status" className="m-4">
+          <Notice tone="error" icon>
+            Servicekontoen til OptiCloud er ikke sat op, så der kan ikke hentes nye data. Mangler i
+            miljøet: {missing.join(", ")}.
+          </Notice>
+        </div>
       )}
-      {deadLetters > 0 && <p role="status" className="m-4 rounded-[2px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] px-3 py-2 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]">{deadLetters === 1 ? "1 ordre" : `${deadLetters} ordrer`} kunne ikke regnes ud og er lagt til side. Deres tal er forældede, indtil der trykkes Genopbyg.</p>}
+      {deadLetters > 0 && (
+        <div role="status" className="m-4">
+          <Notice tone="error" icon>
+            {deadLetters === 1 ? "1 ordre" : `${deadLetters} ordrer`} kunne ikke regnes ud og er lagt
+            til side. Deres tal er forældede, indtil der trykkes Genopbyg.
+          </Notice>
+        </div>
+      )}
       {jobs.length === 0 ? (
         <EmptyState title="Ingen synkronisering har kørt endnu" className="m-4">
           Når den første hentning fra OptiCloud har kørt, står hvert job her med tidspunkt, forsinkelse

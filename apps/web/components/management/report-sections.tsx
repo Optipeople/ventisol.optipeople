@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 // The sections of the Ledelse month report. Server components: they take
 // what lib/reports returned and only format it (lib/reports/format), so a
 // null reads "Ingen data endnu" and never 0.
@@ -21,6 +22,7 @@ import {
   TableFrame,
   type ColumnPoint,
 } from "@optipeople/ui/blocks";
+import { ReportTable } from "@optipeople/ui/reports";
 import {
   formatDuration,
   formatMinutes,
@@ -105,35 +107,44 @@ export function LeadTimeChart({ points, kind }: { points: LeadTimePoint[]; kind:
   );
 }
 
-/** The table under a lead time chart: the same numbers as text. */
+/**
+ * The table under a lead time chart: the same numbers as text. The cells are
+ * the formatted texts, and each column sorts by the number behind it.
+ */
+/**
+ * A table inside a report card. The frame scrolls sideways when the sheet is
+ * narrow, so it is a named region that the keyboard can reach and scroll.
+ */
+function ScrollTable({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div
+      role="region"
+      aria-label={label}
+      tabIndex={0}
+      className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-[var(--ds-green-80)] print:overflow-visible"
+    >
+      <TableFrame className={`${IN_CARD} max-h-none overflow-visible`}>{children}</TableFrame>
+    </div>
+  );
+}
+
 export function LeadTimeTable({ points, kind }: { points: LeadTimePoint[]; kind: "month" | "week" }) {
   return (
-    <TableFrame className="mt-3">
-      <DataTable>
-        <DataTableHead>
-          <DataTableHeader>{kind === "month" ? "Måned" : "Uge"}</DataTableHeader>
-          <DataTableHeader align="right">Ordrer pakket</DataTableHeader>
-          <DataTableHeader align="right">Gennemløbstid</DataTableHeader>
-          <DataTableHeader align="right">Heraf ventetid</DataTableHeader>
-        </DataTableHead>
-        <DataTableBody>
-          {points.map((p) => (
-            <DataTableRow key={p.bucketStart}>
-              <DataTableCell>{kind === "month" ? monthTitle(p.bucketStart) : weekTitle(p.bucketStart)}</DataTableCell>
-              <DataTableCell align="right" className="tabular-nums">
-                {formatNumber(p.ordersPacked)}
-              </DataTableCell>
-              <DataTableCell align="right" className="tabular-nums">
-                {formatDuration(p.lead.seconds)}
-              </DataTableCell>
-              <DataTableCell align="right" className="tabular-nums">
-                {formatDuration(p.wait.seconds)}
-              </DataTableCell>
-            </DataTableRow>
-          ))}
-        </DataTableBody>
-      </DataTable>
-    </TableFrame>
+    <ReportTable
+      className="mt-3"
+      title={kind === "month" ? "Gennemløbstid pr. ordre, måned for måned" : "Gennemløbstid pr. ordre, uge for uge"}
+      emptyText={NO_DATA}
+      model={{
+        columns: [kind === "month" ? "Måned" : "Uge", "Ordrer pakket", "Gennemløbstid", "Heraf ventetid"],
+        rows: points.map((p) => [
+          kind === "month" ? monthTitle(p.bucketStart) : weekTitle(p.bucketStart),
+          formatNumber(p.ordersPacked),
+          formatDuration(p.lead.seconds),
+          formatDuration(p.wait.seconds),
+        ]),
+        sortKeys: points.map((p) => [Date.parse(p.bucketStart), p.ordersPacked, p.lead.seconds, p.wait.seconds]),
+      }}
+    />
   );
 }
 
@@ -142,7 +153,8 @@ export function BottleneckSection({ bottleneck }: { bottleneck: Bottleneck }) {
   const worst = bottleneck.bottleneck?.step;
   return (
     <div className="space-y-3">
-      <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      {/* Sized by the room it has, not the window: the report is also shown as an A4 sheet. */}
+      <ol className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
         {bottleneck.steps.map((s) => {
           const isWorst = s.step === worst;
           return (
@@ -180,6 +192,10 @@ export function BottleneckSection({ bottleneck }: { bottleneck: Bottleneck }) {
   );
 }
 
+// A table in a ReportWidgetCard: the card is the frame, and paper cannot scroll.
+const IN_CARD =
+  "border-0 shadow-none print:max-h-none print:overflow-visible print:[&_td]:whitespace-normal print:[&_th]:whitespace-normal";
+
 const STATUS_VARIANT: Record<StationRow["status"], TagVariant> = {
   normal: "positive",
   long_dwell: "warning",
@@ -198,7 +214,7 @@ export function StationsTable({ stations }: { stations: StationRow[] }) {
   const rank = (s: StationRow) => (s.status === "normal" ? 1 : s.status === "no_data" ? 2 : 0);
   const rows = [...stations].sort((a, b) => rank(a) - rank(b));
   return (
-    <TableFrame>
+    <ScrollTable label="Stationer">
       <DataTable>
         <DataTableHead>
           <DataTableHeader>Station</DataTableHeader>
@@ -244,14 +260,14 @@ export function StationsTable({ stations }: { stations: StationRow[] }) {
           ))}
         </DataTableBody>
       </DataTable>
-    </TableFrame>
+    </ScrollTable>
   );
 }
 
 /** Kalkule mod målt per element type, the flagged ones marked. */
 export function CalcVsMeasuredTable({ calc }: { calc: CalcVsMeasured }) {
   return (
-    <TableFrame>
+    <ScrollTable label="Kalkule mod målt">
       <DataTable>
         <DataTableHead>
           <DataTableHeader>Elementtype</DataTableHeader>
@@ -300,6 +316,6 @@ export function CalcVsMeasuredTable({ calc }: { calc: CalcVsMeasured }) {
           ))}
         </DataTableBody>
       </DataTable>
-    </TableFrame>
+    </ScrollTable>
   );
 }

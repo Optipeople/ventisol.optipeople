@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition, type ReactNode } from "react";
 import { buttonClasses, ChevronLeftIcon, ChevronRightIcon, cn, Select } from "@optipeople/ui";
-import { FilterPanel } from "@optipeople/ui/blocks";
 
 export type MonthChoice = { month: string; label: string };
 
@@ -12,6 +11,8 @@ export type MonthChoice = { month: string; label: string };
  * The month of the Ledelse report, kept in the URL (`maaned`): previous and
  * next month and a list of every month the page reaches, frozen ones marked.
  * The hrefs are made on the server, so the bare path stays the last full month.
+ *
+ * A bare row: it sits in the toolbar of the ReportFrame, which is not printed.
  */
 export function MonthPicker({
   month,
@@ -36,7 +37,7 @@ export function MonthPicker({
   const off = "pointer-events-none opacity-50";
 
   return (
-    <FilterPanel pending={pending} pendingLabel="Opdaterer…" className="flex flex-wrap items-end gap-2">
+    <div aria-busy={pending} className="flex w-full flex-wrap items-end gap-2">
       {older ? (
         <Link href={hrefs[older.month]} className={step}>
           <ChevronLeftIcon size={14} />
@@ -71,7 +72,12 @@ export function MonthPicker({
           <ChevronRightIcon size={14} />
         </span>
       )}
+      {pending && (
+        <span role="status" className="self-center text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+          Opdaterer…
+        </span>
+      )}
       {children && <div className="ml-auto">{children}</div>}
-    </FilterPanel>
+    </div>
   );
 }

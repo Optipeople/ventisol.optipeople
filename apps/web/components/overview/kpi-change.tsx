@@ -1,4 +1,5 @@
-import { CHART_GREEN } from "@optipeople/ui/blocks";
+/** The chart green is too light for 12px text on white, so the text takes a darker one. */
+const GOOD_TEXT = "#2c7a4b";
 import { formatPoints, formatSignedPercent } from "@/lib/reports";
 import { changeTone } from "@/lib/overview/filters";
 
@@ -24,7 +25,7 @@ export function KpiChange({
     <span>
       <span
         className={tone === "bad" ? "font-bold text-[var(--ds-red-dark)]" : tone === "good" ? "font-bold" : undefined}
-        style={tone === "good" ? { color: CHART_GREEN } : undefined}
+        style={tone === "good" ? { color: GOOD_TEXT } : undefined}
       >
         {text}
       </span>{" "}

@@ -24,7 +24,7 @@ export function SyncActions({
   disabledReason?: string;
 }) {
   const confirm = useConfirm();
-  const { pending, result, run } = useSettingsAction();
+  const { pending, result, run } = useSettingsAction({ okText: "Sat i gang." });
 
   async function rebuild() {
     if (!onRebuild) return;
@@ -62,7 +62,7 @@ export function SyncActions({
           {disabledReason}
         </p>
       )}
-      <FormMessage result={result} okText="Sat i gang." />
+      <FormMessage result={result} className="max-w-[320px] text-left" />
     </div>
   );
 }

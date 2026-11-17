@@ -1,21 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import {
   Button,
-  Checkbox,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
+  Modal,
+  RowMenu,
   Select,
+  Switch,
   Tag,
   TextField,
   useConfirm,
 } from "@optipeople/ui";
-import { EmptyState, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
+import { EmptyState, FieldRow, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
 import { saveStationAction, setStationActiveAction } from "@/app/(app)/indstillinger/actions";
 import { STATION_KIND_LABELS, STATION_KINDS, type StationKind } from "@/lib/settings/format";
 import type { OptiCloudMachine } from "@/lib/settings/machines";
@@ -36,7 +38,8 @@ export function StationsManager({
   machines: OptiCloudMachine[] | null;
   canEdit: boolean;
 }) {
-  const [editing, setEditing] = useState<Station | null>(null);
+  // The form in the dialog: a station to edit, "new" for a new one, null when closed.
+  const [form, setForm] = useState<Station | "new" | null>(null);
   const machineName = (id: string) => machines?.find((m) => sameId(m.id, id))?.name ?? id;
   const confirm = useConfirm();
   const toggle = useSettingsAction();
@@ -65,6 +68,13 @@ export function StationsManager({
       <SectionCard
         title="Stationer"
         description="Stationsnummeret er det, scannerne sender. Rækkefølgen styrer, hvor stationen står i rapporterne."
+        action={
+          canEdit ? (
+            <Button variant="secondary" size="compact" onClick={() => setForm("new")}>
+              Tilføj station
+            </Button>
+          ) : undefined
+        }
         bodyClassName="p-0"
       >
         {toggle.result && !toggle.result.ok && (
@@ -73,7 +83,7 @@ export function StationsManager({
         {stations.length === 0 ? (
           <EmptyState title="Ingen stationer endnu" className="m-4">
             {canEdit
-              ? "Tilføj den første station i formularen herunder. Brug det stationsnummer, som stationens scanner er sat op med."
+              ? "Tilføj den første station med knappen Tilføj station. Brug det stationsnummer, som stationens scanner er sat op med."
               : "Bed en administrator om at oprette stationerne."}
           </EmptyState>
         ) : (
@@ -109,20 +119,18 @@ export function StationsManager({
                     </DataTableCell>
                     {canEdit && (
                       <DataTableCell align="right" className="whitespace-nowrap">
-                        <span className="inline-flex gap-2">
-                          <Button variant="ghost" size="pill" onClick={() => setEditing(station)}>
-                            Rediger<span className="sr-only"> {station.name}</span>
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="pill"
-                            disabled={toggle.pending}
-                            onClick={() => void setActive(station, !station.active)}
-                          >
-                            {station.active ? "Deaktiver" : "Aktivér"}
-                            <span className="sr-only"> {station.name}</span>
-                          </Button>
-                        </span>
+                        <RowMenu
+                          label={`Handlinger for ${station.name}`}
+                          disabled={toggle.pending}
+                          actions={[
+                            { id: "edit", label: "Rediger" },
+                            { id: "active", label: station.active ? "Deaktiver" : "Aktivér" },
+                          ]}
+                          onAction={(action) => {
+                            if (action === "edit") setForm(station);
+                            else void setActive(station, !station.active);
+                          }}
+                        />
                       </DataTableCell>
                     )}
                   </DataTableRow>
@@ -133,21 +141,22 @@ export function StationsManager({
         )}
       </SectionCard>
 
-      {canEdit && (
+      {canEdit && form !== null && (
         <StationForm
           // A new key gives a fresh form when another station is picked.
-          key={editing ? `edit-${editing.stationNo}` : "new"}
-          editing={editing}
+          key={form === "new" ? "new" : `edit-${form.stationNo}`}
+          editing={form === "new" ? null : form}
           stations={stations}
           machines={machines}
           defaultSortOrder={nextSort}
-          onDone={() => setEditing(null)}
+          onDone={() => setForm(null)}
         />
       )}
     </div>
   );
 }
 
+/** The dialog with the form of one station: a new one, or `editing`. */
 function StationForm({
   editing,
   stations,
@@ -161,37 +170,21 @@ function StationForm({
   defaultSortOrder: number;
   onDone: () => void;
 }) {
+  const formId = useId();
   const [stationNo, setStationNo] = useState(editing ? String(editing.stationNo) : "");
   const [name, setName] = useState(editing?.name ?? "");
   const [kind, setKind] = useState<StationKind>(editing?.kind ?? "assembly");
   const [machineId, setMachineId] = useState(editing?.opticloudMachineId ?? "");
-  // Null: not typed in yet, the field shows the next free place in the order.
-  const [typedSortOrder, setSortOrder] = useState<string | null>(
-    editing ? String(editing.sortOrder) : null
-  );
-  const sortOrder = typedSortOrder ?? String(defaultSortOrder);
+  const [sortOrder, setSortOrder] = useState(String(editing?.sortOrder ?? defaultSortOrder));
   const [active, setActive] = useState(editing?.active ?? true);
-  const { pending, result, run, fieldErrors } = useSettingsAction();
-  const nameRef = useRef<HTMLInputElement>(null);
-
-  // "Rediger" in the table moves the keyboard to the form.
-  useEffect(() => {
-    if (editing) nameRef.current?.focus();
-  }, [editing]);
+  const { pending, result, run, fieldErrors } = useSettingsAction({
+    okText: editing ? "Stationen er gemt." : "Stationen er tilføjet.",
+  });
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const input = { stationNo, name, kind, opticloudMachineId: machineId, sortOrder, active };
-    run(() => saveStationAction(editing ? "update" : "create", input), () => {
-      if (editing) {
-        onDone();
-      } else {
-        setStationNo("");
-        setName("");
-        setMachineId("");
-        setSortOrder(null);
-      }
-    });
+    run(() => saveStationAction(editing ? "update" : "create", input), onDone);
   }
 
   const state = (field: string) => (fieldErrors[field] ? "error" : "none");
@@ -216,17 +209,33 @@ function StationForm({
   const machineValue = machines?.find((m) => sameId(m.id, machineId))?.id ?? machineId;
 
   return (
-    <SectionCard
-      id="station-form"
+    <Modal
+      open
+      // A save under way is not left half way.
+      onClose={() => {
+        if (!pending) onDone();
+      }}
       title={editing ? `Rediger station ${editing.stationNo}` : "Tilføj station"}
-      description={
-        editing
-          ? "Stationsnummeret kan ikke ændres, fordi scanningerne henviser til det."
-          : "En station kan ikke slettes igen, kun deaktiveres."
+      width={600}
+      footer={
+        <>
+          <Button variant="secondary" disabled={pending} onClick={onDone}>
+            Annuller
+          </Button>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? "Gemmer…" : editing ? "Gem station" : "Tilføj station"}
+          </Button>
+        </>
       }
     >
-      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[150px_1fr_160px_1fr_150px]">
+      <form id={formId} onSubmit={submit} noValidate>
+        <p className="mb-4 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
+          {editing
+            ? "Stationsnummeret kan ikke ændres, fordi scanningerne henviser til det."
+            : "En station kan ikke slettes igen, kun deaktiveres."}
+        </p>
+
+        <FieldRow>
           <div>
             <TextField
               label="Stationsnr."
@@ -241,7 +250,6 @@ function StationForm({
           </div>
           <div>
             <TextField
-              ref={nameRef}
               label="Navn"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -252,6 +260,9 @@ function StationForm({
             />
             <FieldError message={fieldErrors.name} />
           </div>
+        </FieldRow>
+
+        <FieldRow>
           <div>
             <Select
               label="Art"
@@ -262,32 +273,6 @@ function StationForm({
               validation={state("kind")}
             />
             <FieldError message={fieldErrors.kind} />
-          </div>
-          <div>
-            {machineItems ? (
-              <Select
-                label="Maskine i OptiCloud (valgfrit)"
-                value={machineValue}
-                onValueChange={setMachineId}
-                items={machineItems}
-                searchable={machineItems.length > 10}
-                disabled={pending}
-                validation={state("opticloudMachineId")}
-              />
-            ) : (
-              // The list could not be read from OptiCloud: the id can still be typed.
-              <TextField
-                label="Maskine-id i OptiCloud (valgfrit)"
-                helpText="Maskinlisten kunne ikke hentes fra OptiCloud lige nu."
-                value={machineId}
-                onChange={(e) => setMachineId(e.target.value)}
-                disabled={pending}
-                maxLength={100}
-                validation={state("opticloudMachineId")}
-                aria-invalid={Boolean(fieldErrors.opticloudMachineId)}
-              />
-            )}
-            <FieldError message={fieldErrors.opticloudMachineId} />
           </div>
           <div>
             <TextField
@@ -301,28 +286,39 @@ function StationForm({
             />
             <FieldError message={fieldErrors.sortOrder} />
           </div>
-        </div>
+        </FieldRow>
 
-        <Checkbox
-          label="Aktiv"
-          checked={active}
-          onChange={(e) => setActive(e.target.checked)}
-          disabled={pending}
-        />
-
-        <FormMessage result={result} okText={editing ? "Stationen er gemt." : "Stationen er tilføjet."} />
-
-        <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={pending}>
-            {pending ? "Gemmer…" : editing ? "Gem station" : "Tilføj station"}
-          </Button>
-          {editing && (
-            <Button variant="secondary" disabled={pending} onClick={onDone}>
-              Annuller
-            </Button>
+        <div className="mb-6">
+          {machineItems ? (
+            <Select
+              label="Maskine i OptiCloud (valgfrit)"
+              value={machineValue}
+              onValueChange={setMachineId}
+              items={machineItems}
+              searchable={machineItems.length > 10}
+              disabled={pending}
+              validation={state("opticloudMachineId")}
+            />
+          ) : (
+            // The list could not be read from OptiCloud: the id can still be typed.
+            <TextField
+              label="Maskine-id i OptiCloud (valgfrit)"
+              helpText="Maskinlisten kunne ikke hentes fra OptiCloud lige nu."
+              value={machineId}
+              onChange={(e) => setMachineId(e.target.value)}
+              disabled={pending}
+              maxLength={100}
+              validation={state("opticloudMachineId")}
+              aria-invalid={Boolean(fieldErrors.opticloudMachineId)}
+            />
           )}
+          <FieldError message={fieldErrors.opticloudMachineId} />
         </div>
+
+        <Switch label="Aktiv" checked={active} onCheckedChange={setActive} disabled={pending} />
+
+        <FormMessage result={result} className="mt-4" />
       </form>
-    </SectionCard>
+    </Modal>
   );
 }

@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
-import { Note, Notice, PageHeader, PageShell, PillTabs, SectionCard, SectionTitle } from "@optipeople/ui/blocks";
+import type { ReactNode } from "react";
+import { Note, Notice, PageShell, PillTabs } from "@optipeople/ui/blocks";
+import {
+  REPORT_CUSTOM_RANGE,
+  ReportFrame,
+  ReportHeader,
+  ReportPeriodBadge,
+  ReportWidgetCard,
+} from "@optipeople/ui/reports";
 import { aiConfigured } from "@/app/api/chat/config";
 import { ExportMenu, type ExportEntry } from "@/components/export/export-menu";
 import { FreezeButton } from "@/components/management/freeze-button";
@@ -13,6 +21,7 @@ import {
   ManagementKpis,
   StationsTable,
 } from "@/components/management/report-sections";
+import { ReportSheet } from "@/components/management/report-sheet";
 import { requireCapability } from "@/lib/auth";
 import {
   currentMonth,
@@ -41,6 +50,11 @@ export const metadata: Metadata = { title: "Ledelse" };
 function withoutLeadingEmpty<T extends { ordersPacked: number }>(points: T[]): T[] {
   const first = points.findIndex((p) => p.ordersPacked > 0);
   return first < 0 ? points.slice(-1) : points.slice(first);
+}
+
+/** The line of context at the top of a card. */
+function Lead({ children }: { children: ReactNode }) {
+  return <p className="mb-3 text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)]">{children}</p>;
 }
 
 export default async function ManagementPage({
@@ -99,124 +113,143 @@ export default async function ManagementPage({
     });
   }
 
-  return (
-    <PageShell width="wide">
-      <PageHeader
-        title="Ledelse"
-        intro={`Månedsrapport for ${name}.`}
-        actions={<ExportMenu entries={exports} />}
-      />
+  const clockName = clock === "working" ? "Arbejdstid" : "Hele døgnet";
 
-      <MonthPicker month={month} choices={choices} hrefs={hrefs}>
-        <div>
-          <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
-            Tid
-          </p>
-          {clockLocked ? (
-            <p className="text-[14px] leading-[28px] text-[var(--ds-grey-dark-09)]">
-              {clock === "working" ? "Arbejdstid" : "Hele døgnet"} (låst)
-            </p>
-          ) : (
-            <PillTabs
-              label="Tid"
-              selectedId={clock}
-              tabs={[
-                { id: "working", label: "Arbejdstid", href: monthHref(month, now, "working") },
-                { id: "wall", label: "Hele døgnet", href: monthHref(month, now, "wall") },
-              ]}
-            />
-          )}
-        </div>
-      </MonthPicker>
-      {clamped && <Note>Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
-      {clockLocked && askedClock && askedClock !== clock && (
-        <Note>
-          En låst måned vises med den tid, den blev låst med ({clock === "working" ? "arbejdstid" : "hele døgnet"}).
-        </Note>
-      )}
-
-      <div className="mt-4">
-        {result.frozen ? (
-          <Notice tone="info">
-            <strong>Låste tal.</strong> Tallene for {name} blev gemt {formatDayTime(result.frozenAt)} og ændrer sig
-            ikke længere, heller ikke ved sene scanninger eller rettelser. Noterne kan stadig rettes.
-          </Notice>
-        ) : isCurrent ? (
-          <Notice tone="warning">
-            <strong>Foreløbige tal.</strong> {capitalize(name)} er ikke slut, så tallene ændrer sig dag for dag. De
-            låses automatisk den 1. i næste måned. Ændringerne er mod hele måneden før, så antal ordrer ligger lavt,
-            indtil måneden er omme.
-          </Notice>
+  const toolbar = (
+    <MonthPicker month={month} choices={choices} hrefs={hrefs}>
+      <div>
+        <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
+          Tid
+        </p>
+        {clockLocked ? (
+          <p className="text-[14px] leading-[28px] text-[var(--ds-grey-dark-09)]">{clockName} (låst)</p>
         ) : (
-          // Notice is a paragraph and cannot hold the button, so this is the same box as a div.
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-4 py-3 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]">
-              <p className="min-w-0 flex-1 basis-[320px]">
-                <strong>Foreløbige tal.</strong> {capitalize(name)} er slut, men sene scanninger og rettelser kan
-                stadig ændre tallene. Når måneden låses, gemmes tallene, som de er, så rapporten ikke ændrer sig
-                bagefter.
-                {canFreeze ? "" : " Det sker automatisk den 1. i måneden efter, eller når en administrator gør det."}
-              </p>
-              {canFreeze && <FreezeButton month={month} monthName={name} onFreeze={freezeMonthAction} />}
-          </div>
+          <PillTabs
+            label="Tid"
+            selectedId={clock}
+            tabs={[
+              { id: "working", label: "Arbejdstid", href: monthHref(month, now, "working") },
+              { id: "wall", label: "Hele døgnet", href: monthHref(month, now, "wall") },
+            ]}
+          />
         )}
       </div>
+    </MonthPicker>
+  );
 
-      <SectionTitle
-        title={`Nøgletal, ${name}`}
-        aside={clock === "working" ? "Kun tid i vagterne tæller." : "Al tid tæller, også nætter og weekender."}
-      />
-      <ManagementKpis kpis={report.kpis} />
-
-      <SectionTitle title="Gennemløbstid pr. ordre, måned for måned" />
-      <SectionCard>
-        <LeadTimeChart points={report.leadTimeMonthly} kind="month" />
-      </SectionCard>
-      <LeadTimeTable points={withoutLeadingEmpty(report.leadTimeMonthly)} kind="month" />
-
-      <SectionTitle title={`Uge for uge i ${name}`} />
-      <SectionCard>
-        <LeadTimeChart points={report.leadTimeWeekly} kind="week" />
-      </SectionCard>
-
-      <SectionTitle title="Flaskehalsen: hvor går tiden pr. ordre" aside={capitalize(name)} />
-      <BottleneckSection bottleneck={report.bottleneck} />
-
-      <SectionTitle title="Stationer" aside={report.stationAttention.sentence} />
-      <StationsTable stations={report.stations} />
-      <Note>
-        Ud-scanninger, der mangler i måneden: <strong>{formatNumber(report.missingScanOuts)}</strong>. En passage uden
-        ud-scanning tæller ikke med i tiderne.
-      </Note>
-
-      {can(ctx.role, "costs.view") && (
-        <>
-          <SectionTitle title="Kalkule mod målt" />
-          {report.calcVsMeasured.byElementType.length > 0 ? (
-            <>
-              <CalcVsMeasuredTable calc={report.calcVsMeasured} />
-              <Note>
-                Målt er mediantiden pr. element. Afvigelser over {report.calcVsMeasured.thresholdPercent} % i begge
-                retninger er markeret. Kun stationer med både kalkule og måling tæller med.
-              </Note>
-            </>
-          ) : (
-            <Note>Ingen data endnu: der er ingen kalkulerede tider eller ingen målinger i måneden.</Note>
+  return (
+    <PageShell width="wide">
+      <ReportSheet>
+        <ReportFrame
+          header={
+            <ReportHeader
+              title="Ledelse"
+              subtitle={`Månedsrapport for ${name}.`}
+              actions={<ExportMenu entries={exports} />}
+            />
+          }
+          toolbar={toolbar}
+          // The days and the clock of the report. Printed, which the toolbar is not.
+          periodRow={
+            <ReportPeriodBadge
+              value={{ preset: REPORT_CUSTOM_RANGE, from: period.from, to: period.to }}
+              zoneLabel={clockName}
+            />
+          }
+        >
+          {clamped && <Note className="mt-0 mb-3">Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
+          {clockLocked && askedClock && askedClock !== clock && (
+            <Note className="mt-0 mb-3">
+              En låst måned vises med den tid, den blev låst med ({clock === "working" ? "arbejdstid" : "hele døgnet"}).
+            </Note>
           )}
-        </>
-      )}
 
-      <SectionTitle title="Det vigtigste og til beslutning" />
-      <SectionCard>
-        <NotesEditor
-          month={month}
-          highlights={notes.highlights}
-          decisions={notes.decisions}
-          updatedText={notes.updatedAt ? `Senest rettet ${formatDayTime(notes.updatedAt)}` : null}
-          onSave={saveNotesAction}
-          onDraft={draftNotesAction}
-          draftDisabledReason={aiConfigured() ? null : DRAFT_MESSAGES.notConfigured}
-        />
-      </SectionCard>
+          <div className="mb-4">
+            {result.frozen ? (
+              <Notice tone="info">
+                <strong>Låste tal.</strong> Tallene for {name} blev gemt {formatDayTime(result.frozenAt)} og ændrer sig
+                ikke længere, heller ikke ved sene scanninger eller rettelser. Noterne kan stadig rettes.
+              </Notice>
+            ) : isCurrent ? (
+              <Notice tone="warning">
+                <strong>Foreløbige tal.</strong> {capitalize(name)} er ikke slut, så tallene ændrer sig dag for dag. De
+                låses automatisk den 1. i næste måned. Ændringerne er mod hele måneden før, så antal ordrer ligger lavt,
+                indtil måneden er omme.
+              </Notice>
+            ) : (
+              <Notice
+                tone="warning"
+                actions={
+                  canFreeze ? <FreezeButton month={month} monthName={name} onFreeze={freezeMonthAction} /> : undefined
+                }
+              >
+                <strong>Foreløbige tal.</strong> {capitalize(name)} er slut, men sene scanninger og rettelser kan stadig
+                ændre tallene. Når måneden låses, gemmes tallene, som de er, så rapporten ikke ændrer sig bagefter.
+                {canFreeze ? "" : " Det sker automatisk den 1. i måneden efter, eller når en administrator gør det."}
+              </Notice>
+            )}
+          </div>
+
+          <ReportWidgetCard title={`Nøgletal, ${name}`}>
+            <Lead>{clock === "working" ? "Kun tid i vagterne tæller." : "Al tid tæller, også nætter og weekender."}</Lead>
+            <ManagementKpis kpis={report.kpis} />
+          </ReportWidgetCard>
+
+          <ReportWidgetCard title="Gennemløbstid pr. ordre, måned for måned">
+            <LeadTimeChart points={report.leadTimeMonthly} kind="month" />
+            <LeadTimeTable points={withoutLeadingEmpty(report.leadTimeMonthly)} kind="month" />
+          </ReportWidgetCard>
+
+          <ReportWidgetCard title={`Uge for uge i ${name}`}>
+            <LeadTimeChart points={report.leadTimeWeekly} kind="week" />
+          </ReportWidgetCard>
+
+          <ReportWidgetCard
+            title={`Flaskehalsen: hvor går tiden pr. ordre, ${name}`}
+          >
+            <BottleneckSection bottleneck={report.bottleneck} />
+          </ReportWidgetCard>
+
+          <ReportWidgetCard title="Stationer">
+            {report.stationAttention.sentence && <Lead>{report.stationAttention.sentence}</Lead>}
+            <StationsTable stations={report.stations} />
+            <Note>
+              Ud-scanninger, der mangler i måneden: <strong>{formatNumber(report.missingScanOuts)}</strong>. En passage
+              uden ud-scanning tæller ikke med i tiderne.
+            </Note>
+          </ReportWidgetCard>
+
+          {can(ctx.role, "costs.view") && (
+            <ReportWidgetCard title="Kalkule mod målt">
+              {report.calcVsMeasured.byElementType.length > 0 ? (
+                <>
+                  <CalcVsMeasuredTable calc={report.calcVsMeasured} />
+                  <Note>
+                    Målt er mediantiden pr. element. Afvigelser over {report.calcVsMeasured.thresholdPercent} % i begge
+                    retninger er markeret. Kun stationer med både kalkule og måling tæller med.
+                  </Note>
+                </>
+              ) : (
+                <Note className="mt-0">
+                  Ingen data endnu: der er ingen kalkulerede tider eller ingen målinger i måneden.
+                </Note>
+              )}
+            </ReportWidgetCard>
+          )}
+
+          <ReportWidgetCard title="Det vigtigste og til beslutning">
+            <NotesEditor
+              month={month}
+              highlights={notes.highlights}
+              decisions={notes.decisions}
+              updatedText={notes.updatedAt ? `Senest rettet ${formatDayTime(notes.updatedAt)}` : null}
+              onSave={saveNotesAction}
+              onDraft={draftNotesAction}
+              draftDisabledReason={aiConfigured() ? null : DRAFT_MESSAGES.notConfigured}
+            />
+          </ReportWidgetCard>
+        </ReportFrame>
+      </ReportSheet>
     </PageShell>
   );
 }

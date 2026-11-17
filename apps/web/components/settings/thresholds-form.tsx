@@ -22,7 +22,9 @@ export type ThresholdRow = {
 export function ThresholdsForm({ thresholds }: { thresholds: ThresholdRow[] }) {
   // Only what is typed and not yet saved; the rest shows the stored value.
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const { pending, result, run, clear, fieldErrors } = useSettingsAction();
+  const { pending, result, run, clear, fieldErrors } = useSettingsAction({
+    okText: "Grænseværdierne er gemt.",
+  });
 
   const changed = thresholds.filter(
     (t) => edits[t.key] !== undefined && edits[t.key].trim() !== t.value
@@ -108,7 +110,7 @@ export function ThresholdsForm({ thresholds }: { thresholds: ThresholdRow[] }) {
               Fortryd
             </Button>
           )}
-          <FormMessage result={result} okText="Grænseværdierne er gemt." />
+          <FormMessage result={result} />
         </div>
       </form>
     </SectionCard>

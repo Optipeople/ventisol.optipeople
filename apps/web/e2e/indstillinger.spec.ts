@@ -29,7 +29,9 @@ test.describe("Indstillinger", () => {
     const name = `E2E station ${stationNo}`;
     await page.goto("/indstillinger/stationer");
 
-    const form = page.getByRole("region", { name: "Tilføj station" });
+    // The form is a dialog, opened from the button over the table.
+    await page.getByRole("button", { name: "Tilføj station" }).click();
+    const form = page.getByRole("dialog", { name: "Tilføj station" });
     await form.getByRole("textbox", { name: "Stationsnr." }).fill(stationNo);
     await form.getByRole("textbox", { name: "Navn", exact: true }).fill(name);
     await form.getByRole("button", { name: "Tilføj station" }).click();
@@ -38,14 +40,19 @@ test.describe("Indstillinger", () => {
     await expect(row).toHaveCount(1);
     await expect(row.getByRole("cell").first()).toHaveText(stationNo);
 
-    await row.getByRole("button", { name: `Rediger ${name}` }).click();
-    const edit = page.getByRole("region", { name: `Rediger station ${stationNo}` });
+    // The menu closes when the page scrolls, so the row is brought into view
+    // before the click and not by it.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await row.scrollIntoViewIfNeeded();
+    await row.getByRole("button", { name: `Handlinger for ${name}` }).click();
+    await page.getByRole("menuitem", { name: "Rediger" }).click();
+    const edit = page.getByRole("dialog", { name: `Rediger station ${stationNo}` });
     await expect(edit.getByRole("textbox", { name: "Stationsnr." })).toBeDisabled();
     const nameField = edit.getByRole("textbox", { name: "Navn", exact: true });
     await nameField.fill(`${name} rettet`);
     await edit.getByRole("button", { name: "Gem station" }).click();
 
     await expect(page.getByRole("row").filter({ hasText: `${name} rettet` })).toHaveCount(1);
-    await expect(page.getByRole("region", { name: "Tilføj station" })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 });

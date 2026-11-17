@@ -24,19 +24,20 @@ test.describe("Overblik", () => {
   test("one Hent menu holds every file of the page", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Hent" }).click();
-    const menu = page.getByRole("menu", { name: "Hent" });
+    const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem")).toHaveText(["Nøgletal (Excel)", "Nøgletal (PDF)", "Gennemløbstid (Excel)"]);
-    await expect(menu.getByRole("menuitem", { name: "Nøgletal (PDF)" })).toHaveAttribute(
-      "href",
-      /^\/api\/export\/pdf\?report=kpi_summary/
-    );
+    // A menu line is not a link: choosing it starts the download.
+    const download = page.waitForEvent("download");
+    await menu.getByRole("menuitem", { name: "Nøgletal (PDF)" }).click();
+    expect((await download).url()).toMatch(/\/api\/export\/pdf\?report=kpi_summary/);
   });
 
   test("a period preset sets from and to in the URL", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("link", { name: "Sidste måned" }).click();
+    await page.getByRole("button", { name: /^Periode \d/ }).click();
+    await page.getByRole("option", { name: "Sidste måned" }).click();
     await expect(page).toHaveURL(/[?&]from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}/);
-    await expect(page.getByRole("textbox", { name: "Fra" })).toHaveValue(/^01-/);
+    await expect(page.getByRole("button", { name: /^Periode 1\. / })).toBeVisible();
   });
 
   test("the clock toggle sets clock in the URL", async ({ page }) => {

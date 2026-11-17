@@ -6,7 +6,8 @@ import type { ActionResult } from "@/lib/settings/result";
 
 function Inner({ month, monthName, onFreeze }: FreezeButtonProps) {
   const confirm = useConfirm();
-  const { pending, result, run } = useSettingsAction();
+  // The answer is a toast: the button is gone once the month is frozen.
+  const { pending, result, run } = useSettingsAction({ okText: "Måneden er låst." });
 
   async function freeze() {
     const yes = await confirm({
@@ -19,7 +20,7 @@ function Inner({ month, monthName, onFreeze }: FreezeButtonProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div data-print-hidden="" className="flex flex-wrap items-center gap-3 print:hidden">
       <Button variant="secondary" size="compact" disabled={pending} onClick={() => void freeze()}>
         {pending ? "Låser…" : "Lås måned"}
       </Button>

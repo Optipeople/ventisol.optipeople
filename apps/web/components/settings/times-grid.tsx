@@ -54,7 +54,9 @@ export function TimesGrid({
   // Only what the user has typed and not yet saved. Everything else shows
   // the stored value, so a refresh after a save needs no syncing.
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const { pending, result, run, clear, fieldErrors } = useSettingsAction();
+  const { pending, result, run, clear, fieldErrors } = useSettingsAction({
+    okText: "Tiderne er gemt.",
+  });
 
   const stored = (key: string) => cells[key]?.minutes ?? "";
   const changed = Object.entries(edits).filter(([key, text]) => {
@@ -170,7 +172,6 @@ export function TimesGrid({
                 ? { ok: false, error: Object.values(fieldErrors)[0] }
                 : result
             }
-            okText="Tiderne er gemt."
           />
           {latest && (
             <p className="ml-auto text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">

@@ -2,22 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { buttonClasses } from "@optipeople/ui";
 import {
+  CHART_GREY,
   AutoRefresh,
   BarList,
-  CHART_GREY,
   KpiRow,
   KpiTile,
   Note,
   Notice,
   PageHeader,
   PageShell,
-  PeriodFilter,
   PillTabs,
   SectionCard,
 } from "@optipeople/ui/blocks";
 import { ExportMenu } from "@/components/export/export-menu";
 import { KpiChange } from "@/components/overview/kpi-change";
 import { LeadTimeChart } from "@/components/overview/lead-time-chart";
+import { PeriodPicker } from "@/components/overview/period-picker";
 import { StepBreakdown } from "@/components/overview/step-breakdown";
 import { TodayStrip } from "@/components/overview/today-strip";
 import { requireCapability } from "@/lib/auth";
@@ -119,19 +119,16 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       </Note>
 
       {/* One card for the whole filter: the period, and the clock beside it. */}
-      <div className="mt-6 flex flex-wrap items-start gap-x-8 gap-y-4 rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-4 shadow-sm">
-        <PeriodFilter
-          className="min-w-0 flex-1 basis-[420px] border-0 bg-transparent p-0 shadow-none"
-          from={from}
-          to={to}
-          max={today}
-          required
-          presets={periodPresets(today).map(({ label, from: f, to: t }) => ({ label, from: f, to: t }))}
-          defaults={defaultPeriod(today)}
-          preserve={keep}
-          basePath="/"
-          labels={{ from: "Fra", to: "Til", reset: "Seneste 4 uger", updating: "Opdaterer…" }}
-        />
+      <PeriodPicker
+        className="mt-6 flex flex-wrap items-end gap-x-8 gap-y-4"
+        from={from}
+        to={to}
+        max={today}
+        presets={periodPresets(today).map(({ label, from: f, to: t }) => ({ label, from: f, to: t }))}
+        defaults={defaultPeriod(today)}
+        preserve={keep}
+        basePath="/"
+      >
         <div>
           <p className="mb-[6px] text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
             Tid
@@ -145,7 +142,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
             ]}
           />
         </div>
-      </div>
+      </PeriodPicker>
       {filters.correction && <Note>{filters.correction}</Note>}
 
       <div className="mt-6">

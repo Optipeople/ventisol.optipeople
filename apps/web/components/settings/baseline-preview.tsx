@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
   Button,
   Checkbox,
@@ -10,6 +10,7 @@ import {
   DataTableHead,
   DataTableHeader,
   DataTableRow,
+  Modal,
 } from "@optipeople/ui";
 import { TableFrame } from "@optipeople/ui/blocks";
 import type { BaselineKept, BaselineProposal } from "@/lib/settings/baseline";
@@ -45,17 +46,7 @@ export function BaselinePreview({
   onClose: () => void;
 }) {
   const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
-  const panelRef = useRef<HTMLDivElement>(null);
   const kept = proposal.rows.filter((r) => !skipped.has(timeCellKey(r.stationNo, r.elementTypeId)));
-
-  useEffect(() => {
-    panelRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !pending) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, pending]);
 
   function toggle(key: string) {
     setSkipped((s) => {
@@ -67,27 +58,33 @@ export function BaselinePreview({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="baseline-preview-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:px-4"
+    <Modal
+      open
+      // A save under way is not left half way.
+      onClose={() => {
+        if (!pending) onClose();
+      }}
+      title="Forslag til normaltider"
+      width={760}
+      footer={
+        <>
+          <Button variant="secondary" disabled={pending} onClick={onClose}>
+            Annuller
+          </Button>
+          <Button
+            disabled={pending || kept.length === 0}
+            onClick={() =>
+              onApply(
+                kept.map((r) => ({ stationNo: r.stationNo, elementTypeId: r.elementTypeId, seconds: r.suggestedSeconds }))
+              )
+            }
+          >
+            {pending ? "Gemmer…" : `Brug forslag (${kept.length})`}
+          </Button>
+        </>
+      }
     >
-      <button
-        type="button"
-        aria-label="Luk"
-        disabled={pending}
-        onClick={onClose}
-        className="dialog-overlay absolute inset-0 bg-black/40 backdrop-blur-[2px]"
-      />
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        className="dialog-panel relative flex max-h-[90vh] w-full max-w-[760px] flex-col gap-4 rounded-[4px] border-[3px] border-solid border-[#fcfcfc] bg-[var(--ds-grey-light-02)] p-6 text-left shadow-[0px_4px_4px_0px_rgba(0,0,0,0.1)] outline-none sm:p-10"
-      >
-        <h2 id="baseline-preview-title" className="text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">
-          Forslag til normaltider
-        </h2>
+      <div className="flex flex-col gap-4">
         <p className="text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">
           Mediantiden pr. stk. fra {danishDay(proposal.period.from)} til {danishDay(proposal.period.to)} (
           {proposal.weeks.toLocaleString("da-DK")} uger), kun hvor der er mindst {proposal.minSamples} målinger.
@@ -135,23 +132,8 @@ export function BaselinePreview({
           </DataTable>
         </TableFrame>
 
-        <FormMessage result={result && !result.ok ? result : null} />
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <Button variant="secondary" disabled={pending} onClick={onClose}>
-            Annuller
-          </Button>
-          <Button
-            disabled={pending || kept.length === 0}
-            onClick={() =>
-              onApply(
-                kept.map((r) => ({ stationNo: r.stationNo, elementTypeId: r.elementTypeId, seconds: r.suggestedSeconds }))
-              )
-            }
-          >
-            {pending ? "Gemmer…" : `Brug forslag (${kept.length})`}
-          </Button>
-        </div>
+        <FormMessage result={result} />
       </div>
-    </div>
+    </Modal>
   );
 }

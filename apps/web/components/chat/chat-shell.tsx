@@ -1,16 +1,36 @@
 "use client";
 
-// The frame of the chat page, as in Opti Assist: a dark band that holds the
-// sidebar, with the light chat panel beside it. It fills the window under the
-// portal's header and tabs, so only the messages scroll, never the page.
+// Gives the shared ChatLayout a height. ChatLayout is `h-full` and made for
+// a page whose body is one window tall. Here the chat sits under the
+// portal's header and tabs and above the three colour stripe of the root
+// layout, so this frame takes what is left of the window. Only the messages
+// scroll, never the page.
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /** Height of the three colour stripe that the root layout puts under every page. */
 const STRIPE_PX = 27;
 
-export function ChatShell({ sidebar, children }: { sidebar: ReactNode; children: ReactNode }) {
+interface SidebarState {
+  /** Undefined until the user folds or opens the sidebar: the drawer then picks by screen width. */
+  open: boolean | undefined;
+  setOpen: (open: boolean) => void;
+}
+
+const SidebarContext = createContext<SidebarState>({ open: undefined, setOpen: () => {} });
+
+/**
+ * The user's choice for the sidebar. It lives in the frame, because the chat
+ * inside is mounted again for every conversation and would forget it.
+ */
+export function useChatSidebar(): SidebarState {
+  return useContext(SidebarContext);
+}
+
+export function ChatFrame({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState<boolean | undefined>(undefined);
+  const sidebar = useMemo(() => ({ open, setOpen }), [open]);
 
   // The header and the tabs above are not this page's to measure in CSS, so
   // the frame reads where it starts and takes the rest of the window. The
@@ -28,11 +48,8 @@ export function ChatShell({ sidebar, children }: { sidebar: ReactNode; children:
   }, []);
 
   return (
-    <div ref={ref} className="flex h-[calc(100dvh-113px)] min-h-[320px] bg-[var(--color-brand)]">
-      {sidebar}
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-tl-[var(--radius)] bg-[var(--color-background)]">
-        {children}
-      </div>
+    <div ref={ref} className="h-[calc(100dvh-113px)] min-h-[320px]">
+      <SidebarContext.Provider value={sidebar}>{children}</SidebarContext.Provider>
     </div>
   );
 }

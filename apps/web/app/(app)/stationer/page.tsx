@@ -7,10 +7,10 @@ import {
   Note,
   PageHeader,
   PageShell,
-  PeriodFilter,
   SectionTitle,
 } from "@optipeople/ui/blocks";
 import { ExportMenu } from "@/components/export/export-menu";
+import { PeriodPicker } from "@/components/overview/period-picker";
 import { MissingScanOutsTable } from "@/components/stations/missing-scan-outs";
 import { attentionHeadline, StationBoard } from "@/components/stations/station-board";
 import { StationsTable } from "@/components/stations/stations-table";
@@ -85,15 +85,13 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
           clock={report.clock}
           params={{ view: "period", from: period.from, to: period.to }}
         />
-        <PeriodFilter
+        <PeriodPicker
           from={period.from}
           to={period.to}
           max={today}
-          required
           preserve={{ view: "period", clock }}
           presets={periodPresets(today)}
           defaults={defaultPeriod(today)}
-          labels={{ from: "Fra", to: "Til", reset: "Tilbage til denne uge", updating: "Opdaterer…" }}
         />
         {period.clamped && <Note>Perioden er rettet, så den ender senest i dag og højst er et år lang.</Note>}
 

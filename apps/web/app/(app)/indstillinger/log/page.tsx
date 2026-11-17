@@ -11,7 +11,7 @@ import { EmptyState, FilterBar, SectionTitle, TableFrame } from "@optipeople/ui/
 import { AuditPager } from "@/components/settings/audit-pager";
 import { requireCapability } from "@/lib/auth";
 import { isPortalRole, roleLabel } from "@/lib/portal/roles";
-import { getAuditLogPage } from "@/lib/settings/audit-log";
+import { AUDIT_PAGE_SIZE, getAuditLogPage } from "@/lib/settings/audit-log";
 import { dayKey, formatClock, formatCount, formatDisplayDay } from "@/lib/time";
 
 export const metadata: Metadata = { title: "Hændelseslog" };
@@ -148,11 +148,15 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
               </DataTableBody>
             </DataTable>
           </TableFrame>
-          {log.pageCount > 1 && (
-            <div className="mt-4 flex justify-end">
-              <AuditPager page={log.page} pageCount={log.pageCount} basePath={PATH} params={filters} />
-            </div>
-          )}
+          <div className="mt-4">
+            <AuditPager
+              page={log.page}
+              pageSize={AUDIT_PAGE_SIZE}
+              total={log.total}
+              basePath={PATH}
+              params={filters}
+            />
+          </div>
         </>
       )}
     </div>

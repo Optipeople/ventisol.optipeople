@@ -6,6 +6,7 @@ import Link from "next/link";
 import { BarList, KpiRow, KpiTile, Note } from "@optipeople/ui/blocks";
 import {
   CheckIcon,
+  CircleExclamationIcon,
   DataTable,
   DataTableBody,
   DataTableCell,
@@ -115,6 +116,16 @@ function View({ view }: { view: ToolView }) {
         </div>
       );
   }
+}
+
+/** A tool call that failed: one quiet line, kept in the stored conversation too. */
+export function ToolFailedLine({ name }: { name: string }) {
+  return (
+    <p className="msg-in flex items-center gap-2 text-[14px] text-[var(--color-muted-foreground)] sm:text-[15px]">
+      <CircleExclamationIcon className="h-3.5 w-3.5 shrink-0 text-[var(--ds-red)]" />
+      {toolLabel(name)}: tallene kunne ikke hentes.
+    </p>
+  );
 }
 
 /**

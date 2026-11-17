@@ -10,8 +10,10 @@ import {
   DataTableHeader,
   DataTableRow,
   DateField,
+  RowMenu,
+  Switch,
   TextField,
-  ToggleButton,
+  TimeField,
   useConfirm,
 } from "@optipeople/ui";
 import { EmptyState, SectionCard, TableFrame } from "@optipeople/ui/blocks";
@@ -29,19 +31,19 @@ import { FieldError, FormMessage, useSettingsAction } from "./use-settings-actio
 // --- The switch ---
 
 export function OffShiftToggle({ value }: { value: boolean | null }) {
-  const { pending, result, run } = useSettingsAction();
+  const { pending, result, run } = useSettingsAction({ okText: "Gemt." });
   const on = value ?? false;
 
   return (
     <SectionCard title="Træk tid uden for skift fra">
       <div className="flex flex-wrap items-start gap-4">
-        <ToggleButton
+        <Switch
           checked={on}
           onCheckedChange={(next) => run(() => setDeductOffShiftAction(next))}
           disabled={pending}
-          onLabel="Til"
-          offLabel="Fra"
+          label={on ? "Til" : "Fra"}
           aria-label="Træk tid uden for skift fra"
+          className="min-w-[88px]"
         />
         <div className="min-w-0 flex-1 basis-[280px] text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">
           <p>
@@ -80,8 +82,11 @@ function ShiftForm({
   const { pending, result, run, clear, fieldErrors } = useSettingsAction();
   const isNew = draft.originalStart === undefined;
 
-  function submit(event: FormEvent) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // A time the field cannot read never reaches `start` or `end`, so the
+    // old value would be saved. The field already says what is wrong.
+    if (event.currentTarget.querySelector('[aria-invalid="true"]')) return;
     run(
       () =>
         saveShiftAction({ weekday: draft.weekday, originalStart: draft.originalStart, start, end }),
@@ -99,38 +104,35 @@ function ShiftForm({
 
   return (
     <form onSubmit={submit} noValidate>
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="w-[84px]">
-          <TextField
+      {/* A field is as wide as its box, so the width sits on the div around
+          it. The row lines up at the top: a time that cannot be read puts a
+          message under its field. */}
+      <div className="flex flex-wrap items-start gap-2 [&>button]:mt-[3px]">
+        <div className="w-[96px]">
+          <TimeField
             aria-label={`${label}, ${isNew ? "nyt skift" : "skift"} fra`}
             placeholder="06:00"
-            inputMode="numeric"
-            autoComplete="off"
             value={start}
-            onChange={(e) => {
+            onChange={(value) => {
               clear();
-              setStart(e.target.value);
+              setStart(value);
             }}
             disabled={pending}
             validation={fieldErrors.start ? "error" : "none"}
-            aria-invalid={Boolean(fieldErrors.start)}
           />
         </div>
-        <span className="text-[14px] text-[var(--ds-grey-medium-05)]">til</span>
-        <div className="w-[84px]">
-          <TextField
+        <span className="mt-[8px] text-[14px] text-[var(--ds-grey-medium-05)]">til</span>
+        <div className="w-[96px]">
+          <TimeField
             aria-label={`${label}, ${isNew ? "nyt skift" : "skift"} til`}
             placeholder="14:00"
-            inputMode="numeric"
-            autoComplete="off"
             value={end}
-            onChange={(e) => {
+            onChange={(value) => {
               clear();
-              setEnd(e.target.value);
+              setEnd(value);
             }}
             disabled={pending}
             validation={fieldErrors.end ? "error" : "none"}
-            aria-invalid={Boolean(fieldErrors.end)}
           />
         </div>
         <Button type="submit" variant={isNew ? "secondary" : "primary"} size="compact" disabled={pending}>
@@ -206,25 +208,19 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
                                   <span className="min-w-[112px] tabular-nums">
                                     {shift.start} til {shift.end}
                                   </span>
-                                  <Button variant="ghost" size="pill" onClick={() => setEditing(id)}>
-                                    Rediger
-                                    <span className="sr-only">
-                                      {" "}
-                                      {label} {shift.start}
-                                    </span>
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="pill"
+                                  <RowMenu
+                                    label={`Handlinger for ${label} ${shift.start}`}
+                                    align="left"
                                     disabled={remove.pending}
-                                    onClick={() => void removeShift(shift, label)}
-                                  >
-                                    Fjern
-                                    <span className="sr-only">
-                                      {" "}
-                                      {label} {shift.start}
-                                    </span>
-                                  </Button>
+                                    actions={[
+                                      { id: "edit", label: "Rediger" },
+                                      { id: "remove", label: "Fjern", danger: true },
+                                    ]}
+                                    onAction={(action) => {
+                                      if (action === "edit") setEditing(id);
+                                      else void removeShift(shift, label);
+                                    }}
+                                  />
                                 </span>
                               )}
                             </li>
@@ -268,7 +264,9 @@ function ClosedDayForm({
   const [name, setName] = useState(editing?.name ?? "");
   // Remounts the date field after an add, to empty its text.
   const [round, setRound] = useState(0);
-  const { pending, result, run, fieldErrors } = useSettingsAction();
+  const { pending, result, run, fieldErrors } = useSettingsAction({
+    okText: editing ? "Lukkedagen er gemt." : "Lukkedagen er tilføjet.",
+  });
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -325,7 +323,6 @@ function ClosedDayForm({
       <FieldError message={fieldErrors.day ?? fieldErrors.name} />
       <FormMessage
         result={result && !result.ok && (fieldErrors.day || fieldErrors.name) ? null : result}
-        okText="Lukkedagen er tilføjet."
       />
     </form>
   );
@@ -379,19 +376,18 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
                   </DataTableCell>
                   <DataTableCell>{row.name ?? ""}</DataTableCell>
                   <DataTableCell align="right" className="whitespace-nowrap">
-                    <span className="inline-flex gap-2">
-                      <Button variant="ghost" size="pill" onClick={() => setEditing(row)}>
-                        Rediger<span className="sr-only"> {row.label}</span>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="pill"
-                        disabled={remove.pending}
-                        onClick={() => void removeDay(row)}
-                      >
-                        Fjern<span className="sr-only"> {row.label}</span>
-                      </Button>
-                    </span>
+                    <RowMenu
+                      label={`Handlinger for ${row.label}`}
+                      disabled={remove.pending}
+                      actions={[
+                        { id: "edit", label: "Rediger" },
+                        { id: "remove", label: "Fjern", danger: true },
+                      ]}
+                      onAction={(action) => {
+                        if (action === "edit") setEditing(row);
+                        else void removeDay(row);
+                      }}
+                    />
                   </DataTableCell>
                 </DataTableRow>
               ))}

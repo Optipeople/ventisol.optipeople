@@ -1,16 +1,22 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { cn } from "@optipeople/ui";
+import { useToast } from "@optipeople/ui";
+import { Notice } from "@optipeople/ui/blocks";
 import type { ActionResult } from "@/lib/settings/result";
 
 /**
  * Runs a settings server action from a client form: `pending` while it and
  * the refresh that follows are under way, `result` is what it answered.
+ *
+ * With `okText` a save that went well is said in a toast: the action's own
+ * message when it has one, else `okText`. A failure is never a toast: it
+ * stays in `result`, for FormMessage and the field messages.
  */
-export function useSettingsAction() {
+export function useSettingsAction({ okText }: { okText?: string } = {}) {
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
+  const toast = useToast();
 
   const run = useCallback(
     (action: () => Promise<ActionResult>, onOk?: () => void) => {
@@ -23,10 +29,13 @@ export function useSettingsAction() {
           answer = { ok: false, error: "Serveren kunne ikke nås. Prøv igen." };
         }
         setResult(answer);
-        if (answer.ok) onOk?.();
+        if (answer.ok) {
+          if (okText !== undefined) toast.success(answer.message ?? okText);
+          onOk?.();
+        }
       });
     },
-    []
+    [okText, toast]
   );
 
   const clear = useCallback(() => setResult(null), []);
@@ -36,37 +45,19 @@ export function useSettingsAction() {
   return { pending, result, run, clear, fieldErrors };
 }
 
-/** The answer of the last save: the error (announced at once) or a quiet "Gemt". */
+/** The error of the last save, announced at once. Nothing for a save that went well. */
 export function FormMessage({
   result,
-  okText = "Gemt.",
   className,
 }: {
   result: ActionResult | null;
-  okText?: string;
   className?: string;
 }) {
-  if (!result) return null;
-  if (result.ok) {
-    return (
-      <p
-        role="status"
-        className={cn("text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]", className)}
-      >
-        {result.message ?? okText}
-      </p>
-    );
-  }
+  if (!result || result.ok) return null;
   return (
-    <p
-      role="alert"
-      className={cn(
-        "rounded-[2px] border border-[var(--ds-tag-red-dark)] bg-[var(--ds-tag-red-light)] px-3 py-2 text-[13px] leading-[19px] text-[var(--ds-grey-dark-09)]",
-        className
-      )}
-    >
-      {result.error}
-    </p>
+    <div role="alert" className={className}>
+      <Notice tone="error">{result.error}</Notice>
+    </div>
   );
 }
 

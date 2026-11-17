@@ -26,8 +26,8 @@ test.describe("Stationer", () => {
     await page.goto("/stationer");
     await page.getByRole("navigation", { name: "Visning" }).getByRole("button", { name: "Periode" }).click();
     await expect(page).toHaveURL(/[?&]view=period/);
-    await expect(page.getByRole("textbox", { name: "Fra" })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Til" })).toBeVisible();
+    // The date range field, not the Periode pill beside it.
+    await expect(page.getByRole("button", { name: /^Periode \d/ })).toBeVisible();
   });
 
   test("opens a station detail page", async ({ page }) => {

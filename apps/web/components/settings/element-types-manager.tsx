@@ -1,20 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import {
   Button,
-  Checkbox,
   DataTable,
   DataTableBody,
   DataTableCell,
   DataTableHead,
   DataTableHeader,
   DataTableRow,
+  Modal,
+  Switch,
   Tag,
   TextField,
   useConfirm,
 } from "@optipeople/ui";
-import { EmptyState, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
+import {
+  EmptyState,
+  FieldRow,
+  FormSection,
+  Notice,
+  SectionCard,
+  TableFrame,
+} from "@optipeople/ui/blocks";
 import {
   restoreDefaultElementTypesAction,
   saveElementTypeAction,
@@ -45,9 +53,10 @@ function ruleParts(rule: ElementTypeRule | null): string[] {
 }
 
 export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; canEdit: boolean }) {
-  const [editing, setEditing] = useState<ElementType | null>(null);
+  // The form in the dialog: a type to edit, "new" for a new one, null when closed.
+  const [form, setForm] = useState<ElementType | "new" | null>(null);
   const confirm = useConfirm();
-  const restore = useSettingsAction();
+  const restore = useSettingsAction({ okText: "Standardtyperne er på plads." });
 
   async function restoreDefaults() {
     const yes = await confirm({
@@ -56,7 +65,7 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
         "De seks indbyggede typer får deres oprindelige navn, regel og rækkefølge tilbage og bliver aktive. Typer I selv har tilføjet, røres ikke. Tiderne pr. type bliver stående.",
       confirmLabel: "Gendan standard",
     });
-    if (yes) restore.run(() => restoreDefaultElementTypesAction(), () => setEditing(null));
+    if (yes) restore.run(() => restoreDefaultElementTypesAction());
   }
 
   const nextSort = types.reduce((max, t) => Math.max(max, t.sortOrder), 0) + 10;
@@ -71,25 +80,28 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
         title="Elementtyper"
         description="Et element får den første type på listen, hvis regel passer på produktionslisten fra 3E. Passer ingen regel, bliver det Andet."
         action={
-          canEdit && types.length > 0 ? (
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={restore.pending}
-              onClick={() => void restoreDefaults()}
-            >
-              Gendan standard
-            </Button>
+          canEdit ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              {types.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={restore.pending}
+                  onClick={() => void restoreDefaults()}
+                >
+                  Gendan standard
+                </Button>
+              )}
+              <Button variant="secondary" size="compact" onClick={() => setForm("new")}>
+                Tilføj elementtype
+              </Button>
+            </div>
           ) : undefined
         }
         bodyClassName="p-0"
       >
-        {restore.result && (
-          <FormMessage
-            result={restore.result}
-            okText="Standardtyperne er på plads."
-            className="mx-4 mt-3"
-          />
+        {restore.result && !restore.result.ok && (
+          <FormMessage result={restore.result} className="mx-4 mt-3" />
         )}
         {types.length === 0 ? (
           <EmptyState title="Ingen elementtyper endnu" className="m-4">
@@ -146,7 +158,7 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
                       </DataTableCell>
                       {canEdit && (
                         <DataTableCell align="right">
-                          <Button variant="ghost" size="pill" onClick={() => setEditing(type)}>
+                          <Button variant="ghost" size="pill" onClick={() => setForm(type)}>
                             Rediger<span className="sr-only"> {type.name}</span>
                           </Button>
                         </DataTableCell>
@@ -160,19 +172,20 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
         )}
       </SectionCard>
 
-      {canEdit && (
+      {canEdit && form !== null && (
         <ElementTypeForm
           // A new key gives a fresh form when another type is picked.
-          key={editing ? `edit-${editing.id}` : "new"}
-          editing={editing}
+          key={form === "new" ? "new" : `edit-${form.id}`}
+          editing={form === "new" ? null : form}
           defaultSortOrder={nextSort}
-          onDone={() => setEditing(null)}
+          onDone={() => setForm(null)}
         />
       )}
     </div>
   );
 }
 
+/** The dialog with the form of one element type: a new one, or `editing`. */
 function ElementTypeForm({
   editing,
   defaultSortOrder,
@@ -182,26 +195,19 @@ function ElementTypeForm({
   defaultSortOrder: number;
   onDone: () => void;
 }) {
+  const formId = useId();
   const rule = editing?.rule ?? null;
   const [id, setId] = useState(editing?.id ?? "");
   const [name, setName] = useState(editing?.name ?? "");
-  // Null: not typed in yet, the field shows the next free place in the order.
-  const [typedSortOrder, setSortOrder] = useState<string | null>(
-    editing ? String(editing.sortOrder) : null
-  );
-  const sortOrder = typedSortOrder ?? String(defaultSortOrder);
+  const [sortOrder, setSortOrder] = useState(String(editing?.sortOrder ?? defaultSortOrder));
   const [active, setActive] = useState(editing?.active ?? true);
   const [any, setAny] = useState(rule?.anyOpeningContains?.join(", ") ?? "");
   const [none, setNone] = useState(rule?.noOpeningContains?.join(", ") ?? "");
   const [min, setMin] = useState(rule?.minFields !== undefined ? String(rule.minFields) : "");
   const [max, setMax] = useState(rule?.maxFields !== undefined ? String(rule.maxFields) : "");
-  const { pending, result, run, fieldErrors } = useSettingsAction();
-  const nameRef = useRef<HTMLInputElement>(null);
-
-  // "Rediger" in the table moves the keyboard to the form.
-  useEffect(() => {
-    if (editing) nameRef.current?.focus();
-  }, [editing]);
+  const { pending, result, run, fieldErrors } = useSettingsAction({
+    okText: editing ? "Typen er gemt." : "Typen er tilføjet.",
+  });
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -215,38 +221,41 @@ function ElementTypeForm({
       minFields: min,
       maxFields: max,
     };
-    run(() => saveElementTypeAction(editing ? "update" : "create", input), () => {
-      if (editing) {
-        onDone();
-      } else {
-        setId("");
-        setName("");
-        setAny("");
-        setNone("");
-        setMin("");
-        setMax("");
-        setSortOrder(null);
-      }
-    });
+    run(() => saveElementTypeAction(editing ? "update" : "create", input), onDone);
   }
 
   const state = (field: string) => (fieldErrors[field] ? "error" : "none");
 
   return (
-    <SectionCard
-      id="element-type-form"
+    <Modal
+      open
+      // A save under way is not left half way.
+      onClose={() => {
+        if (!pending) onDone();
+      }}
       title={editing ? `Rediger ${editing.name}` : "Tilføj elementtype"}
-      description={
-        editing
-          ? "Id kan ikke ændres, fordi tiderne henviser til det."
-          : "En type kan ikke slettes igen, kun gøres inaktiv."
+      width={680}
+      footer={
+        <>
+          <Button variant="secondary" disabled={pending} onClick={onDone}>
+            Annuller
+          </Button>
+          <Button type="submit" form={formId} disabled={pending}>
+            {pending ? "Gemmer…" : editing ? "Gem elementtype" : "Tilføj elementtype"}
+          </Button>
+        </>
       }
     >
-      <form onSubmit={submit} noValidate className="flex flex-col gap-5">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_130px]">
+      <form id={formId} onSubmit={submit} noValidate>
+        <p className="mb-4 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
+          {editing
+            ? "Id kan ikke ændres, fordi tiderne henviser til det."
+            : "En type kan ikke slettes igen, kun gøres inaktiv."}
+        </p>
+
+        <FieldRow>
           <div>
             <TextField
-              ref={nameRef}
               label="Navn"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -272,7 +281,11 @@ function ElementTypeForm({
             />
             <FieldError message={fieldErrors.id} />
           </div>
-          <div>
+        </FieldRow>
+
+        <div className="mb-6 flex flex-wrap items-end gap-x-6 gap-y-4">
+          {/* A field is as wide as its box, so the width sits on the div around it. */}
+          <div className="w-[130px]">
             <TextField
               label="Rækkefølge"
               inputMode="numeric"
@@ -282,20 +295,26 @@ function ElementTypeForm({
               validation={state("sortOrder")}
               aria-invalid={Boolean(fieldErrors.sortOrder)}
             />
+          </div>
+          <Switch
+            label="Aktiv"
+            checked={active}
+            onCheckedChange={setActive}
+            disabled={pending}
+            className="mb-[6px]"
+          />
+          <div className="basis-full empty:hidden">
             <FieldError message={fieldErrors.sortOrder} />
           </div>
         </div>
 
-        <fieldset className="rounded-[2px] border border-[var(--ds-grey-light-02)] p-4">
-          <legend className="px-1 text-[14px] font-bold leading-[21px] text-[var(--ds-grey-dark-09)]">
-            Regel for genkendelse
-          </legend>
-          <p className="mb-4 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
-            Alle udfyldte betingelser skal passe. Teksterne sammenlignes med fagenes
-            åbningsfunktion i produktionslisten, uden hensyn til store og små bogstaver. Lad alle
-            felter stå tomme for en type uden regel.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_130px_130px]">
+        <FormSection
+          id={`${formId}-rule`}
+          title="Regel for genkendelse"
+          description="Alle udfyldte betingelser skal passe. Teksterne sammenlignes med fagenes åbningsfunktion i produktionslisten, uden hensyn til store og små bogstaver. Lad alle felter stå tomme for en type uden regel."
+          className="mb-0"
+        >
+          <FieldRow minFieldWidth={240}>
             <div>
               <TextField
                 label="Et fags åbning indeholder (adskil med komma)"
@@ -319,6 +338,8 @@ function ElementTypeForm({
               />
               <FieldError message={fieldErrors.noOpeningContains} />
             </div>
+          </FieldRow>
+          <FieldRow className="mb-0">
             <div>
               <TextField
                 label="Mindst antal fag"
@@ -343,29 +364,11 @@ function ElementTypeForm({
               />
               <FieldError message={fieldErrors.maxFields} />
             </div>
-          </div>
-        </fieldset>
+          </FieldRow>
+        </FormSection>
 
-        <Checkbox
-          label="Aktiv"
-          checked={active}
-          onChange={(e) => setActive(e.target.checked)}
-          disabled={pending}
-        />
-
-        <FormMessage result={result} okText={editing ? "Typen er gemt." : "Typen er tilføjet."} />
-
-        <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={pending}>
-            {pending ? "Gemmer…" : editing ? "Gem elementtype" : "Tilføj elementtype"}
-          </Button>
-          {editing && (
-            <Button variant="secondary" disabled={pending} onClick={onDone}>
-              Annuller
-            </Button>
-          )}
-        </div>
+        <FormMessage result={result} className="mt-4" />
       </form>
-    </SectionCard>
+    </Modal>
   );
 }

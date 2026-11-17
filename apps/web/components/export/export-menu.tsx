@@ -1,7 +1,7 @@
 // The one download control of a page or a table.
 // A server component: it builds the links to the route handlers
 // (app/api/export). One file gives a plain link, "Hent Excel". Several files
-// give a single "Hent" button that opens a list.
+// give a single "Hent" button that opens a list (the shared DropdownButton).
 
 import { buttonClasses } from "@optipeople/ui";
 import type { ReportQueryName } from "@/lib/reports";

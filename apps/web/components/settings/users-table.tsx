@@ -34,7 +34,7 @@ export function UsersTable({
   roles: { value: string; label: string }[];
 }) {
   const confirm = useConfirm();
-  const { pending, result, run } = useSettingsAction();
+  const { pending, result, run } = useSettingsAction({ okText: "Rollen er ændret." });
   const roleLabel = (value: string) => roles.find((r) => r.value === value)?.label ?? value;
 
   async function change(user: UserRow, role: string) {
@@ -50,11 +50,12 @@ export function UsersTable({
 
   return (
     <div>
-      {(result || pending) && (
+      {pending ? (
         <div className="flex items-center gap-2 px-4 pt-3">
-          {pending && <Spinner className="h-[14px] w-[14px]" />}
-          <FormMessage result={pending ? null : result} okText="Rollen er ændret." />
+          <Spinner className="h-[14px] w-[14px]" />
         </div>
+      ) : (
+        <FormMessage result={result} className="mx-4 mt-3" />
       )}
       <TableFrame className="border-0 shadow-none">
         <DataTable>

@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useTransition } from "react";
 import { Button } from "@optipeople/ui";
+import { Note } from "@optipeople/ui/blocks";
 import type { BaselineKept, BaselineProposal, BaselineProposalResult } from "@/lib/settings/baseline";
 import type { ActionResult } from "@/lib/settings/result";
 import { BaselinePreview } from "./baseline-preview";
@@ -31,7 +32,7 @@ export function SuggestBaselineButton({
   const [loading, startLoading] = useTransition();
   const [proposal, setProposal] = useState<BaselineProposal | null>(null);
   const [notice, setNotice] = useState<ActionResult | null>(null);
-  const saving = useSettingsAction();
+  const saving = useSettingsAction({ okText: "Gemt." });
 
   function open() {
     if (!suggest) return;
@@ -90,8 +91,14 @@ export function SuggestBaselineButton({
           {disabledReason}
         </p>
       )}
-      <FormMessage result={notice} className="max-w-[320px] text-right" />
-      {!proposal && <FormMessage result={saving.result?.ok ? saving.result : null} />}
+      {/* Why there is nothing to review stays beside the button: it is the
+          answer to the click, and too long to read in a toast. */}
+      {notice?.ok && notice.message && (
+        <div role="status">
+          <Note className="mt-0 max-w-[320px] text-right">{notice.message}</Note>
+        </div>
+      )}
+      <FormMessage result={notice} className="max-w-[320px] text-left" />
       {proposal && (
         <BaselinePreview
           proposal={proposal}

@@ -22,13 +22,13 @@ test.describe("Ledelse", () => {
   test("one Hent menu holds every file of the report", async ({ page }) => {
     await page.goto("/ledelse");
     await page.getByRole("button", { name: "Hent" }).click();
-    const menu = page.getByRole("menu", { name: "Hent" });
-    await expect(menu.getByRole("menuitem", { name: "Månedsrapport (Excel)" })).toHaveAttribute(
-      "href",
-      /^\/api\/export\/xlsx\?report=management_kpis/
-    );
+    const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem", { name: "Månedsrapport (PDF)" })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Gennemløbstid pr. måned (Excel)" })).toBeVisible();
+    // A menu line is not a link: choosing it starts the download.
+    const download = page.waitForEvent("download");
+    await menu.getByRole("menuitem", { name: "Månedsrapport (Excel)" }).click();
+    expect((await download).url()).toMatch(/\/api\/export\/xlsx\?report=management_kpis/);
   });
 
   test("notes are saved", async ({ page }) => {
