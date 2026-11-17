@@ -51,11 +51,11 @@ export function UsersTable({
   return (
     <div>
       {pending ? (
-        <div className="flex items-center gap-2 px-4 pt-3">
+        <div className="flex items-center gap-2 px-6 pt-4">
           <Spinner className="h-[14px] w-[14px]" />
         </div>
       ) : (
-        <FormMessage result={result} className="mx-4 mt-3" />
+        <FormMessage result={result} className="mx-6 mt-4" />
       )}
       <TableFrame className="border-0 shadow-none">
         <DataTable>

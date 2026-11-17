@@ -84,7 +84,7 @@ export default async function TimesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <Notice tone="info">
         Tiderne skrives i minutter med decimaler: 12,5 er tolv et halvt minut. Et tomt felt betyder,
         at der ingen tid er sat. Skriv i felterne og tryk Gem under skemaet.

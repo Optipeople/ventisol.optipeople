@@ -60,7 +60,7 @@ export function StationsManager({
   const nextSort = stations.reduce((max, s) => Math.max(max, s.sortOrder), 0) + 10;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       {!canEdit && (
         <Notice tone="info">Du kan se stationerne. Kun en administrator kan ændre dem.</Notice>
       )}
@@ -78,10 +78,10 @@ export function StationsManager({
         bodyClassName="p-0"
       >
         {toggle.result && !toggle.result.ok && (
-          <FormMessage result={toggle.result} className="mx-4 mt-3" />
+          <FormMessage result={toggle.result} className="mx-6 mt-4" />
         )}
         {stations.length === 0 ? (
-          <EmptyState title="Ingen stationer endnu" className="m-4">
+          <EmptyState title="Ingen stationer endnu" className="m-6">
             {canEdit
               ? "Tilføj den første station med knappen Tilføj station. Brug det stationsnummer, som stationens scanner er sat op med."
               : "Bed en administrator om at oprette stationerne."}

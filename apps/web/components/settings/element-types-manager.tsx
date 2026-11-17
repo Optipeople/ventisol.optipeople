@@ -71,7 +71,7 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
   const nextSort = types.reduce((max, t) => Math.max(max, t.sortOrder), 0) + 10;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       {!canEdit && (
         <Notice tone="info">Du kan se elementtyperne. Kun en administrator kan ændre dem.</Notice>
       )}
@@ -101,10 +101,10 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
         bodyClassName="p-0"
       >
         {restore.result && !restore.result.ok && (
-          <FormMessage result={restore.result} className="mx-4 mt-3" />
+          <FormMessage result={restore.result} className="mx-6 mt-4" />
         )}
         {types.length === 0 ? (
-          <EmptyState title="Ingen elementtyper endnu" className="m-4">
+          <EmptyState title="Ingen elementtyper endnu" className="m-6">
             {canEdit ? (
               <>
                 <p>

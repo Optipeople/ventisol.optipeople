@@ -86,7 +86,7 @@ export function PdfViewer({ src, title }: { src: string; title: string }) {
   }, [src, title]);
 
   return (
-    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--ds-grey-light-01)] p-3">
+    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--ds-grey-light-01)] p-4">
       {state.status === "loading" && (
         <div className="flex h-[240px] items-center justify-center gap-2 text-[14px] text-[var(--ds-grey-medium-05)]">
           <Spinner className="h-5 w-5" aria-label="Henter PDF" /> Henter produktionslisten…

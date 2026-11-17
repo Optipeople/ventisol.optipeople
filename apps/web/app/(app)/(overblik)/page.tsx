@@ -167,13 +167,13 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       </div>
 
       {noOrders && (
-        <Notice tone="info" className="mt-4">
+        <Notice tone="info" className="mt-6">
           Ingen ordrer er pakket i perioden, så der er ingen gennemløbstid at vise endnu. Vælg en længere periode, eller
           se dagens tal ovenfor.
         </Notice>
       )}
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-2">
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <SectionCard
           id="gennemloebstid"
           title={`Gennemløbstid pr. ordre, ${bucket === "week" ? "uge for uge" : "måned for måned"}`}
@@ -187,16 +187,16 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           title="Flaskehalsen: hvor går tiden pr. ordre"
           description={`Gennemsnit pr. ordre over ${formatCount(bottleneck.ordersPacked, "pakket ordre", "pakkede ordrer")}`}
         >
-          <p className="mb-1 text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">{bottleneck.sentence}</p>
+          <p className="mb-2 text-[16px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">{bottleneck.sentence}</p>
           {!noOrders && bottleneck.missingSteps.length > 0 && (
-            <p className="mb-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
+            <p className="mb-4 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
               Ingen data endnu for {joinDanish(bottleneck.missingSteps)}.
             </p>
           )}
           {!noOrders && (
-            <div className="mt-3">
+            <div className="mt-4">
               <StepBreakdown steps={bottleneck.steps.filter((s) => s.source !== "none")} bottleneck={bottleneck.bottleneck?.step ?? null} />
-              <p className="mt-3 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
+              <p className="mt-4 text-[13px] leading-[19px] text-[var(--ds-grey-medium-05)]">
                 Gennemløbstid i alt: <span className="font-bold tabular-nums">{formatDuration(bottleneck.lead.seconds)}</span>
               </p>
             </div>
@@ -207,7 +207,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       {worstStations.length > 0 && (
         <SectionCard
           id="ventetid-stationer"
-          className="mt-4"
+          className="mt-6"
           title="Ventetid før hver station"
           description="Hvor længe et element i snit venter, fra det forlod forrige station til det kom hertil"
         >

@@ -36,7 +36,7 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
   const byStep = new Map(steps.map((s) => [s.step, s]));
 
   return (
-    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-4 shadow-sm">
+    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-6 shadow-sm">
       <div className="grid grid-cols-[150px_1fr_110px] gap-x-3 text-[14px] leading-[20px]">
         {/* Tick row */}
         <div />
@@ -128,7 +128,7 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
         <div />
       </div>
 
-      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
+      <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
         {(["work", "wait", "deviation"] as const).map((tone) => (
           <li key={tone} className="flex items-center gap-[6px]">
             <span aria-hidden className={`inline-block h-[10px] w-[16px] rounded-[2px] border ${TONE_CLASS[tone]}`} />
@@ -144,7 +144,7 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
         <li>Hold musen over en bjælke for tider.</li>
       </ul>
       {order.status === "in_progress" && order.forecastReadyAt == null && (
-        <p className="mt-1 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
+        <p className="mt-2 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
           Ingen prognose endnu: der mangler typiske tider for stationerne.
         </p>
       )}
@@ -159,11 +159,11 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
  */
 export function StepsTable({ steps }: { steps: OrderStep[] }) {
   return (
-    <details className="mt-3">
+    <details className="mt-4">
       <summary className="cursor-pointer text-[14px] font-bold leading-[21px] text-[var(--ds-midnight-green)]">
         Vis trinene som tabel
       </summary>
-      <div className="mt-3">
+      <div className="mt-4">
         <StepsTableBody steps={steps} />
       </div>
     </details>

@@ -132,7 +132,7 @@ async function StationDetail({
       </PageHeader>
 
       {!station.configured && (
-        <Notice className="mb-4">
+        <Notice className="mb-6">
           Station nr. {stationNo} er ikke sat op under Indstillinger. Siden viser kun det, scanningerne siger.
         </Notice>
       )}
@@ -154,7 +154,7 @@ async function StationDetail({
 
       {hasDay ? (
         <>
-          <div className="mt-5">
+          <div className="mt-6">
             <KpiRow>
               <KpiTile
                 label={isToday ? "Gennem i dag" : "Gennem"}
@@ -215,14 +215,14 @@ async function StationDetail({
             <>
               <StationTimeline day={day} intervals={timeline} now={now} />
               {station.gaps.length > 0 && (
-                <div className="mt-4">
-                  <p className="mb-2 text-[13px] font-bold leading-[18px] text-[var(--ds-grey-dark-09)]">
+                <div className="mt-6">
+                  <p className="mb-3 text-[13px] font-bold leading-[18px] text-[var(--ds-grey-dark-09)]">
                     Pauser i vagten på mindst 5 min
                   </p>
                   <GapsList gaps={station.gaps} day={day} />
                 </div>
               )}
-              <div className="mt-4">
+              <div className="mt-6">
                 <PassesTable day={day} intervals={timeline} />
               </div>
             </>
@@ -230,7 +230,7 @@ async function StationDetail({
         </>
       ) : (
         <EmptyState
-          className="mt-5"
+          className="mt-6"
           title={hasWeeks ? "Ingen passager denne dag" : `Ingen passager de ${TREND_WEEKS} uger op til denne dag`}
         >
           {awaitsConnection
@@ -242,7 +242,7 @@ async function StationDetail({
       )}
 
       {hasWeeks && (
-        <div className="mt-8 grid gap-5">
+        <div className="mt-8 grid gap-6">
           {hasTrend && (
             <SectionCard
               title={`Tid pr. stk. uge for uge, ${TREND_WEEKS} uger`}
@@ -275,13 +275,13 @@ function StationDetailSkeleton() {
     <PageShell width="wide" aria-busy>
       <PageHeaderSkeleton titleWidth="w-40" withActions />
       <div className="mb-4 ml-auto h-[30px] w-64 animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
-      <div className="h-[64px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
-      <div className="mt-5 grid animate-pulse grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="h-[90px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mt-6 grid animate-pulse grid-cols-2 gap-6 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[86px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+          <div key={i} className="h-[117px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
         ))}
       </div>
-      <div className="mt-5 h-[240px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mt-8 h-[240px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
       <p className="sr-only">Henter stationen…</p>
     </PageShell>
   );

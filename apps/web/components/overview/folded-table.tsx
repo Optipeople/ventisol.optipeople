@@ -21,7 +21,7 @@ export function FoldedTable({
         <span className="group-open:hidden">{showLabel}</span>
         <span className="hidden group-open:inline">{hideLabel}</span>
       </summary>
-      <div className="mt-3">{children}</div>
+      <div className="mt-4">{children}</div>
     </details>
   );
 }

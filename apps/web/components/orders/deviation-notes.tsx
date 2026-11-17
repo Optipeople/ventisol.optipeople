@@ -6,7 +6,7 @@ const SHOWN = 6;
 
 function NoteList({ notes }: { notes: DeviationNote[] }) {
   return (
-    <ul className="mt-2 space-y-[6px]">
+    <ul className="mt-3 space-y-2">
       {notes.map((n, i) => (
         <li key={`${n.code}-${n.barcode ?? ""}-${n.stationNo ?? ""}-${i}`} className="flex items-start gap-2 text-[14px] leading-[21px]">
           <Tag size="small" variant={n.severity === "problem" ? "issue" : "warning"} className="mt-[1px] shrink-0">
@@ -30,17 +30,17 @@ export function DeviationNotes({ notes, headline }: { notes: DeviationNote[]; he
         : "border-[var(--ds-tag-green-dark)] bg-[var(--ds-tag-green-light)]";
 
   return (
-    <section aria-label="Afvigelser" className={`rounded-[2px] border-l-4 p-4 ${tone}`}>
+    <section aria-label="Afvigelser" className={`rounded-[2px] border-l-4 px-6 py-5 ${tone}`}>
       <h2 className="text-[16px] font-bold leading-[22px] text-[var(--ds-grey-dark-09)]">{headline}</h2>
       {notes.length === 0 ? (
-        <p className="mt-1 text-[14px] leading-[21px] text-[var(--ds-grey-dark-08)]">
+        <p className="mt-2 text-[14px] leading-[21px] text-[var(--ds-grey-dark-08)]">
           Ingen forsinkelse, intet omarbejde, ingen lange ventetider og ingen manglende scanninger.
         </p>
       ) : (
         <>
           <NoteList notes={notes.slice(0, SHOWN)} />
           {notes.length > SHOWN && (
-            <details className="mt-2">
+            <details className="mt-3">
               <summary className="cursor-pointer text-[14px] font-bold leading-[21px] text-[var(--ds-midnight-green)]">
                 Vis {notes.length - SHOWN} mere
               </summary>

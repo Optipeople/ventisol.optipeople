@@ -51,7 +51,7 @@ export function ThresholdsForm({ thresholds }: { thresholds: ThresholdRow[] }) {
             return (
               <li
                 key={t.key}
-                className="grid gap-x-6 gap-y-2 border-b border-[var(--ds-grey-light-02)] px-4 py-4 sm:grid-cols-[1fr_230px]"
+                className="grid gap-x-6 gap-y-3 border-b border-[var(--ds-grey-light-02)] px-6 py-5 sm:grid-cols-[1fr_230px]"
               >
                 <div className="min-w-0">
                   <label
@@ -85,7 +85,7 @@ export function ThresholdsForm({ thresholds }: { thresholds: ThresholdRow[] }) {
                     <span className="text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">{t.unit}</span>
                   </div>
                   <FieldError message={error} />
-                  <p className="mt-[2px] text-[12px] leading-[17px] text-[var(--ds-grey-medium-05)]">
+                  <p className="mt-1 text-[12px] leading-[17px] text-[var(--ds-grey-medium-05)]">
                     {t.min} til {t.max}. {t.changed}.
                   </p>
                 </div>
@@ -94,7 +94,7 @@ export function ThresholdsForm({ thresholds }: { thresholds: ThresholdRow[] }) {
           })}
         </ul>
 
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-4">
           <Button type="submit" disabled={pending || changed.length === 0}>
             {pending ? "Gemmer…" : "Gem grænseværdier"}
           </Button>

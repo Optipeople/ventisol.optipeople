@@ -17,7 +17,7 @@ function NoteList({ lines, empty }: { lines: string[]; empty: string }) {
     return <p className="text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)]">{empty}</p>;
   }
   return (
-    <ul className="list-disc space-y-1 pl-5 text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">
+    <ul className="list-disc space-y-2 pl-5 print:space-y-1 text-[14px] leading-[21px] text-[var(--ds-grey-dark-09)]">
       {lines.map((line, i) => (
         <li key={i}>{line}</li>
       ))}
@@ -131,14 +131,14 @@ function Editor({
 
   if (!editing) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-6 print:space-y-4">
         <div className="grid gap-6 md:grid-cols-2">
           <section>
-            <h4 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Det vigtigste</h4>
+            <h4 className="mb-3 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Det vigtigste</h4>
             <NoteList lines={highlights} empty="Ingen punkter skrevet endnu." />
           </section>
           <section>
-            <h4 className="mb-2 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Til beslutning</h4>
+            <h4 className="mb-3 text-[14px] font-bold text-[var(--ds-grey-dark-09)]">Til beslutning</h4>
             <NoteList lines={decisions} empty="Intet til beslutning endnu." />
           </section>
         </div>
@@ -157,7 +157,7 @@ function Editor({
 
   return (
     <form
-      className="space-y-4"
+      className="space-y-6"
       onSubmit={(e) => {
         e.preventDefault();
         run(() => onSave(month, draft.highlights, draft.decisions), () => setEditing(false));

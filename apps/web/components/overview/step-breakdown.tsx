@@ -14,7 +14,7 @@ export function StepBreakdown({ steps, bottleneck }: { steps: StepTime[]; bottle
   const max = Math.max(0, ...steps.map((s) => s.duration.seconds ?? 0));
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
+      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-2 text-[12px] leading-[14px] text-[var(--ds-grey-medium-05)]">
         <Legend color={CHART_BLUE} label="Arbejde" />
         <Legend color={CHART_GREY} label="Ventetid" />
         <span className="flex items-center gap-[6px]">
@@ -22,7 +22,7 @@ export function StepBreakdown({ steps, bottleneck }: { steps: StepTime[]; bottle
           Antaget, tæller ikke med
         </span>
       </div>
-      <ol className="flex flex-col gap-[10px]">
+      <ol className="flex flex-col gap-4">
         {steps.map((s) => (
           <StepRow key={s.step} step={s} max={max} isBottleneck={s.step === bottleneck} />
         ))}
@@ -56,7 +56,7 @@ function StepRow({ step, max, isBottleneck }: { step: StepTime; max: number; isB
     <li
       className={
         isBottleneck
-          ? "-mx-2 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-2 py-[6px]"
+          ? "-mx-3 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-3 py-2"
           : undefined
       }
     >
@@ -68,7 +68,7 @@ function StepRow({ step, max, isBottleneck }: { step: StepTime; max: number; isB
         </span>
         <span className="text-[12px] leading-[18px] tabular-nums text-[var(--ds-grey-medium-05)]">{value}</span>
       </div>
-      <div className="mt-1 h-[12px] w-full" aria-hidden>
+      <div className="mt-2 h-[12px] w-full" aria-hidden>
         {total != null && total > 0 &&
           (assumed || !step.countsInLead ? (
             <div

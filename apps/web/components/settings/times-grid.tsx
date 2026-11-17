@@ -145,7 +145,7 @@ export function TimesGrid({
           </DataTable>
         </TableFrame>
 
-        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--ds-grey-light-02)] px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--ds-grey-light-02)] px-6 py-4">
           <Button type="submit" disabled={pending || changed.length === 0}>
             {pending
               ? "Gemmer…"

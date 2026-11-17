@@ -252,7 +252,7 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
 function Footnote({ partial, forecast = false }: { partial: boolean; forecast?: boolean }) {
   if (!partial && !forecast) return null;
   return (
-    <p className="mt-3 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
+    <p className="mt-4 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
       {partial && "* Uden produktionsliste: tallet gælder kun de scannede elementer."}
       {partial && forecast && " "}
       {forecast && "Forventet klar er et skøn ud fra de typiske tider."}

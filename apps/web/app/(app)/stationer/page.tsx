@@ -142,7 +142,7 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
         <NoStations />
       ) : (
         <>
-          <div className="mt-5">
+          <div className="mt-6">
             <StationBoard
               rows={report.rows}
               attention={report.attention}
@@ -199,7 +199,7 @@ function Controls({
 
 function NoStations() {
   return (
-    <EmptyState title="Ingen stationer endnu" className="mt-5">
+    <EmptyState title="Ingen stationer endnu" className="mt-6">
       Der er ingen aktive stationer. De oprettes under{" "}
       <Link href="/indstillinger/stationer" className="underline">
         Indstillinger, Stationer

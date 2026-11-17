@@ -131,7 +131,7 @@ function ScrollTable({ label, children }: { label: string; children: ReactNode }
 export function LeadTimeTable({ points, kind }: { points: LeadTimePoint[]; kind: "month" | "week" }) {
   return (
     <ReportTable
-      className="mt-3"
+      className="mt-4 print:mt-3"
       title={kind === "month" ? "Gennemløbstid pr. ordre, måned for måned" : "Gennemløbstid pr. ordre, uge for uge"}
       emptyText={NO_DATA}
       model={{
@@ -152,23 +152,23 @@ export function LeadTimeTable({ points, kind }: { points: LeadTimePoint[]; kind:
 export function BottleneckSection({ bottleneck }: { bottleneck: Bottleneck }) {
   const worst = bottleneck.bottleneck?.step;
   return (
-    <div className="space-y-3">
+    <div className="space-y-4 print:space-y-3">
       {/* Sized by the room it has, not the window: the report is also shown as an A4 sheet. */}
-      <ol className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-2">
+      <ol className="grid grid-cols-[repeat(auto-fit,minmax(118px,1fr))] gap-3 print:gap-2">
         {bottleneck.steps.map((s) => {
           const isWorst = s.step === worst;
           return (
             <li
               key={s.step}
               className={
-                "rounded-[2px] border bg-[var(--color-surface)] p-3 shadow-sm " +
+                "rounded-[2px] border bg-[var(--color-surface)] p-4 shadow-sm print:p-3 " +
                 (isWorst ? "border-[var(--ds-tag-red-dark)]" : "border-[var(--ds-grey-light-02)]")
               }
             >
               <p className="text-[12px] leading-[14px] font-bold text-[var(--ds-grey-medium-04)]">{s.label}</p>
               <p
                 className={
-                  "mt-1 text-[16px] leading-[20px] font-bold tabular-nums " +
+                  "mt-2 text-[16px] leading-[20px] font-bold tabular-nums print:mt-1 " +
                   (isWorst ? "text-[var(--ds-red-dark)]" : "text-[var(--ds-grey-dark-09)]")
                 }
               >

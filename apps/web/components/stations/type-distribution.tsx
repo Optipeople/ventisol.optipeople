@@ -68,7 +68,7 @@ export function TypeDistributionTable({ rows }: { rows: TypeDistribution[] }) {
   const max = scaleMax(rows);
   return (
     <>
-      <div className="mb-2 flex flex-wrap gap-x-5 gap-y-1 text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">
+      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-2 text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">
         <span className="inline-flex items-center gap-[6px]">
           <span aria-hidden className="inline-block h-[10px] w-[18px] rounded-[2px] bg-[#b2d0d0]" />
           Midterste halvdel

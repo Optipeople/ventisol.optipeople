@@ -23,7 +23,7 @@ export default async function UsersPage() {
   }));
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <Notice tone="info">
         Brugere oprettes i OptiCloud, ikke her. Når en bruger på Ventisol-kontoen logger ind i
         portalen første gang, dukker brugeren op på listen med rollen Læser. Derefter kan du give
@@ -42,7 +42,7 @@ export default async function UsersPage() {
             roles={PORTAL_ROLES.map((role) => ({ value: role, label: ROLE_LABELS[role] }))}
           />
         ) : (
-          <EmptyState title="Ingen brugere endnu" className="m-4">
+          <EmptyState title="Ingen brugere endnu" className="m-6">
             Ingen har logget ind i portalen endnu. Bed brugerne logge ind med deres
             OptiCloud-bruger, så kommer de frem her.
           </EmptyState>

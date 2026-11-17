@@ -56,7 +56,7 @@ function withoutLeadingEmpty<T extends { ordersPacked: number }>(points: T[]): T
 
 /** The line of context at the top of a card. */
 function Lead({ children }: { children: ReactNode }) {
-  return <p className="mb-3 text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)]">{children}</p>;
+  return <p className="mb-4 text-[14px] leading-[21px] text-[var(--ds-grey-medium-05)] print:mb-3">{children}</p>;
 }
 
 export default async function ManagementPage({
@@ -141,7 +141,7 @@ export default async function ManagementPage({
         <MonthPicker month={month} choices={choices} hrefs={hrefs} />
       </PageControls>
 
-      <div className="mt-4 print:mt-0">
+      <div className="mt-6 print:mt-0">
       <ReportSheet>
         {/* The title prints with the sheet; on screen it is the page header above. */}
         <ReportFrame
@@ -159,14 +159,14 @@ export default async function ManagementPage({
               zoneLabel={clockName}
             />
           </div>
-          {clamped && <Note className="mt-0 mb-3">Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
+          {clamped && <Note className="mt-0 mb-4 print:mb-3">Den valgte måned kan ikke vises. Siden viser {name} i stedet.</Note>}
           {clockLocked && askedClock && askedClock !== clock && (
-            <Note className="mt-0 mb-3">
+            <Note className="mt-0 mb-4 print:mb-3">
               En låst måned vises med den tid, den blev låst med ({clock === "working" ? "arbejdstid" : "hele døgnet"}).
             </Note>
           )}
 
-          <div className="mb-4">
+          <div className="mb-6 print:mb-4">
             {result.frozen ? (
               <Notice tone="info">
                 <strong>Låste tal.</strong> Tallene for {name} blev gemt {formatDayTime(result.frozenAt)} og ændrer sig

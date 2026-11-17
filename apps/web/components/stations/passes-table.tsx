@@ -105,11 +105,11 @@ export function PassesTable({ day, intervals }: { day: string; intervals: Timeli
 
 export function GapsList({ gaps, day }: { gaps: StationGap[]; day: string }) {
   return (
-    <ul className="flex flex-wrap gap-2">
+    <ul className="flex flex-wrap gap-3">
       {gaps.map((gap) => (
         <li
           key={gap.startAt}
-          className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] px-3 py-[6px] text-[13px] leading-[18px] tabular-nums"
+          className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] px-4 py-2 text-[13px] leading-[18px] tabular-nums"
         >
           {time(gap.startAt, day)} til {time(gap.endAt, day)}
           <span className="ml-2 font-bold">{formatDuration(gap.seconds)}</span>

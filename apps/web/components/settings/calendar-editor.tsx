@@ -41,7 +41,7 @@ export function OffShiftToggle({ value }: { value: boolean | null }) {
 
   return (
     <SectionCard title="Træk tid uden for skift fra">
-      <div className="flex flex-wrap items-start gap-4">
+      <div className="flex flex-wrap items-start gap-6">
         <Switch
           checked={on}
           onCheckedChange={(next) => run(() => setDeductOffShiftAction(next))}
@@ -57,11 +57,11 @@ export function OffShiftToggle({ value }: { value: boolean | null }) {
               : "Gennemløbstiden tæller al tid, også nætter, weekender og lukkedage."}
           </p>
           {value === null && (
-            <p className="mt-1 text-[var(--ds-grey-medium-05)]">
+            <p className="mt-2 text-[var(--ds-grey-medium-05)]">
               Indstillingen er ikke sat endnu. Vælg til eller fra.
             </p>
           )}
-          <FormMessage result={result} className="mt-2" />
+          <FormMessage result={result} className="mt-3" />
         </div>
       </div>
     </SectionCard>
@@ -182,7 +182,7 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
       bodyClassName="p-0"
     >
       {remove.result && !remove.result.ok && (
-        <FormMessage result={remove.result} className="mx-4 mt-3" />
+        <FormMessage result={remove.result} className="mx-6 mt-4" />
       )}
       <TableFrame className="max-h-none border-0 shadow-none">
         <DataTable>
@@ -338,10 +338,10 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
       bodyClassName="p-0"
     >
       {remove.result && !remove.result.ok && (
-        <FormMessage result={remove.result} className="mx-4 mt-3" />
+        <FormMessage result={remove.result} className="mx-6 mt-4" />
       )}
       {days.length === 0 ? (
-        <EmptyState title="Ingen lukkedage" className="m-4">
+        <EmptyState title="Ingen lukkedage" className="m-6">
           Tilføj helligdage og ferielukning med knappen Tilføj lukkedag, så de ikke tæller som arbejdstid.
         </EmptyState>
       ) : (

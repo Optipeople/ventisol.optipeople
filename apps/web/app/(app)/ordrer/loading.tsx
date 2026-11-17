@@ -4,7 +4,7 @@ export default function OrdersLoading() {
   return (
     <PageShell width="wide" aria-busy>
       <PageHeaderSkeleton titleWidth="w-32" />
-      <div className="mb-5 h-[92px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mb-8 h-[108px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
       <div className="animate-pulse rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm">
         <div className="h-[42px] border-b border-[var(--ds-grey-light-03)] bg-[var(--ds-grey-light-01)]" />
         {Array.from({ length: 10 }).map((_, i) => (

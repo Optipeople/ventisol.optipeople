@@ -12,7 +12,7 @@ export default async function CalendarPage() {
   const today = dayKey(requestTime());
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <OffShiftToggle value={calendar.deductOffShift} />
       <ShiftsEditor shifts={calendar.shifts} />
       <ClosedDaysEditor

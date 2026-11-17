@@ -26,7 +26,7 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
   return (
     <Link
       href={href}
-      className={`flex min-h-[132px] flex-col gap-3 rounded-[2px] border bg-[var(--color-surface)] p-4 shadow-sm transition-colors hover:bg-[var(--ds-table-blue-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)] ${
+      className={`flex min-h-[132px] flex-col gap-4 rounded-[2px] border bg-[var(--color-surface)] p-5 shadow-sm transition-colors hover:bg-[var(--ds-table-blue-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)] ${
         flagged ? "border-l-4" : "border-[var(--ds-grey-light-02)]"
       }`}
       style={flagged ? { borderColor: "var(--ds-grey-light-02)", borderLeftColor: STATUS_DOT[row.status] } : undefined}
@@ -103,7 +103,7 @@ export function StationBoard({
   const ok = attention.count === 0;
   return (
     <section aria-label="Stationer på dagen">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="flex items-center gap-2 text-[17px] font-bold leading-[24px] text-[var(--ds-grey-dark-09)]">
           <span
             aria-hidden
@@ -114,7 +114,7 @@ export function StationBoard({
         </h2>
         {caption && <p className="text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">{caption}</p>}
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {rows.map((row) => (
           <Tile key={row.stationNo} row={row} href={hrefFor(row)} />
         ))}

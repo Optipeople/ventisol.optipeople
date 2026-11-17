@@ -148,7 +148,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
               </DataTableBody>
             </DataTable>
           </TableFrame>
-          <div className="mt-4">
+          <div className="mt-6">
             <AuditPager
               page={log.page}
               pageSize={AUDIT_PAGE_SIZE}

@@ -22,7 +22,7 @@ export function StationsError({ error, retry }: { error: unknown; retry: () => v
         Stationernes tal kunne ikke hentes lige nu. Prøv igen om lidt.
         {digest ? <span className="mt-2 block text-[12px] opacity-70">Fejlkode {digest}</span> : null}
       </Notice>
-      <div className="mt-4 flex justify-center">
+      <div className="mt-6 flex justify-center">
         <Button variant="secondary" onClick={() => retry()}>
           Prøv igen
         </Button>

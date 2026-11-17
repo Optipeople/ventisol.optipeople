@@ -67,11 +67,11 @@ export function TodayStrip({
 
 function Figure({ label, value, children }: { label: string; value: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex flex-col px-4 py-3">
+    <div className="flex flex-col px-6 py-5">
       <dt className="text-[12px] font-bold uppercase leading-[14px] tracking-[0.02em] text-[var(--ds-grey-medium-04)]">
         {label}
       </dt>
-      <dd className="mt-1 text-[22px] font-bold leading-[26px] tabular-nums text-[var(--ds-grey-dark-09)]">{value}</dd>
+      <dd className="mt-2 text-[22px] font-bold leading-[26px] tabular-nums text-[var(--ds-grey-dark-09)]">{value}</dd>
       <dd className="text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">{children}</dd>
     </div>
   );

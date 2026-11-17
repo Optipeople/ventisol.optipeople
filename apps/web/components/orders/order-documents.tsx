@@ -47,7 +47,7 @@ export function OrderDocuments({
   const pdf = selected.blobReference ? documentPdfHref(orderNo, selected.fileName) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <TableFrame>
         <DataTable>
           <DataTableHead>

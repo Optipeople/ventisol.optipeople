@@ -68,7 +68,7 @@ export default async function SyncPage() {
       bodyClassName="p-0"
     >
       {!configured && (
-        <div role="status" className="m-4">
+        <div role="status" className="m-6">
           <Notice tone="error" icon>
             Servicekontoen til OptiCloud er ikke sat op, så der kan ikke hentes nye data. Mangler i
             miljøet: {missing.join(", ")}.
@@ -76,7 +76,7 @@ export default async function SyncPage() {
         </div>
       )}
       {deadLetters > 0 && (
-        <div role="status" className="m-4">
+        <div role="status" className="m-6">
           <Notice tone="error" icon>
             {deadLetters === 1 ? "1 ordre" : `${deadLetters} ordrer`} kunne ikke regnes ud og er lagt
             til side. Deres tal er forældede, indtil der trykkes Genopbyg.
@@ -84,7 +84,7 @@ export default async function SyncPage() {
         </div>
       )}
       {jobs.length === 0 ? (
-        <EmptyState title="Ingen synkronisering har kørt endnu" className="m-4">
+        <EmptyState title="Ingen synkronisering har kørt endnu" className="m-6">
           Når den første hentning fra OptiCloud har kørt, står hvert job her med tidspunkt, forsinkelse
           og eventuelle fejl. I eksempeltilstand hentes der ikke noget.
         </EmptyState>
