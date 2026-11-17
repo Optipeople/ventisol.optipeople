@@ -126,11 +126,11 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           lateHref={ordersHref({ view: "in-progress", status: "late", active: "all", clock: filters.clock })}
           atRiskHref={ordersHref({ view: "in-progress", status: "at_risk", active: "all", clock: filters.clock })}
           stationsHref={filterHref("/stationer", carry)}
-          // The names only when they are few. The Stationer tab marks each one.
+          // Short enough for one line. The Stationer tab names each one.
           stationsNote={
-            summary.stationsToday.count <= 3
-              ? summary.stationsToday.sentence
-              : `${summary.stationsToday.count} stationer afviger fra det normale`
+            summary.stationsToday.count === 0
+              ? "Alle kører normalt"
+              : `${summary.stationsToday.count} afviger fra det normale`
           }
         />
       </div>

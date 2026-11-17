@@ -64,8 +64,8 @@ export function TodayStrip({
             </>
           }
         >
-          har et element lige nu
-          <Link href={stationsHref} className="mt-1 block underline underline-offset-2 hover:no-underline">
+          {/* One line, like the other cards, so the strip keeps its height. */}
+          <Link href={stationsHref} className="underline underline-offset-2 hover:no-underline">
             {stationsNote}
           </Link>
         </Figure>
