@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import {
   AutoRefresh,
-  DayPicker,
   EmptyState,
   KpiRow,
   KpiTile,
@@ -21,6 +20,7 @@ import { StationStatusTag } from "@/components/stations/station-status";
 import { StationTimeline } from "@/components/stations/station-timeline";
 import { StationTrendChart, StationTrendTable } from "@/components/stations/station-trend";
 import { TypeDistributionTable } from "@/components/stations/type-distribution";
+import { DayField } from "@/components/day-field";
 import { ClockToggle, PageControls } from "@/components/page-controls";
 import { requireCapability } from "@/lib/auth";
 import {
@@ -142,15 +142,13 @@ async function StationDetail({
           <ClockToggle clock={detail.clock} path={`/stationer/${stationNo}`} params={{ day: isToday ? undefined : day }} />
         }
       >
-        <DayPicker
+        <DayField
           day={day}
           today={today}
-          param="day"
           preserve={{ clock }}
-          labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
         >
           {isToday && <AutoRefresh />}
-        </DayPicker>
+        </DayField>
       </PageControls>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 

@@ -3,7 +3,6 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   AutoRefresh,
-  DayPicker,
   EmptyState,
   Note,
   PageHeader,
@@ -11,6 +10,7 @@ import {
   SectionTitle,
 } from "@optipeople/ui/blocks";
 import { ExportMenu } from "@/components/export/export-menu";
+import { DayField } from "@/components/day-field";
 import { ClockToggle, PageControls } from "@/components/page-controls";
 import { PeriodPicker } from "@/components/overview/period-picker";
 import { MissingScanOutsTable } from "@/components/stations/missing-scan-outs";
@@ -127,16 +127,14 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
         actions={<ExportMenu entries={[{ report: "station_day", params: { day, clock } }]} />}
       />
       <Controls view="day" tabs={tabs} clock={report.clock} params={{ day: isToday ? undefined : day }}>
-        <DayPicker
+        <DayField
           day={day}
           today={today}
-          param="day"
           preserve={{ clock }}
-          labels={{ previous: "Forrige dag", next: "Næste dag", date: "Dato", today: "I dag", updating: "Opdaterer…" }}
         >
           {/* Today's numbers move while the page is open; a past day's do not. */}
           {isToday && <AutoRefresh />}
-        </DayPicker>
+        </DayField>
       </Controls>
       {clamped && <Note>Datoen lå i fremtiden og er rettet til i dag.</Note>}
 
