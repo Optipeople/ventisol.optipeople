@@ -77,6 +77,10 @@ interface Loaded {
 const sameConversation = (a: DockConversation | null | undefined, b: DockConversation | null) =>
   !!a && !!b && a.id === b.id && a.messages.length === b.messages.length && a.configured === b.configured;
 
+/** Easing that goes about 7 % past the end and comes back. */
+const SPRING = "ease-[cubic-bezier(0.34,1.45,0.64,1)]!";
+const LEAVE = "ease-[cubic-bezier(0.4,0,1,1)]!";
+
 const HEADER_BUTTON = cn(
   "tap-target inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-white/80 transition-colors",
   "hover:bg-white/10 hover:text-white",
@@ -153,11 +157,14 @@ export function ChatDock() {
   // The panel grows out of the button's corner and shrinks back into it.
   // Only after a click: a panel that is open from an earlier page is just there.
   const [animated, setAnimated] = useState(false);
+  // Coming in, things spring a little past their place and settle (SPRING).
+  // Going out, they speed up into the corner (LEAVE). The chat itself rises
+  // into the panel a moment after the panel has begun to grow.
   // Important: the theme sets a transition on every button, outside the
   // utility layer, which would otherwise win on the round button.
   const motion =
     animated &&
-    "transition-[opacity,scale,translate,visibility]! ease-[var(--ease-apple)]! motion-reduce:transition-none!";
+    "transition-[opacity,scale,translate,visibility,border-radius]! motion-reduce:transition-none!";
 
   function openPanel() {
     wantsFocus.current = true;
@@ -204,8 +211,8 @@ export function ChatDock() {
               "fixed bottom-4 right-4 z-30 h-12 origin-bottom-right gap-2 rounded-full px-5 text-[16px] shadow-[var(--shadow-lg)] print:hidden",
           }),
           motion,
-          // It comes back a moment after the panel has started to leave.
-          open ? "invisible scale-75 opacity-0 duration-150!" : "delay-100! duration-300!"
+          // It pops back a moment after the panel has started to leave.
+          open ? cn("invisible scale-50 opacity-0 duration-150!", LEAVE) : cn("delay-150! duration-500!", SPRING)
         )}
       >
         <MessageSquare className="h-5 w-5" aria-hidden />
@@ -227,7 +234,9 @@ export function ChatDock() {
           "sm:rounded-[var(--radius-lg)] sm:border sm:border-[var(--color-border)] sm:shadow-[var(--shadow-lg)]",
           motion,
           // `invisible` also takes the closed panel out of the tab order.
-          open ? "duration-300!" : "invisible translate-y-3 scale-95 opacity-0 duration-200!"
+          open
+            ? cn("duration-500!", SPRING)
+            : cn("invisible translate-y-4 scale-[0.55] opacity-0 duration-200! sm:rounded-[32px]", LEAVE)
         )}
       >
         <header className="flex h-12 shrink-0 items-center gap-1 bg-[var(--color-brand)] pl-4 pr-2 text-white">
@@ -249,7 +258,13 @@ export function ChatDock() {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1">
+        <div
+          className={cn(
+            "min-h-0 flex-1",
+            animated && "transition-[opacity,translate] ease-[var(--ease-apple)] motion-reduce:transition-none",
+            open ? "delay-100 duration-500" : "translate-y-6 opacity-0 duration-150"
+          )}
+        >
           {showSpinner ? (
             spinner
           ) : chat ? (
