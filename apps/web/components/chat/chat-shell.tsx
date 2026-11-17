@@ -12,7 +12,7 @@ import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, 
 const STRIPE_PX = 27;
 
 interface SidebarState {
-  /** Undefined until the user folds or opens the sidebar: the drawer then picks by screen width. */
+  /** Undefined lets the drawer pick by screen width. The frame starts it folded. */
   open: boolean | undefined;
   setOpen: (open: boolean) => void;
 }
@@ -29,7 +29,8 @@ export function useChatSidebar(): SidebarState {
 
 export function ChatFrame({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState<boolean | undefined>(undefined);
+  // Folded until the user opens it: the chat gets the whole width first.
+  const [open, setOpen] = useState<boolean | undefined>(false);
   const sidebar = useMemo(() => ({ open, setOpen }), [open]);
 
   // The header and the tabs above are not this page's to measure in CSS, so
