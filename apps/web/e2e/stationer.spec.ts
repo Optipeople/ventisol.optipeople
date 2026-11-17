@@ -54,6 +54,6 @@ test.describe("Stationer", () => {
     // Only the status tag in the header says it, not tiles and cards.
     await expect(page.getByText("Ingen data endnu")).toHaveCount(1);
     await expect(page.getByRole("heading", { name: /uge for uge/ })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Forrige dag" })).toBeVisible();
+    await expect(page.getByLabel("Dato", { exact: true })).toBeVisible();
   });
 });

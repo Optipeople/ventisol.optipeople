@@ -28,7 +28,7 @@ test.describe("Ordrer", () => {
 
   test("search narrows the list and is kept in the URL", async ({ page }) => {
     await page.goto("/ordrer?view=finished");
-    const search = page.getByRole("searchbox", { name: "Søg efter ordre, kunde eller sag" });
+    const search = page.getByLabel("Søg", { exact: true });
     await search.fill("Egholm");
     await search.press("Enter");
     await expect(page).toHaveURL(/[?&]q=Egholm/);

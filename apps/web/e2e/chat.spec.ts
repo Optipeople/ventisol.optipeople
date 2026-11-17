@@ -23,12 +23,13 @@ test("the chat fills the window and the page itself does not scroll", async ({ p
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
-test("the conversation sidebar folds to a rail and opens again", async ({ page }) => {
+test("the conversation sidebar starts folded, opens and folds again", async ({ page }) => {
   await page.goto("/chat");
   const sidebar = page.getByRole("complementary", { name: "Samtaler" });
-  await expect(sidebar.getByRole("link", { name: "Ny samtale" })).toBeVisible();
-  await sidebar.getByRole("button", { name: "Luk" }).first().click();
+  // The sidebar starts folded.
   await expect(sidebar.getByRole("link", { name: "Ny samtale" })).toBeHidden();
   await sidebar.getByRole("button", { name: "Åbn sidepanel" }).first().click();
   await expect(sidebar.getByRole("link", { name: "Ny samtale" })).toBeVisible();
+  await sidebar.getByRole("button", { name: "Luk" }).first().click();
+  await expect(sidebar.getByRole("link", { name: "Ny samtale" })).toBeHidden();
 });
