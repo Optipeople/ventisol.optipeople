@@ -3,8 +3,8 @@
 export default function SettingsLoading() {
   return (
     <div className="animate-pulse" aria-busy="true" aria-label="Indlæser">
-      <div className="h-[64px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
-      <div className="mt-6 h-[260px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="h-[64px] rounded-[var(--ds-radius-surface)] bg-[var(--ds-grey-light-02)]" />
+      <div className="mt-6 h-[260px] rounded-[var(--ds-radius-surface)] bg-[var(--ds-grey-light-02)]" />
     </div>
   );
 }

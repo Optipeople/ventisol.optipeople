@@ -36,7 +36,7 @@ export function RouteGantt({ order, steps, now }: { order: OrderHeader; steps: O
   const byStep = new Map(steps.map((s) => [s.step, s]));
 
   return (
-    <div className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-6 shadow-sm">
+    <div className="rounded-[var(--ds-radius-surface)] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-6 shadow-sm">
       <div className="grid grid-cols-[150px_1fr_110px] gap-x-3 text-[14px] leading-[20px]">
         {/* Tick row */}
         <div />

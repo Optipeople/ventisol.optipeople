@@ -1,7 +1,7 @@
 import { PageHeaderSkeleton, PageShell } from "@optipeople/ui/blocks";
 
-const block = "rounded-[2px] bg-[var(--ds-grey-light-02)]";
-const card = "rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm";
+const block = "rounded-[4px] bg-[var(--ds-grey-light-02)]";
+const card = "rounded-[var(--ds-radius-surface)] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm";
 
 // Same boxes as the Overblik page, so nothing jumps when the numbers arrive.
 export default function Loading() {

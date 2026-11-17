@@ -3,3 +3,11 @@
 
 /* Tokens, base styles and shared classes come from @optipeople/ui.
    Only rules specific to this app go below. */
+
+/* Ventisol rounds its corners more than the shared default (2px). */
+:root {
+  --ds-radius-surface: 12px;
+  --ds-radius-control: 8px;
+  --ds-radius-overlay: 12px;
+  --ds-radius-field: 8px;
+}

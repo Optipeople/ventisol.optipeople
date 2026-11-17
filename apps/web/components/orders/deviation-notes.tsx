@@ -30,7 +30,12 @@ export function DeviationNotes({ notes, headline }: { notes: DeviationNote[]; he
         : "border-[var(--ds-tag-green-dark)] bg-[var(--ds-tag-green-light)]";
 
   return (
-    <section aria-label="Afvigelser" className={`rounded-[2px] border-l-4 px-6 py-5 ${tone}`}>
+    <section
+      aria-label="Afvigelser"
+      className={`relative overflow-hidden rounded-[var(--ds-radius-surface)] py-5 pr-6 pl-7 ${tone}`}
+    >
+      {/* The coloured edge: a 4px strip, cut by the rounded corners. It takes its colour from the tone. */}
+      <span aria-hidden className="absolute inset-y-0 left-0 border-l-4 border-inherit" />
       <h2 className="text-[16px] font-bold leading-[22px] text-[var(--ds-grey-dark-09)]">{headline}</h2>
       {notes.length === 0 ? (
         <p className="mt-2 text-[14px] leading-[21px] text-[var(--ds-grey-dark-08)]">

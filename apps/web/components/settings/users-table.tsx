@@ -57,7 +57,7 @@ export function UsersTable({
       ) : (
         <FormMessage result={result} className="mx-6 mt-4" />
       )}
-      <TableFrame className="border-0 shadow-none">
+      <TableFrame className="rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
         <DataTable>
           <DataTableHead>
             <DataTableHeader>Navn</DataTableHeader>

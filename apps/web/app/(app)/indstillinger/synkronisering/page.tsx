@@ -89,7 +89,7 @@ export default async function SyncPage() {
           og eventuelle fejl. I eksempeltilstand hentes der ikke noget.
         </EmptyState>
       ) : (
-        <TableFrame className="border-0 shadow-none">
+        <TableFrame className="rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
           <DataTable>
             <DataTableHead>
               <DataTableHeader>Job</DataTableHeader>

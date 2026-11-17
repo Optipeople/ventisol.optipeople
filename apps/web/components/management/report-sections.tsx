@@ -161,7 +161,7 @@ export function BottleneckSection({ bottleneck }: { bottleneck: Bottleneck }) {
             <li
               key={s.step}
               className={
-                "rounded-[2px] border bg-[var(--color-surface)] p-4 shadow-sm print:p-3 " +
+                "rounded-[var(--ds-radius-surface)] border bg-[var(--color-surface)] p-4 shadow-sm print:rounded-[2px] print:p-3 " +
                 (isWorst ? "border-[var(--ds-tag-red-dark)]" : "border-[var(--ds-grey-light-02)]")
               }
             >
@@ -194,7 +194,7 @@ export function BottleneckSection({ bottleneck }: { bottleneck: Bottleneck }) {
 
 // A table in a ReportWidgetCard: the card is the frame, and paper cannot scroll.
 const IN_CARD =
-  "border-0 shadow-none print:max-h-none print:overflow-visible print:[&_td]:whitespace-normal print:[&_th]:whitespace-normal";
+  "rounded-none border-0 shadow-none print:max-h-none print:overflow-visible print:[&_td]:whitespace-normal print:[&_th]:whitespace-normal";
 
 const STATUS_VARIANT: Record<StationRow["status"], TagVariant> = {
   normal: "positive",

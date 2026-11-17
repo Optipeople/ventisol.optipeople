@@ -26,11 +26,14 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
   return (
     <Link
       href={href}
-      className={`flex min-h-[132px] flex-col gap-4 rounded-[2px] border bg-[var(--color-surface)] p-5 shadow-sm transition-colors hover:bg-[var(--ds-table-blue-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)] ${
-        flagged ? "border-l-4" : "border-[var(--ds-grey-light-02)]"
+      className={`relative flex min-h-[132px] flex-col gap-4 overflow-hidden rounded-[var(--ds-radius-surface)] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] p-5 shadow-sm transition-colors hover:bg-[var(--ds-table-blue-hover)] focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ds-green-80)] ${
+        flagged ? "border-l-0 pl-6" : ""
       }`}
-      style={flagged ? { borderColor: "var(--ds-grey-light-02)", borderLeftColor: STATUS_DOT[row.status] } : undefined}
     >
+      {/* The status edge: a 4px strip in place of the left border, cut by the tile's rounded corners. */}
+      {flagged && (
+        <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: STATUS_DOT[row.status] }} />
+      )}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-bold leading-[20px] text-[var(--ds-grey-dark-09)]">{row.name}</p>

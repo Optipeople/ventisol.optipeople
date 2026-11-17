@@ -274,14 +274,14 @@ function StationDetailSkeleton() {
   return (
     <PageShell width="wide" aria-busy>
       <PageHeaderSkeleton titleWidth="w-40" withActions />
-      <div className="mb-4 ml-auto h-[30px] w-64 animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
-      <div className="h-[90px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mb-4 ml-auto h-[30px] w-64 animate-pulse rounded-[var(--ds-radius-control)] bg-[var(--ds-grey-light-02)]" />
+      <div className="h-[90px] animate-pulse rounded-[var(--ds-radius-surface)] bg-[var(--ds-grey-light-02)]" />
       <div className="mt-6 grid animate-pulse grid-cols-2 gap-6 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[117px] rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+          <div key={i} className="h-[117px] rounded-[var(--ds-radius-surface)] bg-[var(--ds-grey-light-02)]" />
         ))}
       </div>
-      <div className="mt-8 h-[240px] animate-pulse rounded-[2px] bg-[var(--ds-grey-light-02)]" />
+      <div className="mt-8 h-[240px] animate-pulse rounded-[var(--ds-radius-surface)] bg-[var(--ds-grey-light-02)]" />
       <p className="sr-only">Henter stationen…</p>
     </PageShell>
   );

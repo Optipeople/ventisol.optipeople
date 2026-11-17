@@ -184,7 +184,7 @@ export function ShiftsEditor({ shifts }: { shifts: Shift[] }) {
       {remove.result && !remove.result.ok && (
         <FormMessage result={remove.result} className="mx-6 mt-4" />
       )}
-      <TableFrame className="max-h-none border-0 shadow-none">
+      <TableFrame className="max-h-none rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
         <DataTable>
           <DataTableHead>
             <DataTableHeader className="w-[160px]">Ugedag</DataTableHeader>
@@ -345,7 +345,7 @@ export function ClosedDaysEditor({ days }: { days: ClosedDayRow[] }) {
           Tilføj helligdage og ferielukning med knappen Tilføj lukkedag, så de ikke tæller som arbejdstid.
         </EmptyState>
       ) : (
-        <TableFrame className="max-h-[420px] border-0 shadow-none">
+        <TableFrame className="max-h-[420px] rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
           <DataTable stickyHeader>
             <DataTableHead>
               <DataTableHeader>Dato</DataTableHeader>

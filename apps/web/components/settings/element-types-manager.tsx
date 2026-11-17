@@ -124,7 +124,7 @@ export function ElementTypesManager({ types, canEdit }: { types: ElementType[]; 
             )}
           </EmptyState>
         ) : (
-          <TableFrame className="border-0 shadow-none">
+          <TableFrame className="rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
             <DataTable>
               <DataTableHead>
                 <DataTableHeader align="right" className="w-[100px]">Rækkefølge</DataTableHeader>

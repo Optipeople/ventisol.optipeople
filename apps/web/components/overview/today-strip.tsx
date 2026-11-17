@@ -29,7 +29,7 @@ export function TodayStrip({
   return (
     <section
       aria-label="I dag"
-      className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm"
+      className="overflow-hidden rounded-[var(--ds-radius-surface)] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] shadow-sm"
     >
       <dl className="grid grid-cols-2 divide-[var(--ds-grey-light-02)] md:grid-cols-4 md:divide-x">
         <Figure label="Ordrer i gang" value={formatNumber(today.ordersInProgress)}>

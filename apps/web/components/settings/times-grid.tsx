@@ -87,7 +87,7 @@ export function TimesGrid({
   return (
     <SectionCard title={title} description={description} action={headerAction} bodyClassName="p-0">
       <form onSubmit={submit} noValidate>
-        <TableFrame className="max-h-none border-0 shadow-none">
+        <TableFrame className="max-h-none rounded-none border-0 shadow-none">
           <DataTable stickyFirstColumn>
             <DataTableHead>
               <DataTableHeader>Station</DataTableHeader>

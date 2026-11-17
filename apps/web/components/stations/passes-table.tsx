@@ -109,7 +109,7 @@ export function GapsList({ gaps, day }: { gaps: StationGap[]; day: string }) {
       {gaps.map((gap) => (
         <li
           key={gap.startAt}
-          className="rounded-[2px] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] px-4 py-2 text-[13px] leading-[18px] tabular-nums"
+          className="rounded-[var(--ds-radius-control)] border border-[var(--ds-grey-light-02)] bg-[var(--color-surface)] px-4 py-2 text-[13px] leading-[18px] tabular-nums"
         >
           {time(gap.startAt, day)} til {time(gap.endAt, day)}
           <span className="ml-2 font-bold">{formatDuration(gap.seconds)}</span>

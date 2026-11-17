@@ -56,7 +56,7 @@ function StepRow({ step, max, isBottleneck }: { step: StepTime; max: number; isB
     <li
       className={
         isBottleneck
-          ? "-mx-3 rounded-[2px] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-3 py-2"
+          ? "-mx-3 rounded-[var(--ds-radius-control)] border border-[var(--ds-tag-orange-dark)] bg-[var(--ds-tag-orange-light)] px-3 py-2"
           : undefined
       }
     >

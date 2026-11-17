@@ -87,7 +87,7 @@ export function StationsManager({
               : "Bed en administrator om at oprette stationerne."}
           </EmptyState>
         ) : (
-          <TableFrame className="border-0 shadow-none">
+          <TableFrame className="rounded-t-none rounded-b-[calc(var(--ds-radius-surface)-1px)] border-0 shadow-none">
             <DataTable>
               <DataTableHead>
                 <DataTableHeader align="right" className="w-[70px]">Nr.</DataTableHeader>
