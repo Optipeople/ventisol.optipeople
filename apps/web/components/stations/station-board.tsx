@@ -34,7 +34,10 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[15px] font-bold leading-[20px] text-[var(--ds-grey-dark-09)]">{row.name}</p>
-          <p className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">{row.kindLabel}</p>
+          <p className="truncate text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">
+            {row.kindLabel}
+            {(row.openCount ?? 0) > 0 ? ` · ${row.openCount} i gang` : ""}
+          </p>
         </div>
         <span
           aria-hidden
@@ -72,16 +75,15 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
         <p className="flex min-h-[44px] items-end text-[13px] leading-[18px] text-[var(--ds-grey-medium-05)]">{NO_DATA}</p>
       )}
 
-      {/* Every tile has the same rows at the same height, so nothing moves from tile to tile. */}
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        <StationStatusTag status={row.status} standstillSeconds={row.standstillSeconds} />
-        {(row.openCount ?? 0) > 0 && (
-          <span className="text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]">{row.openCount} i gang</span>
+      {/* One line, never wrapping: every tile has the same rows at the same height. */}
+      <div className="flex items-center justify-between gap-2 whitespace-nowrap">
+        <StationStatusTag status={row.status} />
+        {(row.missingScanOutCount ?? 0) > 0 && (
+          <span className="truncate text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
+            {row.missingScanOutCount} mangler ud-scanning
+          </span>
         )}
       </div>
-      <p className="min-h-[16px] text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
-        {(row.missingScanOutCount ?? 0) > 0 ? `${row.missingScanOutCount} mangler ud-scanning` : ""}
-      </p>
     </Link>
   );
 }
