@@ -17,7 +17,7 @@
     "@ai-sdk/react": "^4.0.177",
     "@electric-sql/pglite": "^0.5.16",
     "@electric-sql/pglite-pgvector": "^0.0.17",
-    "@optipeople/ui": "^0.2.3",
+    "@optipeople/ui": "^0.3.0",
     "ai": "^7.0.173",
     "next": "16.4.6",
     "pdf-lib": "^1.17.1",

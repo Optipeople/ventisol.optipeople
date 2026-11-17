@@ -13,6 +13,9 @@ export const UI_LABELS: Partial<UiLabels> = {
   clearSearch: "Ryd søgning",
   closeDialog: "Luk dialog",
   loading: "Indlæser",
+  moreInformation: "Mere information",
+  clear: "Ryd",
+  writeHere: "Skriv her.",
 
   pagination: "Sider",
   previousPage: "Forrige side",

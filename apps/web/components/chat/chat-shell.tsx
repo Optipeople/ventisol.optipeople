@@ -28,7 +28,7 @@ export function ChatShell({ sidebar, children }: { sidebar: ReactNode; children:
   }, []);
 
   return (
-    <div ref={ref} className="flex h-[calc(100dvh-111px)] min-h-[320px] bg-[var(--color-brand)] sm:h-[calc(100dvh-104px)]">
+    <div ref={ref} className="flex h-[calc(100dvh-113px)] min-h-[320px] bg-[var(--color-brand)]">
       {sidebar}
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-tl-[var(--radius)] bg-[var(--color-background)]">
         {children}
