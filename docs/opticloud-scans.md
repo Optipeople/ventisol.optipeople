@@ -164,7 +164,8 @@ its `_doc`). Change a rule there and here first.
 - An element is worked on at a station from its `In` to its `Out` there: one work record. A
   re-scan for rework is another pair and adds time.
 - A new pair counts as rework (a second visit) only when the element comes back to the station.
-  Scanned out and back in at the same station within 60 minutes, with no other station in
+  Scanned out and back in at the same station within 60 minutes of shift time (the calendar, so
+  a night or a weekend does not count), with no other station in
   between, is a pause (a break, lunch): the same visit, and only the scanned time counts.
 - Each station has a "Max i gang": how many elements may be in progress there at once. It is 1
   unless set (on the station PC and, the same number, in the portal's Stationer settings). At a

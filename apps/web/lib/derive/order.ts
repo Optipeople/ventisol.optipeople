@@ -535,6 +535,7 @@ export function deriveOrders(scans: Scan[], infos: OrderInfo[], ctx: DeriveConte
     staleOpenSeconds: params.staleOpenSeconds,
     maxOpen: ctx.maxOpen,
     otherOpenInsByStation: ctx.otherOpenInsByStation,
+    calendar: ctx.calendar,
   });
   const infoByOrder = new Map(infos.map((i) => [i.orderNo, i]));
   const scansByOrder = new Map<number, Scan[]>();

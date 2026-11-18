@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseBarcode, type Direction, type Scan } from "@/lib/scans";
 import { at, pass, scan } from "@/lib/test-helpers";
+import { DEFAULT_CALENDAR } from "./calendar";
 import { pairHistory } from "./pairing";
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,19 @@ describe("pairHistory", () => {
       { now: NOW }
     );
     expect(ivs.map((iv) => iv.visit)).toEqual([1, 1, 2]);
+  });
+
+  it("with a calendar the gap is shift time, so the night is a pause", () => {
+    const next = "2026-10-22";
+    const scans = [
+      ...pass(at("13:00"), at("13:50")),
+      ...pass(at("06:20", next), at("07:00", next)), // 10 + 20 min of shift: a pause
+      ...pass(at("08:30", next), at("09:00", next)), // 90 min of shift: rework
+    ];
+    const later = at("12:00", next);
+    expect(pairHistory(scans, { now: later, calendar: DEFAULT_CALENDAR }).map((iv) => iv.visit)).toEqual([1, 1, 2]);
+    // Wall clock, as without a calendar, the night is long enough to be rework.
+    expect(pairHistory(scans, { now: later }).map((iv) => iv.visit)).toEqual([1, 2, 3]);
   });
 
   it("a short gap is still rework when the element was at another station in between", () => {

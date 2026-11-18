@@ -12,7 +12,8 @@
 
 import { dedupeScans, maxOpenAt, numberVisits, stationKey, type MaxOpen } from "@/lib/report";
 import { isPacking, type Scan } from "@/lib/scans";
-import { DEFAULT_PARAMS, type IntervalStatus, type MissingReason, type StationKind } from "./types";
+import { workingMsBetween } from "./calendar";
+import { DEFAULT_PARAMS, type IntervalStatus, type MissingReason, type StationKind, type WorkCalendar } from "./types";
 
 export interface PairedInterval {
   /** The In scan's id, or the Out scan's when the In is missing. */
@@ -47,6 +48,12 @@ export interface PairOptions {
   maxOpen?: MaxOpen;
   /** See DeriveContext.otherOpenInsByStation. */
   otherOpenInsByStation?: Record<number, number[]>;
+  /**
+   * Shifts: the gap before a pass back at the same station is measured in
+   * shift time, so out at the end of the day and in the next morning is a
+   * pause, not rework. Left out: wall clock.
+   */
+  calendar?: WorkCalendar;
 }
 
 /** Chronological, In before Out on a tie so a zero-length pass still pairs. */
@@ -178,9 +185,11 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
   }
 
   result.sort((a, b) => a.start - b.start || endOrNow(a, now) - endOrNow(b, now));
+  const { calendar } = opts;
   numberVisits(
     result.filter((iv) => iv.status !== "missing_out"),
-    (iv) => `${iv.stationNo}\u0000${iv.stationNo === 0 ? iv.station : ""}`
+    (iv) => `${iv.stationNo}\u0000${iv.stationNo === 0 ? iv.station : ""}`,
+    calendar ? (from, to) => workingMsBetween(from, to, calendar) : undefined
   );
   return result;
 }
