@@ -39,8 +39,8 @@ missing column, on first connect (`MasterData/GetTables`, `CreateTable`, `GetCol
 | `DurationSec` | Int (2) | on `Out`: seconds since the matching `In`; empty on `In` |
 | `Device` | String (0) | the PC that sent it (Windows machine name) |
 
-Rejected scans (a second element while one is in progress, an unknown barcode) are only shown
-on the screen and not stored.
+Rejected scans (an unknown barcode, or a new element at a station already at its "Max i gang")
+are only shown on the screen and not stored.
 
 No column is required. `DurationSec` is left out of the row on `In`, not sent as null.
 `MachineId` is an empty string when the station has no machine.
@@ -163,17 +163,27 @@ its `_doc`). Change a rule there and here first.
   Not by station name: a station can be renamed.
 - An element is worked on at a station from its `In` to its `Out` there: one work record. A
   re-scan for rework is another pair and adds time.
+- Each station has a "Max i gang": how many elements may be in progress there at once. It is 1
+  unless set (on the station PC and, the same number, in the portal's Stationer settings). At a
+  station with 1, a different barcode while busy stops the element and starts the new one; at a
+  station with more, it starts the new one beside the others, and one beyond the max is refused.
+  At both, scanning an element in progress again stops it.
 - A second `In` of the same element at the same station while one is open: the later `In` wins,
-  the earlier is dropped (it never got its `Out`; the station refuses a second element while one
-  is in progress, so it is a missed scan, not parallel work).
+  the earlier is dropped (it never got its `Out`: a missed scan, not parallel work).
 - An `Out` with no `In` in the window: its start is put back from `DurationSec`. Without
   `DurationSec` it can't be timed and is skipped.
-- In progress: per station, its latest `In` with no `Out`, over the whole window. An `In` older
-  than the window with no `Out` is forgotten.
+- In progress: per station, its latest `In`s with no `Out`, as many as its "Max i gang" (one at a
+  station with 1), over the whole window. An older open `In` beyond that is a missed scan-out. An
+  `In` older than the window with no `Out` is forgotten.
+- Parallel work: at a station with several elements in progress at once, each work record keeps
+  its full wall-clock time (`DurationSec` too). The reports site also gives each record its share
+  of the station's time (see `read-model.md`, Split time), so an hour on four elements is an hour
+  of the station's work, not four. The station app shows wall-clock time only.
 - Done today: the work records that end today (local midnight on). One that spans midnight counts
   for the day it ends.
 - Time per order = the sum over its elements and stations; time in progress counts up to now.
-- A station's utilisation is its time worked inside the day so far, over the day so far. The day
+- A station's utilisation is its time worked inside the day so far, over the day so far; time
+  with several elements in progress counts once. The day
   so far starts at the first scan inside the day: an element counts from its `In`, or from its
   `Out` when its `In` was before the day (from now, while it is still in progress). So an element
   left in over night neither stretches the day back to midnight nor gets the night as work:
@@ -188,7 +198,10 @@ Each station set up with a machine (`MachineId`) keeps that machine's current or
 in step with the station, so OptiCloud's order time and reports follow the scans. The
 `VentisolScans` rows are written exactly as before; this comes on top.
 
-- The rule: a machine's order is the element in progress at its station, else none. Time is
+- The rule: a machine's order is the element in progress at its station, else none. At a station
+  with several in progress it is the one scanned In last; when that one is scanned out, the
+  latest of the others takes over. OptiPeople's order time at such a station is approximate: the
+  reports site's split time is the measure there. Time is
   kept per element: the order number is the full 12-digit barcode, `058556050103` as it is, so
   every element is an order of its own in OptiPeople. Scan In sets it, Scan Out clears it, a
   switch to another element (a different barcode while busy) gives it the new element, also when

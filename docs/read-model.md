@@ -33,15 +33,31 @@ An In with no Out is one of two things:
 
 | Status | When | Counts in times |
 |---|---|---|
-| `open` (in progress) | The In is at most 36 hours old, and it is the latest open In at its station | Yes, up to now |
+| `open` (in progress) | The In is at most 36 hours old, and it is among the latest open Ins at its station, as many as the station's "Max i gang" (`config.stations.max_open`, 1 unless set) | Yes, up to now |
 | `missing_out` | Otherwise | No, never |
 
 `missing_out` has a reason:
 
 - `stale`: older than 36 hours. Parameter `staleOpenSeconds`. Why 36 hours: the same limit as the station app, long enough for an element left overnight to still be in progress next morning.
-- `superseded`: a later In took its place. Either the same element was scanned In again at the same station (the later In wins), or another element is open at that station (a station works one element at a time).
+- `superseded`: a later In took its place. Either the same element was scanned In again at the same station (the later In wins), or the station already has as many later open Ins as its "Max i gang" (at a station with 1: another element is open there).
 
 The old reports dropped these scans silently. The read model keeps them as rows so Indstillinger can list them ("scannet ind, aldrig ud"). They add nothing to any time or count.
+
+### Split time: parallel work
+
+At a station with "Max i gang" above 1 (glazing), one person works several elements at once. Each pass keeps its wall-clock time (`duration_seconds`, `duration_working_seconds`), and also gets its **share** of the station's time: `allocated_seconds` and `allocated_working_seconds`.
+
+- Cut the station's timeline at every start and end of its `done` and `open` passes (an `open` one ends now; `missing_out` takes no share). In each piece, the passes on the station share its length by weight. The working variant shares the piece's shift time.
+- The weight is set by `config.settings.parallel_split`:
+  - `calculated` (the default): the pass's calculated time at that station (`config.calculated_times` for its station and element type). If any pass in the piece has none, that piece is split equally.
+  - `equal`: every pass weighs the same.
+  - Not normal times: the Normaltid suggestions come from measured time, so weighing by them would feed them back into themselves.
+- A pass alone on its station gets its whole time, so at a station with 1 the split time equals the wall-clock time.
+- Rounded to whole seconds per pass.
+- The split is worked out per station over time, not per order, so it is made in the station-day rebuild (`replaceStationDays`), from every pass at the station that overlaps the days rebuilt. A changed `parallel_split` or calculated time needs a rebuild of the split columns.
+- **Which figures use it:**
+  - Split time: time per piece (median, mean, by element type), "Mod normalt" and Langsommere, Kalkule mod målt, Normaltid suggestions, order touch time, a station's pass-time total.
+  - Wall clock: busy time, utilisation and gaps (overlap already counts once), lead time, order work time and waiting time.
 
 ## 3. Working time
 
@@ -145,7 +161,7 @@ One row per barcode seen in a scan. Elements on the 3E list that were never scan
 One row per station per Copenhagen day with activity. A day with nothing has no row (so an unused station does not read as standing still).
 
 - **Gennem i dag** (`count_through`): finished passes that **ended** that day. A pass over midnight counts on the day it ends, as on the station screen. `elements_through` is the distinct elements.
-- **Tid pr. stk.** (`time_per_piece_seconds`): the **median** pass time. Why not the mean: one element left on the table over a break or a night would move the mean of the whole day, and "foreslå fra baseline" is a median too. The mean is stored beside it (`mean_piece_seconds`). For a period longer than a day, take the median from `core.station_intervals`, not the average of daily medians.
+- **Tid pr. stk.** (`time_per_piece_seconds`): the **median** pass time, in split time (§2, Split time). Why not the mean: one element left on the table over a break or a night would move the mean of the whole day, and "foreslå fra baseline" is a median too. The mean is stored beside it (`mean_piece_seconds`). For a period longer than a day, take the median from `core.station_intervals`, not the average of daily medians.
 - `available_seconds`: the shift time of the day. `observed_seconds`: the shift time so far (today).
 - `busy_seconds`: time with an element on the station inside the day. `busy_in_shift_seconds`: the part inside the shifts. Utilisation = `busy_in_shift_seconds / observed_seconds`.
 - **Stod stille:** the station's **gaps** are the stretches of shift time with no element on it. `gaps` stores each gap of at least 5 minutes (`gapFloorSeconds`) with its start and end. "Stod stille" is the **sum of the gaps of at least the standstill threshold** (15 minutes, `config.settings.standstill_threshold_minutes`), applied at read time. No such gap shows as "Ingen".
