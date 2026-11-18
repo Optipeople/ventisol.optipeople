@@ -89,6 +89,36 @@ function byTime(a: Scan, b: Scan): number {
   return a.direction === "In" ? -1 : 1;
 }
 
+/** "Max i gang" per station number. A station not listed has 1. */
+export type MaxOpen = Readonly<Record<number, number>>;
+
+/** A station's "Max i gang": at least 1, 1 when not set or without a station number. */
+export function maxOpenAt(maxOpen: MaxOpen | undefined, stationNo: number | null): number {
+  const n = stationNo != null ? maxOpen?.[stationNo] : undefined;
+  return n != null && Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+/**
+ * Of these open Ins, the ones in progress: per station the latest, as many as
+ * its "Max i gang". On a tie in time the one handed in first is kept (the
+ * sort is stable), as before there was a max.
+ */
+export function latestOpenPerStation<T extends Scan>(opens: T[], maxOpen: MaxOpen = {}): Set<T> {
+  const byStation = new Map<string, T[]>();
+  for (const scan of opens) {
+    const key = stationKey(scan);
+    const list = byStation.get(key);
+    if (list) list.push(scan);
+    else byStation.set(key, [scan]);
+  }
+  const kept = new Set<T>();
+  for (const list of byStation.values()) {
+    list.sort((a, b) => b.time - a.time);
+    for (const scan of list.slice(0, maxOpenAt(maxOpen, list[0].stationNo))) kept.add(scan);
+  }
+  return kept;
+}
+
 function interval(open: Scan, start: number, end: number, extra: Partial<WorkInterval>): WorkInterval {
   return {
     barcode: open.barcode,
@@ -119,10 +149,11 @@ function interval(open: Scan, start: number, end: number, extra: Partial<WorkInt
  *   is put back from DurationSec. Without DurationSec it cannot be timed and
  *   is skipped.
  * - An In still open at the end: in progress, counting up to `now`, unless it
- *   is older than STALE_OPEN_MS. One per station: when several elements are
- *   open at one station, only the latest In is in progress.
+ *   is older than STALE_OPEN_MS. As many per station as its "Max i gang"
+ *   (`maxOpen`, by station number; 1 when not given): when more elements are
+ *   open at one station, only the latest Ins are in progress.
  */
-export function pairScans(scans: Scan[], now: number): WorkInterval[] {
+export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): WorkInterval[] {
   const sorted = dedupeScans(scans).sort(byTime);
   const open = new Map<string, Scan>();
   const result: WorkInterval[] = [];
@@ -144,17 +175,11 @@ export function pairScans(scans: Scan[], now: number): WorkInterval[] {
     }
   }
 
-  // A station works on one element at a time: of its open Ins, only the
-  // latest is in progress (as on the station's screen); the others never got
-  // their Out and do not count.
-  const current = new Map<string, Scan>();
-  for (const scan of open.values()) {
-    if (now - scan.time > STALE_OPEN_MS) continue;
-    const key = stationKey(scan);
-    const latest = current.get(key);
-    if (!latest || byTime(latest, scan) < 0) current.set(key, scan);
-  }
-  for (const scan of current.values()) {
+  // A station works on at most its "Max i gang" elements at once: of its
+  // open Ins, only that many of the latest are in progress (as on the
+  // station's screen); the others never got their Out and do not count.
+  const fresh = [...open.values()].filter((scan) => now - scan.time <= STALE_OPEN_MS);
+  for (const scan of latestOpenPerStation(fresh, maxOpen)) {
     result.push(interval(scan, scan.time, Math.max(scan.time, now), { inProgress: true }));
   }
 

@@ -35,6 +35,7 @@ describe("listStations", () => {
     ]);
     expect(stations[0].normalTimes).toEqual([{ elementTypeId: "vindue_1_fag", seconds: 1500 }]);
     expect(stations[1].normalTimes).toEqual([]);
+    expect(stations.map((s) => s.maxOpen)).toEqual([1, 1, 1]);
   });
 });
 

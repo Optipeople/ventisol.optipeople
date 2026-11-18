@@ -5,7 +5,8 @@
     "so the operators' screen and the web report pair scans the same way. Change a rule here first.",
     "",
     "Each case: name; now, todayStart (local midnight of now, as a UTC instant) and windowStart",
-    "(now - 36h) as ISO 8601 UTC; events in, in any order; expected out.",
+    "(now - 36h) as ISO 8601 UTC; maxOpen, optional: per station number (as a string key) the",
+    "station's \"Max i gang\" setting, a station not listed has 1; events in, in any order; expected out.",
     "An event is one VentisolScans row: id (ScanId), barcode (12 digits), stationNo, station (name),",
     "stationKind (Assembly | Packing), direction (In | Out), time (ScanTime), durationSec (number or null).",
     "",
@@ -13,8 +14,9 @@
     "rules, then compare:",
     "  done: the work records that end today (end >= todayStart), each {barcode, stationNo, start, end};",
     "       compare sorted by end, then stationNo, then barcode.",
-    "  inProgress: per station, its latest In with no Out, over the whole window, each",
-    "       {stationNo, barcode, since}; at most one per station; compare sorted by stationNo.",
+    "  inProgress: per station, its latest maxOpen Ins with no Out, over the whole window, each",
+    "       {stationNo, barcode, since}; at most maxOpen per station (one at a station with 1);",
+    "       compare sorted by stationNo, then since, then barcode.",
     "Times compare as instants (same millisecond), not as strings."
   ],
   "cases": [
@@ -164,7 +166,7 @@
       }
     },
     {
-      "name": "two elements open at one station: the latest In is the one in progress",
+      "name": "two elements open at a station with max 1: the latest In is the one in progress",
       "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0011-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
@@ -173,6 +175,68 @@
       "expected": {
         "done": [],
         "inProgress": [ { "stationNo": 1, "barcode": "058556050102", "since": "2026-10-21T06:30:00Z" } ]
+      }
+    },
+    {
+      "name": "a station with max 6: every open element is in progress, and overlapping ones pair on their own",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 6 },
+      "events": [
+        { "id": "00000000-0000-0000-0012-000000000001", "barcode": "058556050101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:05:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000003", "barcode": "058558020101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:10:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000004", "barcode": "058559030101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:15:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000005", "barcode": "058556050101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "time": "2026-10-21T06:40:00Z", "durationSec": 2400 },
+        { "id": "00000000-0000-0000-0012-000000000006", "barcode": "058560010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:45:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000007", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "time": "2026-10-21T07:00:00Z", "durationSec": 3300 },
+        { "id": "00000000-0000-0000-0012-000000000008", "barcode": "058561010101", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0012-000000000009", "barcode": "058561010102", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:20:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [
+          { "barcode": "058556050101", "stationNo": 3, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:40:00Z" },
+          { "barcode": "058557010101", "stationNo": 3, "start": "2026-10-21T06:05:00Z", "end": "2026-10-21T07:00:00Z" }
+        ],
+        "inProgress": [
+          { "stationNo": 1, "barcode": "058561010102", "since": "2026-10-21T06:20:00Z" },
+          { "stationNo": 3, "barcode": "058558020101", "since": "2026-10-21T06:10:00Z" },
+          { "stationNo": 3, "barcode": "058559030101", "since": "2026-10-21T06:15:00Z" },
+          { "stationNo": 3, "barcode": "058560010101", "since": "2026-10-21T06:45:00Z" }
+        ]
+      }
+    },
+    {
+      "name": "a station with max 2 and three open (a missed scan): the latest two are in progress",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 2 },
+      "events": [
+        { "id": "00000000-0000-0000-0013-000000000001", "barcode": "058556050101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0013-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:05:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0013-000000000003", "barcode": "058558020101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:10:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [
+          { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T06:05:00Z" },
+          { "stationNo": 3, "barcode": "058558020101", "since": "2026-10-21T06:10:00Z" }
+        ]
+      }
+    },
+    {
+      "name": "a station with max 6: a second In of an element already open there, the later wins",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 6 },
+      "events": [
+        { "id": "00000000-0000-0000-0014-000000000001", "barcode": "058556050101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0014-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:05:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0014-000000000003", "barcode": "058556050101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:30:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [
+          { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T06:05:00Z" },
+          { "stationNo": 3, "barcode": "058556050101", "since": "2026-10-21T06:30:00Z" }
+        ]
       }
     }
   ]

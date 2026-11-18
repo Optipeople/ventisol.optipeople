@@ -215,6 +215,8 @@ export interface StationInfo {
   sortOrder: number;
   active: boolean;
   normalTimes: { elementTypeId: string; seconds: number }[];
+  /** "Max i gang" (config.stations.max_open): elements that may be in progress here at once. 1: one at a time. */
+  maxOpen: number;
 }
 
 /** One station for a day or a period. Every number is null while hasData is false. */

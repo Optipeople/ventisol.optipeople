@@ -11,9 +11,9 @@
 //     from core.orders (cascades) and inserts the new ones. Readers see the
 //     old rows or the new ones, never a gap, and core.* is never emptied.
 //   - Orders that can hold an open In (scanned within staleOpenSeconds, 36
-//     hours) are always derived together in one transaction, so "one element
-//     per station" sees every open In. All other orders are independent of
-//     each other and go in chunks of ORDER_CHUNK.
+//     hours) are always derived together in one transaction, so "at most Max
+//     i gang elements per station" sees every open In. All other orders are
+//     independent of each other and go in chunks of ORDER_CHUNK.
 //   - Station days are recomputed after the orders, a stretch of at most 31
 //     days per transaction.
 //   - Every writing transaction takes one advisory lock (lockWriter), so a

@@ -337,6 +337,7 @@ export const REPORT_EXPORTS: Record<ReportQueryName, AnyExportDefinition> = {
       col("Type", "text", (r) => r.kindLabel, 10),
       col("Rækkefølge", "int", (r) => r.sortOrder),
       col("Aktiv", "bool", (r) => r.active),
+      col("Max i gang", "int", (r) => r.maxOpen),
       col("Normaltider", "int", (r) => r.normalTimes.length),
     ],
   }),

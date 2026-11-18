@@ -44,6 +44,8 @@ export interface ReadModelConfig {
   params: DeriveParams;
   rules: ElementTypeRule[];
   typical: TypicalTimes | null;
+  /** "Max i gang" of the stations set above 1 (config.stations.max_open). Every other station has 1. */
+  maxOpen: Record<number, number>;
 }
 
 function numberSetting(value: unknown): number | null {
@@ -147,6 +149,14 @@ export async function loadTypical(db: Db, now: number): Promise<TypicalTimes | n
   return { stations: route, waitBeforePackingSeconds: wait != null ? Math.round(Number(wait)) : null };
 }
 
+/** config.stations.max_open of the stations set above 1. */
+export async function loadMaxOpen(db: Db): Promise<Record<number, number>> {
+  const rows = await db.query<{ station_no: number; max_open: number }>(
+    "select station_no, max_open from config.stations where max_open > 1 order by station_no"
+  );
+  return Object.fromEntries(rows.map((r) => [r.station_no, Number(r.max_open)]));
+}
+
 /** Everything derive needs from config.*, in one go. */
 export async function loadConfig(db: Db, now: number): Promise<ReadModelConfig> {
   const calendar = await loadCalendar(db);
@@ -159,5 +169,6 @@ export async function loadConfig(db: Db, now: number): Promise<ReadModelConfig> 
     params: paramsFromSettings(settings),
     rules: rulesFromConfig(types),
     typical: await loadTypical(db, now),
+    maxOpen: await loadMaxOpen(db),
   };
 }

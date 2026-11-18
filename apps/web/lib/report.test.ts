@@ -64,12 +64,28 @@ describe("pairScans", () => {
     expect(iv.durationMs).toBe(18 * 60 * MIN);
   });
 
-  it("has at most one element in progress per station: the latest In", () => {
+  it("has at most one element in progress at a station with Max i gang 1: the latest In", () => {
     const ivs = pairScans(
       [scan("In", at("07:00"), { barcode: "058556050101" }), scan("In", at("07:30"), { barcode: "058556050102" })],
       at("08:00")
     );
     expect(ivs.map((iv) => [iv.barcode, iv.inProgress])).toEqual([["058556050102", true]]);
+  });
+
+  it("has at most Max i gang elements in progress at a station: the latest Ins", () => {
+    const ins = [
+      scan("In", at("07:00"), { barcode: "058556050101" }),
+      scan("In", at("07:10"), { barcode: "058556050102" }),
+      scan("In", at("07:20"), { barcode: "058556050103" }),
+    ];
+    const two = pairScans(ins, at("08:00"), { 1: 2 });
+    expect(two.map((iv) => [iv.barcode, iv.inProgress])).toEqual([
+      ["058556050102", true],
+      ["058556050103", true],
+    ]);
+    // Another station's max does not apply here.
+    expect(pairScans(ins, at("08:00"), { 2: 6 }).map((iv) => iv.barcode)).toEqual(["058556050103"]);
+    expect(pairScans(ins, at("08:00"), { 1: 6 })).toHaveLength(3);
   });
 
   it("pairs by station number, not by name", () => {

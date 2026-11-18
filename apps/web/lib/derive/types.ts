@@ -116,12 +116,16 @@ export interface DeriveContext {
   now: number;
   calendar: WorkCalendar;
   params?: Partial<DeriveParams>;
+  /** "Max i gang" per station number (config.stations.max_open). A station not listed has 1. */
+  maxOpen?: Readonly<Record<number, number>>;
   /**
-   * Per station number: the latest In still open on an order that is NOT in
-   * the scans handed in. A station works one element at a time, so an open In
-   * older than that is a missing scan-out. Not needed when all scans are given.
+   * Per station number: the starts (epoch ms) of the Ins still open on orders
+   * that are NOT in the scans handed in. A station has at most its "Max i
+   * gang" elements in progress, so an open In with that many later open Ins
+   * at its station, these included, is a missing scan-out. Not needed when
+   * all scans are given.
    */
-  otherOpenInByStation?: Record<number, number>;
+  otherOpenInsByStation?: Record<number, number[]>;
   /** Typical times for the forecast. Left out: no forecast. */
   typical?: TypicalTimes | null;
 }

@@ -27,6 +27,8 @@ interface VectorCase {
   now: string;
   todayStart: string;
   windowStart: string;
+  /** "Max i gang" per station number, as a string key. A station not listed has 1. */
+  maxOpen?: Record<string, number>;
   events: VectorEvent[];
   expected: {
     done: { barcode: string; stationNo: number; start: string; end: string }[];
@@ -44,8 +46,17 @@ function toScan(e: VectorEvent): Scan {
   return { ...parts, id: e.id, barcode: e.barcode, station: e.station, stationNo: e.stationNo, stationKind: e.stationKind, direction: e.direction, time: ms(e.time), durationSec: e.durationSec, device: null };
 }
 
+const maxOpenOf = (c: VectorCase) =>
+  Object.fromEntries(Object.entries(c.maxOpen ?? {}).map(([stationNo, n]) => [Number(stationNo), n]));
+
+/** In progress compares sorted by stationNo, then since, then barcode. */
+const byStationSince = (
+  a: { stationNo: number; since: number; barcode: string },
+  b: { stationNo: number; since: number; barcode: string }
+) => a.stationNo - b.stationNo || a.since - b.since || a.barcode.localeCompare(b.barcode);
+
 function check(c: VectorCase, scans: Scan[]) {
-  const intervals = pairHistory(scans, { now: ms(c.now) });
+  const intervals = pairHistory(scans, { now: ms(c.now), maxOpen: maxOpenOf(c) });
   const done = intervals
     .filter((iv) => iv.status === "done" && (iv.end as number) >= ms(c.todayStart))
     .map((iv) => ({ barcode: iv.barcode, stationNo: iv.stationNo, start: iv.start, end: iv.end }))
@@ -58,10 +69,10 @@ function check(c: VectorCase, scans: Scan[]) {
   const inProgress = intervals
     .filter((iv) => iv.status === "open")
     .map((iv) => ({ stationNo: iv.stationNo, barcode: iv.barcode, since: iv.start }))
-    .sort((a, b) => a.stationNo - b.stationNo);
+    .sort(byStationSince);
   const expectedInProgress = c.expected.inProgress
     .map((p) => ({ stationNo: p.stationNo, barcode: p.barcode, since: ms(p.since) }))
-    .sort((a, b) => a.stationNo - b.stationNo);
+    .sort(byStationSince);
   expect(inProgress).toEqual(expectedInProgress);
 }
 
@@ -146,11 +157,44 @@ describe("pairHistory", () => {
 
   it("an open In older than another order's open In at the station is a missing scan-out", () => {
     const a = scan("In", at("07:00"));
-    expect(pairHistory([a], { now: NOW, otherOpenInByStation: { 1: at("08:00") } })[0]).toMatchObject({
+    expect(pairHistory([a], { now: NOW, otherOpenInsByStation: { 1: [at("08:00")] } })[0]).toMatchObject({
       status: "missing_out",
       missingReason: "superseded",
     });
-    expect(pairHistory([a], { now: NOW, otherOpenInByStation: { 1: at("06:00"), 2: at("09:00") } })[0].status).toBe("open");
+    expect(pairHistory([a], { now: NOW, otherOpenInsByStation: { 1: [at("06:00")], 2: [at("09:00")] } })[0].status).toBe("open");
+    // A tie in time: the In handed in stays open, as before.
+    expect(pairHistory([a], { now: NOW, otherOpenInsByStation: { 1: [at("07:00")] } })[0].status).toBe("open");
+  });
+
+  it("at a station with Max i gang 3, three elements are open at once and a fourth supersedes the oldest", () => {
+    const el = (piece: number, time: number) =>
+      scan("In", time, { barcode: `0585560501${String(piece).padStart(2, "0")}`, piece });
+    const ins = [el(1, at("07:00")), el(2, at("07:10")), el(3, at("07:20"))];
+    expect(pairHistory(ins, { now: NOW, maxOpen: { 1: 3 } }).map((iv) => iv.status)).toEqual(["open", "open", "open"]);
+    // The other stations keep 1.
+    expect(pairHistory(ins, { now: NOW, maxOpen: { 2: 3 } }).map((iv) => iv.status)).toEqual([
+      "missing_out",
+      "missing_out",
+      "open",
+    ]);
+    const ivs = pairHistory([...ins, el(4, at("07:30"))], { now: NOW, maxOpen: { 1: 3 } });
+    expect(ivs.map((iv) => [iv.piece, iv.status, iv.missingReason])).toEqual([
+      [1, "missing_out", "superseded"],
+      [2, "open", null],
+      [3, "open", null],
+      [4, "open", null],
+    ]);
+  });
+
+  it("at a station with Max i gang 3, the open Ins of other orders take their places too", () => {
+    const a = scan("In", at("07:00"));
+    const b = scan("In", at("07:20"), { barcode: "058556050102", piece: 2 });
+    const others = { 1: [at("07:10"), at("07:30")] };
+    const ivs = pairHistory([a, b], { now: NOW, maxOpen: { 1: 3 }, otherOpenInsByStation: others });
+    expect(ivs.map((iv) => [iv.id, iv.status])).toEqual([[a.id, "missing_out"], [b.id, "open"]]);
+    expect(
+      pairHistory([a, b], { now: NOW, maxOpen: { 1: 4 }, otherOpenInsByStation: others }).map((iv) => iv.status)
+    ).toEqual(["open", "open"]);
   });
 
   it("an Out with no In is timed back from DurationSec, over any distance", () => {

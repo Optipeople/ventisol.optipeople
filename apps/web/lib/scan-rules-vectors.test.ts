@@ -25,6 +25,8 @@ interface VectorCase {
   now: string;
   todayStart: string;
   windowStart: string;
+  /** "Max i gang" per station number, as a string key. A station not listed has 1. */
+  maxOpen?: Record<string, number>;
   events: VectorEvent[];
   expected: {
     done: { barcode: string; stationNo: number; start: string; end: string }[];
@@ -57,6 +59,12 @@ function toScan(e: VectorEvent): Scan {
   };
 }
 
+/** In progress compares sorted by stationNo, then since, then barcode. */
+const byStationSince = (
+  a: { stationNo: number; since: number; barcode: string },
+  b: { stationNo: number; since: number; barcode: string }
+) => a.stationNo - b.stationNo || a.since - b.since || a.barcode.localeCompare(b.barcode);
+
 describe("shared scan-rule vectors", () => {
   it("has cases", () => {
     expect(cases.length).toBeGreaterThan(0);
@@ -69,7 +77,8 @@ describe("shared scan-rule vectors", () => {
 
     // Events before the window are never read.
     const scans = c.events.map(toScan).filter((s) => s.time >= windowStart);
-    const intervals = pairScans(scans, now);
+    const maxOpen = Object.fromEntries(Object.entries(c.maxOpen ?? {}).map(([no, n]) => [Number(no), n]));
+    const intervals = pairScans(scans, now, maxOpen);
 
     const done = intervals
       .filter((iv) => !iv.inProgress && iv.end >= todayStart)
@@ -82,11 +91,11 @@ describe("shared scan-rule vectors", () => {
 
     const inProgress = intervals
       .filter((iv) => iv.inProgress)
-      .map((iv) => ({ stationNo: iv.stationNo, barcode: iv.barcode, since: iv.start }))
-      .sort((a, b) => (a.stationNo ?? 0) - (b.stationNo ?? 0));
+      .map((iv) => ({ stationNo: iv.stationNo ?? 0, barcode: iv.barcode, since: iv.start }))
+      .sort(byStationSince);
     const expectedInProgress = c.expected.inProgress
       .map((p) => ({ stationNo: p.stationNo, barcode: p.barcode, since: ms(p.since) }))
-      .sort((a, b) => a.stationNo - b.stationNo);
+      .sort(byStationSince);
     expect(inProgress).toEqual(expectedInProgress);
   });
 });

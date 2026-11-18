@@ -10,7 +10,7 @@
 //
 // docs/scan-rules-vectors.json runs against this in pairing.test.ts.
 
-import { dedupeScans, stationKey } from "@/lib/report";
+import { dedupeScans, maxOpenAt, stationKey, type MaxOpen } from "@/lib/report";
 import { isPacking, type Scan } from "@/lib/scans";
 import { DEFAULT_PARAMS, type IntervalStatus, type MissingReason, type StationKind } from "./types";
 
@@ -43,8 +43,10 @@ export interface PairOptions {
   now: number;
   /** Default 36 hours, as the station app. */
   staleOpenSeconds?: number;
-  /** See DeriveContext.otherOpenInByStation. */
-  otherOpenInByStation?: Record<number, number>;
+  /** "Max i gang" per station number (config.stations.max_open). A station not listed has 1. */
+  maxOpen?: MaxOpen;
+  /** See DeriveContext.otherOpenInsByStation. */
+  otherOpenInsByStation?: Record<number, number[]>;
 }
 
 /** Chronological, In before Out on a tie so a zero-length pass still pairs. */
@@ -89,6 +91,32 @@ export function endOrNow(iv: Pick<PairedInterval, "start" | "end">, now: number)
 }
 
 /**
+ * The open Ins that are in progress: per station the latest, as many as its
+ * "Max i gang", where the open Ins of other orders at the station take their
+ * place too. One of these wins a tie in time against another order's (as
+ * before there was a max), and among these the one handed in first.
+ */
+function inProgress(fresh: Scan[], opts: PairOptions): Set<Scan> {
+  const byStation = new Map<string, Scan[]>();
+  for (const scan of fresh) {
+    const key = stationKey(scan);
+    const list = byStation.get(key);
+    if (list) list.push(scan);
+    else byStation.set(key, [scan]);
+  }
+  const kept = new Set<Scan>();
+  for (const list of byStation.values()) {
+    const stationNo = list[0].stationNo;
+    const others = stationNo != null ? (opts.otherOpenInsByStation?.[stationNo] ?? []) : [];
+    // Own first, then the others; the stable sort keeps that order on a tie.
+    const entries = [...list.map((scan) => ({ time: scan.time, scan })), ...others.map((time) => ({ time, scan: null }))];
+    entries.sort((a, b) => b.time - a.time);
+    for (const e of entries.slice(0, maxOpenAt(opts.maxOpen, stationNo))) if (e.scan) kept.add(e.scan);
+  }
+  return kept;
+}
+
+/**
  * Pairs In and Out per station (StationNo) and barcode over whatever scans
  * are handed in, oldest first, an In before an Out at the same time.
  *
@@ -99,8 +127,10 @@ export function endOrNow(iv: Pick<PairedInterval, "start" | "end">, now: number)
  *   (startEstimated). Without DurationSec it cannot be timed and is skipped.
  * - An In still open at the end: open (in progress) while it is at most
  *   staleOpenSeconds old, a missing scan-out (stale) after that. A station
- *   works one element at a time: of the open Ins at one station only the
- *   latest is open, the others are missing scan-outs (superseded).
+ *   works on at most its "Max i gang" elements at once (`maxOpen`, 1 unless
+ *   set): of the open Ins at one station only that many of the latest are
+ *   open, counting those of other orders (`otherOpenInsByStation`); the
+ *   older ones are missing scan-outs (superseded).
  *
  * Visits number the done and open intervals per element and station, oldest
  * first. Sorted by start.
@@ -134,26 +164,16 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
     }
   }
 
-  // Of the open Ins that are not stale, the latest per station is in progress.
-  const current = new Map<string, Scan>();
+  // Of the open Ins that are not stale, the latest per station are in progress.
   const fresh: Scan[] = [];
   for (const scan of open.values()) {
-    if (now - scan.time > staleMs) {
-      missing(scan, "stale");
-      continue;
-    }
-    fresh.push(scan);
-    const key = stationKey(scan);
-    const latest = current.get(key);
-    if (!latest || byTime(latest, scan) < 0) current.set(key, scan);
+    if (now - scan.time > staleMs) missing(scan, "stale");
+    else fresh.push(scan);
   }
+  const current = inProgress(fresh, opts);
   for (const scan of fresh) {
-    const other = scan.stationNo != null ? opts.otherOpenInByStation?.[scan.stationNo] : undefined;
-    if (current.get(stationKey(scan)) !== scan || (other != null && other > scan.time)) {
-      missing(scan, "superseded");
-    } else {
-      result.push(make(scan, scan.time, null, { status: "open", inScanId: scan.id }));
-    }
+    if (current.has(scan)) result.push(make(scan, scan.time, null, { status: "open", inScanId: scan.id }));
+    else missing(scan, "superseded");
   }
 
   result.sort((a, b) => a.start - b.start || endOrNow(a, now) - endOrNow(b, now));

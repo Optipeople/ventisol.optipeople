@@ -218,8 +218,9 @@ export interface ReplaceResult {
  * The caller holds the writer lock. An order with no scan left is removed.
  *
  * Orders that can have an open In (scanned within staleOpenSeconds) must be
- * handed in TOGETHER: only then does "one element per station" see every open
- * In. Open passes of orders outside the set are read from core.* instead.
+ * handed in TOGETHER: only then does "at most Max i gang per station" see
+ * every open In. Open passes of orders outside the set are read from core.*
+ * instead.
  */
 export async function replaceOrders(
   db: Db,
@@ -242,22 +243,23 @@ export async function replaceOrders(
 
   const scans = await loadScans(db, orderNos);
   const infos = await loadOrderInfos(db, orderNos, scans, config.rules);
+  // Every open In of the orders outside the set: at most "Max i gang" per station.
   const others = await db.query<{ station_no: number; start_at: Date }>(
-    `select station_no, max(start_at) as start_at
+    `select station_no, start_at
        from core.station_intervals
-      where status = 'open' and not (order_no = any($1::int[]))
-      group by station_no`,
+      where status = 'open' and not (order_no = any($1::int[]))`,
     [orderNos]
   );
-  const otherOpenInByStation: Record<number, number> = {};
-  for (const o of others) otherOpenInByStation[o.station_no] = o.start_at.getTime();
+  const otherOpenInsByStation: Record<number, number[]> = {};
+  for (const o of others) (otherOpenInsByStation[o.station_no] ??= []).push(o.start_at.getTime());
 
   const derived: DerivedOrder[] = deriveOrders(scans, infos, {
     now,
     calendar: config.calendar,
     params: config.params,
     typical: config.typical,
-    otherOpenInByStation,
+    maxOpen: config.maxOpen,
+    otherOpenInsByStation,
   });
 
   // Elements, intervals and steps go with their order (on delete cascade).

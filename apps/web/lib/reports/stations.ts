@@ -96,6 +96,8 @@ interface StationListRaw {
   sortOrder: number;
   active: boolean;
   normalTimes: NormalTime[];
+  /** "Max i gang": elements that may be in progress here at once. */
+  maxOpen: number;
 }
 
 /** One station row with normal, deviation and status applied. */
@@ -336,6 +338,7 @@ export async function getStationDetail(
             sortOrder: 0,
             active: false,
             normalTimes: [],
+            maxOpen: 1,
           }
         ),
         ctx
