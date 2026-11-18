@@ -10,6 +10,7 @@ describe("navItemsFor", () => {
       "Overblik",
       "Stationer",
       "Ordrer",
+      "Ugeplan",
       "Ledelse",
       "Chat",
       "Indstillinger",
@@ -17,15 +18,15 @@ describe("navItemsFor", () => {
   });
 
   it("ledelse sees Ledelse but not Indstillinger", () => {
-    expect(labels("ledelse")).toEqual(["Overblik", "Stationer", "Ordrer", "Ledelse", "Chat"]);
+    expect(labels("ledelse")).toEqual(["Overblik", "Stationer", "Ordrer", "Ugeplan", "Ledelse", "Chat"]);
   });
 
   it("planner sees Indstillinger but not Ledelse", () => {
-    expect(labels("planner")).toEqual(["Overblik", "Stationer", "Ordrer", "Chat", "Indstillinger"]);
+    expect(labels("planner")).toEqual(["Overblik", "Stationer", "Ordrer", "Ugeplan", "Chat", "Indstillinger"]);
   });
 
   it("viewer sees neither", () => {
-    expect(labels("viewer")).toEqual(["Overblik", "Stationer", "Ordrer", "Chat"]);
+    expect(labels("viewer")).toEqual(["Overblik", "Stationer", "Ordrer", "Ugeplan", "Chat"]);
   });
 
   it("Ordrer is active on the order lists and on an order page", () => {
@@ -33,11 +34,12 @@ describe("navItemsFor", () => {
     expect(ordrer?.match).toEqual(["/ordrer", "/ordre"]);
   });
 
-  it("links to the six routes", () => {
+  it("links to the seven routes", () => {
     expect(navItemsFor("admin").map((item) => item.href)).toEqual([
       "/",
       "/stationer",
       "/ordrer",
+      "/ugeplan",
       "/ledelse",
       "/chat",
       "/indstillinger",

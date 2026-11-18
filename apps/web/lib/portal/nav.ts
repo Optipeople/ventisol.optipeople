@@ -25,6 +25,7 @@ const NAV: ReadonlyArray<NavEntry> = [
     match: ["/ordrer", "/ordre"],
     needs: "reports.view",
   },
+  { label: "Ugeplan", href: "/ugeplan", needs: "reports.view" },
   { label: "Ledelse", href: "/ledelse", needs: "ledelse.view" },
   { label: "Chat", href: "/chat", needs: "chat.use" },
   { label: "Indstillinger", href: "/indstillinger", needs: "settings.view" },
