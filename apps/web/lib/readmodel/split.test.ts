@@ -6,6 +6,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "@/lib/db/testing";
 import { at } from "@/lib/test-helpers";
 import { applyScanChanges, onMaxOpenChanged, rebuildAll } from "./index";
+import { loadConfig } from "./config";
+import { replaceOrders, replaceStationDays } from "./write";
+import { dayKey } from "@/lib/time";
 
 const NOW = at("10:00");
 const MIN = 60;
@@ -103,6 +106,35 @@ describe("parallel work at a station with Max i gang 6", () => {
     expect(later.map((p) => p.allocated_seconds)).toEqual([25 * MIN, 25 * MIN, 100 * MIN]);
     const [order] = await query<{ touch_seconds: number }>("select touch_seconds from core.orders where order_no = 58003");
     expect(order.touch_seconds).toBe(100 * MIN);
+  });
+
+  it("a late pass changes the share of a pass over midnight, and that past day's figures follow", async () => {
+    // Yesterday's midnight: Q runs 21:00 the day before to 01:00 yesterday, so it counts yesterday.
+    const midnight = at("00:00") - 86_400_000;
+    const yesterday = new Date(midnight + 12 * 3600_000).toLocaleDateString("sv-SE", { timeZone: "Europe/Copenhagen" });
+    await scan("q-in", 58005, "In", midnight - 3 * 3600_000);
+    await scan("q-out", 58005, "Out", midnight + 3600_000, 4 * 3600);
+    await rebuildAll(NOW, { restart: true });
+    const total = async () =>
+      (
+        await query<{ pass_seconds_total: number }>(
+          "select pass_seconds_total from core.station_day_facts where station_no = 3 and local_day = $1::date",
+          [yesterday]
+        )
+      )[0].pass_seconds_total;
+    expect(await total()).toBe(240 * MIN);
+
+    // P arrives late: 22:00 to 23:00 the day before yesterday, beside Q. Rebuild only P's order and
+    // the one day P touches, as a sync run may do; Q's day must follow.
+    await scan("p-in", 58006, "In", midnight - 2 * 3600_000);
+    await scan("p-out", 58006, "Out", midnight - 3600_000, 3600);
+    await db.withService(async (q) => {
+      const config = await loadConfig(q, NOW);
+      await replaceOrders(q, [58006], config, NOW);
+      await replaceStationDays(q, [{ stationNo: 3, localDay: dayKey(midnight - 2 * 3600_000) }], config, NOW);
+    });
+    // Q now shares an hour with P: 210 min.
+    expect(await total()).toBe(210 * MIN);
   });
 
   it("at Max i gang 1, an older open element of another order is a missing scan-out with no share", async () => {

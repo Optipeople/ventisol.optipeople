@@ -477,7 +477,7 @@ export async function replaceStationDays(
     if (list) list.push(entry);
     else byStation.set(r.station_no, [entry]);
   }
-  await splitPasses(db, [...byStation.values()].flat(), config, now);
+  const moved = await splitPasses(db, [...byStation.values()].flat(), config, now);
 
   const facts: StationDayFactsRow[] = [];
   const gone: { station_no: number; local_day: string }[] = [];
@@ -512,7 +512,16 @@ export async function replaceStationDays(
       [JSON.stringify(gone)]
     );
   }
-  return days.length;
+
+  // A pass's share can change on a day outside these (it ends there, and a
+  // pass beside it on these days was added or changed): rebuild that day too,
+  // or its time per piece keeps the old share. A second round changes no
+  // share, so this ends.
+  const asked = new Set(days.map((d) => `${d.stationNo}|${d.localDay}`));
+  const extra = moved.filter((d) => !asked.has(`${d.stationNo}|${d.localDay}`));
+  let count = days.length;
+  for (const window of dayWindows(extra)) count += await replaceStationDays(db, window, config, now);
+  return count;
 }
 
 /**
@@ -521,14 +530,15 @@ export async function replaceStationDays(
  * depends on the passes beside it, which may lie outside the days rebuilt),
  * shares each station's time, writes allocated_* where it changed and sets
  * it on the rows handed in, then brings the touch times of the orders
- * concerned in line (refreshTouch). A missing scan-out gets null.
+ * concerned in line (refreshTouch). A missing scan-out gets null. Returns the
+ * station days (where they count) of the passes whose share changed.
  */
 async function splitPasses(
   db: Db,
   entries: { row: StationIntervalRow; start: number; end: number | null }[],
   config: ReadModelConfig,
   now: number
-): Promise<void> {
+): Promise<StationDay[]> {
   const counted = entries.filter((e) => e.row.status !== "missing_out");
   const shares = new Map<string, { seconds: number; workingSeconds: number }>();
   if (counted.length > 0) {
@@ -567,6 +577,7 @@ async function splitPasses(
   }
 
   const changes: { interval_id: string; seconds: number | null; working: number | null }[] = [];
+  const moved = new Map<string, StationDay>();
   for (const { row } of entries) {
     const share = row.status !== "missing_out" ? shares.get(row.intervalId) : undefined;
     const seconds = share?.seconds ?? null;
@@ -575,8 +586,9 @@ async function splitPasses(
     row.allocatedSeconds = seconds;
     row.allocatedWorkingSeconds = working;
     changes.push({ interval_id: row.intervalId, seconds, working });
+    moved.set(`${row.stationNo}|${row.localDay}`, { stationNo: row.stationNo, localDay: row.localDay });
   }
-  if (changes.length === 0) return;
+  if (changes.length === 0) return [];
   const changed = await db.query<{ order_no: number }>(
     `update core.station_intervals s
         set allocated_seconds = c.seconds, allocated_working_seconds = c.working
@@ -586,6 +598,7 @@ async function splitPasses(
     [JSON.stringify(changes)]
   );
   await refreshTouch(db, [...new Set(changed.map((r) => r.order_no))], now);
+  return [...moved.values()];
 }
 
 /**
