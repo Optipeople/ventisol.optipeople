@@ -3,6 +3,10 @@
 // refinements, so it converts to plain JSON schema) and runs through
 // runReportQuery, which checks the capability and validates the real
 // parameters. So the role rules of the report layer hold in the chat too.
+//
+// A tool that returns stations also says each station's "Max i gang"
+// (maxOpen, from listStations): where it is above 1, time per piece is split
+// time, and the model has to know that to explain the figures.
 
 import { z } from "zod";
 import {
@@ -14,6 +18,7 @@ import {
   formatPercent,
   formatPoints,
   formatSignedPercent,
+  listStations,
   monthTitle,
   NO_DATA,
   runReportQuery,
@@ -150,6 +155,10 @@ function bottleneckViews(b: Bottleneck): ToolView[] {
   ];
 }
 
+/** Said in every station tool: what time per piece is where several elements are in progress at once. */
+const SPLIT_NOTE =
+  "Hver station har maxOpen (Max i gang). Over 1 arbejder én person på flere elementer ad gangen: der er tid pr. stk. og mod normalt delt tid (hvert elements andel af stationens tid), mens udnyttelse, stilstand og ventetid er ur-tid. Se station_timeline for passagerne.";
+
 const stationColumns: ViewColumn[] = [
   { key: "name", label: "Station" },
   { key: "count", label: "Gennem", align: "right" },
@@ -199,6 +208,8 @@ interface ReportToolDef<S extends z.ZodObject> {
   inputSchema: S;
   views?: (result: unknown, input: z.output<S>) => ToolView[];
   href?: (input: z.output<S>) => string;
+  /** The result has stations (objects with a stationNo): give each its maxOpen. */
+  stations?: boolean;
 }
 
 /** `def<ResultType>()({ ... })`: the result type is named, the input type is inferred from the schema. */
@@ -209,6 +220,7 @@ const def =
     inputSchema: S;
     views?: (result: R, input: z.output<S>) => ToolView[];
     href?: (input: z.output<S>) => string;
+    stations?: boolean;
   }): ReportToolDef<z.ZodObject> =>
     d as unknown as ReportToolDef<z.ZodObject>;
 
@@ -351,9 +363,10 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
 
   bottleneck: def<Bottleneck>()({
     description:
-      "Flaskehalsen i en periode: hvor ordrerne venter mest, med ventetid og tid pr. trin for alle syv trin og ventetid foran hver station. Brug den til 'hvor venter ordrerne mest'.",
+      "Flaskehalsen i en periode: hvor ordrerne venter mest, med ventetid og tid pr. trin for alle syv trin og ventetid foran hver station (med stationens maxOpen, Max i gang). Ventetid er ur-tid. Brug den til 'hvor venter ordrerne mest'.",
     inputSchema: z.object(period),
     views: (b) => bottleneckViews(b),
+    stations: true,
     href: () => "/",
   }),
 
@@ -408,7 +421,7 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
   }),
 
   stations: def<StationInfo[]>()({
-    description: "Listen over stationer med nummer, navn, type og normaltider pr. elementtype. Brug den til at finde et stationsnummer.",
+    description: "Listen over stationer med nummer, navn, type, normaltider pr. elementtype og maxOpen (Max i gang: hvor mange elementer der må være i gang på stationen på én gang; over 1 betyder at stationens tid deles mellem dem). Brug den til at finde et stationsnummer.",
     inputSchema: z.object({}),
     views: (rows) => [
       table(
@@ -417,31 +430,34 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
           { key: "no", label: "Nr." },
           { key: "name", label: "Navn" },
           { key: "kind", label: "Type" },
+          { key: "maxOpen", label: "Max i gang", align: "right" },
         ],
-        rows.map((r) => ({ no: String(r.stationNo), name: r.name, kind: r.kindLabel }))
+        rows.map((r) => ({ no: String(r.stationNo), name: r.name, kind: r.kindLabel, maxOpen: formatNumber(r.maxOpen) }))
       ),
     ],
     href: () => "/stationer",
   }),
 
   station_day: def<StationDayReport>()({
-    description: "Alle stationer på én dag: antal gennem, tid pr. stk., mod normalt, stilstand og status.",
+    description: `Alle stationer på én dag: antal gennem, tid pr. stk., mod normalt, stilstand, udnyttelse og status. ${SPLIT_NOTE}`,
     inputSchema: z.object({ day: day("Dagen"), clock: period.clock }),
     views: (r) => [table(`Stationer ${r.day}`, stationColumns, stationRows(r.rows))],
+    stations: true,
     href: () => "/stationer",
   }),
 
   station_performance: def<StationPeriodReport>()({
     description:
-      "Stationernes ydelse over en periode, alle eller én: antal gennem, tid pr. stk. (median), mod normaltid, stilstand, ventetid foran og status.",
+      `Stationernes ydelse over en periode, alle eller én: antal gennem, tid pr. stk. (median), mod normaltid, stilstand, udnyttelse, ventetid foran og status. ${SPLIT_NOTE}`,
     inputSchema: z.object({ ...period, stationNo: stationNo.optional() }),
     views: (r) => [table(`Stationer ${r.period.from} til ${r.period.to}`, stationColumns, stationRows(r.rows))],
+    stations: true,
     href: () => "/stationer",
   }),
 
   calc_vs_measured: def<CalcVsMeasured>()({
     description:
-      "Kalkule mod målt: den kalkulerede tid mod den målte tid pr. elementtype og station, med afvigelse i procent. Brug den til 'holder kalkulen'.",
+      "Kalkule mod målt: den kalkulerede tid mod den målte tid pr. elementtype og station, med afvigelse i procent. Den målte tid er delt tid ved stationer med maxOpen over 1 (hvert elements andel af stationens tid). Brug den til 'holder kalkulen'.",
     inputSchema: z.object({
       ...period,
       elementTypeId: z.string().min(1).max(100).optional().describe("Kun denne elementtype (id)."),
@@ -465,6 +481,7 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
       ),
     ],
     href: () => "/ledelse",
+    stations: true,
   }),
 
   management_kpis: def<PeriodKpis>()({
@@ -538,7 +555,8 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
   }),
 
   baseline_suggestion: def<BaselineSuggestion>()({
-    description: "Forslag til normaltider: den målte median pr. station og elementtype over en periode, mod den normaltid der gælder nu.",
+    description:
+      "Forslag til normaltider: den målte median pr. station og elementtype over en periode, mod den normaltid der gælder nu. Den målte tid er delt tid ved stationer med maxOpen over 1.",
     inputSchema: z.object({
       ...period,
       minSamples: z.number().int().min(1).max(100000).optional().describe("Mindst så mange målinger. Standard 5."),
@@ -561,6 +579,7 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
       ),
     ],
     href: () => "/indstillinger/tider",
+    stations: true,
   }),
 
   capacity_plan: def<CapacityPlan>()({
@@ -598,9 +617,41 @@ export function reportTool(name: ReportQueryName): ChatTool {
     inputSchema: d.inputSchema,
     async run(ctx, input): Promise<ToolResult> {
       const params = { ...(input as object), now: ctx.now };
-      const result = await runReportQuery(ctx.claims, name, params);
+      const [result, maxOpen] = await Promise.all([
+        runReportQuery(ctx.claims, name, params),
+        d.stations ? maxOpenByStation(ctx.claims) : null,
+      ]);
       const views = d.views?.(result, input as Record<string, unknown>) ?? [];
-      return { data: compactResult(result), views, href: d.href?.(input as Record<string, unknown>) };
+      const data = compactResult(result);
+      return {
+        data: maxOpen ? withMaxOpen(data, maxOpen) : data,
+        views,
+        href: d.href?.(input as Record<string, unknown>),
+      };
     },
   };
+}
+
+/** "Max i gang" by station number. Empty when the list cannot be read: the figures still come back. */
+async function maxOpenByStation(claims: Parameters<typeof listStations>[0]): Promise<Map<number, number>> {
+  try {
+    return new Map((await listStations(claims)).map((s) => [s.stationNo, s.maxOpen]));
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Compact data with `maxOpen` beside every `stationNo` (1 for a station not
+ * in the list: one at a time). An object that already has one keeps it.
+ */
+export function withMaxOpen(value: unknown, maxOpen: ReadonlyMap<number, number>): unknown {
+  if (Array.isArray(value)) return value.map((v) => withMaxOpen(v, maxOpen));
+  if (value == null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = withMaxOpen(v, maxOpen);
+    if (key === "stationNo" && typeof v === "number" && !("maxOpen" in value)) out.maxOpen = maxOpen.get(v) ?? 1;
+  }
+  return out;
 }
