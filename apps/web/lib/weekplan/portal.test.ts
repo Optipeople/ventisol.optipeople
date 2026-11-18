@@ -31,13 +31,23 @@ function productionList(orderNo: number) {
         number: 1,
         quantity: 1,
         system: "70 mm Industri",
+        frameColour: "Hvid",
+        sashColour: "Hvid",
         notes: ["Kogreb knop 2 sider"],
         fields: [
           { opening: "Industridør stående", frameSize: "800,0 * 2000,0" },
           { opening: "Industridør H.U. falle m/galv.trin", frameSize: "800,0 * 2000,0" },
         ],
       },
-      { number: 2, quantity: 2, system: "DANLINE", notes: [], fields: [{ opening: "Topstyret ud", frameSize: "1000,0 * 900,0" }] },
+      {
+        number: 2,
+        quantity: 2,
+        system: "DANLINE",
+        frameColour: "Lightgrau/hvid",
+        sashColour: "Lightgrau/hvid",
+        notes: [],
+        fields: [{ opening: "Topstyret ud", frameSize: "1000,0 * 900,0" }],
+      },
       { number: 3, quantity: 1, system: "SOFTLINE", notes: [], fields: [{ opening: "Montageskinne", frameSize: null }] },
     ],
   };
@@ -93,6 +103,9 @@ describe("from the production lists", () => {
       // The rail has no element type but is an element of the list.
       elements: 4,
       welds: 3 + 2 * 2 + 1,
+      // Two Lightgrau/hvid windows, a white door and a rail without colours.
+      foil: "delvis",
+      freeFields: {},
       source: "portal",
     });
     expect(o.types).toEqual([
@@ -225,6 +238,8 @@ describe("handleWeekPlan", () => {
     expect(String(row[head.indexOf("Prod.")])).toMatch(/^Pakket/);
     expect(row[head.indexOf("DB SD")]).toBe(1);
     expect(row[head.indexOf("TS")]).toBe(2);
+    // The colours come through rpt.week_plan_documents.
+    expect(row[head.indexOf("Folie")]).toBe("Delvis folie");
     expect(orderRows.find((r) => r[1] === 58999)![head.indexOf("Prod.")]).toBe("Ikke startet");
     // A viewer may not see the calculated times.
     const info = (await readSheet(buffer, "Om udtrækket")).map((r) => r[0]);

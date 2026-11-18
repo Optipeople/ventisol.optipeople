@@ -42,13 +42,27 @@ production status and writes the workbook (`lib/weekplan/workbook.ts`). One
 | Ansv. | initials of Sagsbeh.: one letter for the first name, one per later name or part of a hyphenated one ("Mai-Britt Undall-Behrend" is mub) | `A_Kopf.Sachbearb1` as initials: the user who most often created that handler's offers and orders (`A_Vorgang`) |
 | Beløb | none | `A_Kopf.A_Summe` (ordresum ekskl. moms) |
 | Bemærkning, Info | the positions' notes | free field 6 (`A_KopfFreie.Feld6`) |
-| Folie | none | free field 2 or 3 is "ja" |
-| HTM | none | free field 4 ("Bestilt") |
+| Folie | "Folie" when every element has a foiled colour, "Delvis folie" when some have (Farve karm / Farve ramme) | "Folie godkendt" when free field 2 or 3 is "ja"; else the same colour rule on `P_Werkstoffe.Farbe1`/`Farbe2` |
+| HTM | none | "HTM" when an article's supplier (`P_Artikel.Kreditor`) is HTM, with free field 4 (Partas in 3E): "HTM bestilt" |
+| Frie felter (sheet) | none | every free field 1 to 36 (`A_KopfFreie.Feld1`..`Feld36`) that holds something, one column per field |
 | Timer | Σ Antal × the calculated time of the position's element type over all stations (`config.calculated_times`; empty for a viewer, who may not see it) | Σ `P_Technik.Stueck` × `PosZeit` / 60 |
 | Batch nr. | none | the distinct `P_Technik.SerieNr` |
 | Elementer i alt | Σ Antal (one frame per position) | Σ Stück × frames (`P_Element` rows) |
 | Svejs i alt | Σ Antal × (1 + fields with a sash size) | Σ Stück × (frames + `AnzFlg`) |
 | Fragt | none | the text of the freight position (`P_Art` 3) |
+
+**Folie** is read from the colours: a foiled profile has a two-sided colour,
+outside/inside ("Anthrazitgrå fin struktur/hvid", "Lightgrau/hvid", in the
+3E file shortened to "FAnthrazitgrå/h"); a plain one has one colour ("Hvid",
+"Grå"). For week 48 2026 this gives exactly the office's four "Folie godkendt"
+orders, and 58790, which they noted as "delvis folie", comes out partly
+foiled. `rpt.week_plan_documents` returns the colours from migration
+`20261118130000_week_plan_colours.sql` on.
+
+**Frie felter**: the 3E file holds the free fields' values but not their
+names (those live in 3E's own setup), so the sheet names the columns by
+number ("Frit felt 4"). Field 4 is Partas (HTM): it says "Bestilt" on exactly
+the orders whose articles come from HTM.
 
 Left empty, filled in as before: budget and capacity (yellow), spec.
 elementer, bue/skrå/tag, poste, sprosser, kobling, afsendelse, afsendt,

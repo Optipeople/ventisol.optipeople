@@ -22,7 +22,10 @@ export function tables(): WeekPlanTables {
       { ID: id, AuNummer: 58781, A_Summe: 21528, Sachbearb1: "Flemming B" },
       { ID: "K2", AuNummer: 58790, A_Summe: 6663, Sachbearb1: "Flemming B" },
     ],
-    A_KopfFreie: [{ ID_A_Kopf: id, Feld2: "ja", Feld3: "ja", Feld4: null, Feld6: "Kogreb knop begge sider" }],
+    A_KopfFreie: [
+      { ID_A_Kopf: id, Feld1: "2", Feld2: "ja", Feld3: "ja", Feld4: null, Feld6: "Kogreb knop begge sider", Feld9: "(kein)" },
+      { ID_A_Kopf: "K2", Feld4: "Bestilt", Feld36: "sidste felt" },
+    ],
     A_Adresse: [
       { ID_A_Kopf: id, Nummer: 0, Firma: "Kongerslev Trælast Aps" },
       { ID_A_Kopf: id, Nummer: 1, Firma: "Leveringsadresse" },
@@ -51,6 +54,17 @@ export function tables(): WeekPlanTables {
     P_Element: [
       { ID_A_Kopf: id, Position: 1, Ez: 1, Feldnummer: "00~00" },
       { ID_A_Kopf: id, Position: 2, Ez: 1, Feldnummer: "00~00" },
+    ],
+    // Four foiled windows and a white door: partly foiled.
+    P_Werkstoffe: [
+      { ID_A_Kopf: id, Position: 0, Farbe1: "Hvid", Farbe2: "(kein)" },
+      { ID_A_Kopf: id, Position: 1, Farbe1: "FAnthrazitgrå/h", Farbe2: "(kein)" },
+      { ID_A_Kopf: id, Position: 2, Farbe1: "Hvid", Farbe2: "(kein)" },
+    ],
+    // Order 58790 buys from HTM.
+    P_Artikel: [
+      { ID_A_Kopf: id, Kreditor: "Veka" },
+      { ID_A_Kopf: "K2", Kreditor: "HTM" },
     ],
   };
 }

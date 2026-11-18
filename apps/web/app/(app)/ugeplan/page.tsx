@@ -18,6 +18,7 @@ import { can } from "@/lib/portal/roles";
 import { orderHref } from "@/lib/orders-view/params";
 import { capitalize, formatLongDay, requestTime } from "@/lib/time";
 import { loadPortalWeekPlan } from "@/lib/weekplan/portal";
+import { foilText } from "@/lib/weekplan/classify";
 import { defaultPlanWeek, mondayOf, parseWeekParam, shiftWeek, weekParam, type PlanWeek } from "@/lib/weekplan/week";
 
 export const metadata: Metadata = { title: "Ugeplan" };
@@ -99,6 +100,7 @@ export default async function WeekPlanPage({
                 <DataTableHeader>Ordre</DataTableHeader>
                 <DataTableHeader>Kunde</DataTableHeader>
                 <DataTableHeader>Ansv.</DataTableHeader>
+                <DataTableHeader>Folie</DataTableHeader>
                 <DataTableHeader align="right">Elementer</DataTableHeader>
                 <DataTableHeader align="right">Timer</DataTableHeader>
               </DataTableHead>
@@ -112,6 +114,7 @@ export default async function WeekPlanPage({
                     </DataTableCell>
                     <DataTableCell>{o.customer || "Ukendt kunde"}</DataTableCell>
                     <DataTableCell>{o.responsible}</DataTableCell>
+                    <DataTableCell>{foilText(o) ?? ""}</DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">
                       {countFormat.format(o.elements)}
                     </DataTableCell>

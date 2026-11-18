@@ -8,7 +8,7 @@ import { withUser, type Claims, type Db } from "@/lib/db";
 import { classifyElementType, type ElementTypeRule } from "@/lib/orderdoc/element-types";
 import type { OrderPosition } from "@/lib/orderdoc/types";
 import { rulesFromConfig } from "@/lib/readmodel/orderinfo";
-import { documentFrameType } from "./classify";
+import { documentFrameType, isFoilColour, orderFoil } from "./classify";
 import type { TypeCount, WeekPlan, WeekPlanOrder } from "./types";
 
 /** One production list as rpt.week_plan_documents returns it. */
@@ -27,6 +27,8 @@ interface DocPosition {
   number?: number;
   quantity?: number | null;
   system?: string | null;
+  frameColour?: string | null;
+  sashColour?: string | null;
   notes?: string[];
   fields?: DocField[];
 }
@@ -69,6 +71,9 @@ export function orderFromDocument(
   let elements = 0;
   let welds = 0;
   let seconds = 0;
+  let foiled = 0;
+  let plain = 0;
+  let coloured = false;
 
   for (const p of positions) {
     if (!p || typeof p !== "object") continue;
@@ -79,6 +84,9 @@ export function orderFromDocument(
     if (quantity === 0 || fields.length === 0) continue;
 
     elements += quantity;
+    if (typeof p.frameColour === "string" || typeof p.sashColour === "string") coloured = true;
+    if (isFoilColour(p.frameColour) || isFoilColour(p.sashColour)) foiled += quantity;
+    else plain += quantity;
     welds += quantity * (1 + fields.filter((f) => typeof f?.frameSize === "string" && f.frameSize.trim()).length);
     if (secondsByType) {
       const typeId = classifyElementType(
@@ -109,7 +117,9 @@ export function orderFromDocument(
     amount: null,
     remark: remark ? cut(remark, 2000) : null,
     foilApproved: false,
+    foil: coloured ? orderFoil(foiled, plain) : null,
     htm: null,
+    freeFields: {},
     hours: secondsByType ? Math.round((seconds / 3600) * 10) / 10 : null,
     batches: [],
     freight: null,
@@ -165,7 +175,14 @@ export function mergeWeekPlans(portal: WeekPlan, mdb: WeekPlan | null): WeekPlan
       continue;
     }
     fromMdb.delete(p.orderNo);
-    orders.push({ ...m, remark: m.remark ?? p.remark, customer: m.customer || p.customer, source: "begge" });
+    orders.push({
+      ...m,
+      remark: m.remark ?? p.remark,
+      customer: m.customer || p.customer,
+      // An older 3E export without colours: the list's.
+      foil: m.foil ?? p.foil,
+      source: "begge",
+    });
   }
   for (const m of fromMdb.values()) orders.push({ ...m, source: "3e" });
   orders.sort((a, b) => a.orderNo - b.orderNo);

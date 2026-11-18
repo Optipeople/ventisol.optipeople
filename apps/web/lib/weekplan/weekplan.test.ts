@@ -5,7 +5,7 @@
 
 import { readSheet } from "read-excel-file/node";
 import { describe, expect, it } from "vitest";
-import { frameFields, frameType, parseParts, positionFrameTypes, productionGroup, type PositionFacts } from "./classify";
+import { foilText, frameFields, frameType, isFoilColour, orderFoil, parseParts, positionFrameTypes, productionGroup, type PositionFacts } from "./classify";
 import { readWeekPlanTables, splitYearWeek } from "./mdb";
 import { tables } from "./test-support";
 import { columnLetter, infoLines, productionText, weekPlanFileName, weekPlanWorkbook } from "./workbook";
@@ -89,7 +89,9 @@ describe("readWeekPlanTables", () => {
       amount: 21528,
       remark: "Kogreb knop begge sider",
       foilApproved: true,
+      foil: "delvis",
       htm: null,
+      freeFields: { "1": "2", "2": "ja", "3": "ja", "6": "Kogreb knop begge sider" },
       hours: 7.9,
       batches: [260825, 260827],
       freight: "Fragt / forsendelse",
@@ -102,7 +104,19 @@ describe("readWeekPlanTables", () => {
       { type: "TS", base: "TS", count: 4 },
       { type: "TD", base: "TD", count: 1 },
     ]);
-    expect(plan.orders[1]).toMatchObject({ customer: "", foilApproved: false, elements: 0, responsible: "fbv" });
+    expect(plan.orders[1]).toMatchObject({
+      customer: "",
+      foilApproved: false,
+      foil: null,
+      elements: 0,
+      responsible: "fbv",
+      htm: "HTM bestilt",
+      freeFields: { "4": "Bestilt", "36": "sidste felt" },
+    });
+    // An older export without colours and articles still reads.
+    const bare = readWeekPlanTables({ ...tables(), P_Werkstoffe: undefined, P_Artikel: undefined }, null);
+    expect(bare.orders[0]).toMatchObject({ foil: null, htm: null });
+    expect(bare.orders[1].htm).toBe("HTM bestilt");
   });
 
   it("splits yyww", () => {
@@ -126,6 +140,13 @@ describe("workbook", () => {
     expect(kontor[0][0]).toBe("Kontor, uge 48 2026");
     expect(kontor[7].slice(0, 4)).toEqual(["Kunde", "Ordre", "Ansv.", "Beløb"]);
     expect(kontor[8].slice(0, 4)).toEqual(["Kongerslev Trælast Aps", 58781, "fbv", 21528]);
+    expect(kontor[8][kontor[7].indexOf("Folie")]).toBe("Folie godkendt (delvis)");
+    expect(kontor[9][kontor[7].indexOf("HTM")]).toBe("HTM bestilt");
+
+    const free = await readSheet(buffer, "Frie felter");
+    expect(free[1]).toEqual(["Kunde", "Ordre", "Frit felt 1", "Frit felt 2", "Frit felt 3", "Frit felt 4", "Frit felt 6", "Frit felt 36"]);
+    expect(free[2].slice(1, 4)).toEqual([58781, "2", "ja"]);
+    expect(free[3][free[1].indexOf("Frit felt 36")]).toBe("sidste felt");
 
     const bks = await readSheet(buffer, "BKS");
     const head = bks[7];
@@ -151,6 +172,18 @@ describe("workbook", () => {
     expect(lines.at(-1)).toBe("Ikke set i produktionen endnu: 58781, 58790");
     // No en or em dashes in any text (docs/portal-architecture.md).
     expect(lines.join("\n")).not.toMatch(new RegExp("[\\u2013\\u2014]"));
+  });
+
+  it("says Folie from approval and colours", () => {
+    expect(foilText({ foilApproved: true, foil: "folie" })).toBe("Folie godkendt");
+    expect(foilText({ foilApproved: false, foil: "folie" })).toBe("Folie");
+    expect(foilText({ foilApproved: false, foil: "delvis" })).toBe("Delvis folie");
+    expect(foilText({ foilApproved: false, foil: null })).toBeNull();
+    expect(isFoilColour("Lightgrau/hvid")).toBe(true);
+    expect(isFoilColour("Grå")).toBe(false);
+    expect(orderFoil(2, 0)).toBe("folie");
+    expect(orderFoil(2, 1)).toBe("delvis");
+    expect(orderFoil(0, 3)).toBeNull();
   });
 
   it("names the file and the production state", () => {

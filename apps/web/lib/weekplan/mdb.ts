@@ -4,16 +4,21 @@
 //
 // The tables used, all keyed by ID_A_Kopf (the order's id):
 //   A_Kopf        one row per order: AuNummer, A_Summe, Sachbearb1
-//   A_KopfFreie   the order's free fields (Feld1..): foil, HTM, remark
+//   A_KopfFreie   the order's free fields ("Frie felter", Feld1 to Feld36): all
+//                 go to the "Frie felter" sheet; 2 or 3 "ja" is foil approved,
+//                 4 is HTM (Partas in 3E), 6 the remark
 //   A_Adresse     Nummer 0 is the customer
 //   A_Planung     WocheW, the planned week as yyww
 //   A_Vorgang     who created the offer and the order, for the initials
 //   P_Allgemein   the position text (first line: the fields)
 //   P_Technik     Stueck, SerieNr, PosZeit (minutes), AnzFlg (sashes), FSystem, P_Art
 //   P_Element     one row per frame of a position, with its fields (Feldnummer)
+//   P_Werkstoffe  the position's colours (Farbe1, Farbe2): two-sided is foil
+//   P_Artikel     the articles, by supplier (Kreditor): "HTM" marks an HTM order
+// P_Werkstoffe and P_Artikel are read when the file has them.
 
-import { positionFrameTypes, type PositionFacts } from "./classify";
-import type { ElementType, FrameBase, TypeCount, WeekPlan, WeekPlanOrder } from "./types";
+import { isFoilColour, orderFoil, positionFrameTypes, type PositionFacts } from "./classify";
+import { FREE_FIELD_COUNT, type ElementType, type FrameBase, type TypeCount, type WeekPlan, type WeekPlanOrder } from "./types";
 
 type Row = Record<string, unknown>;
 
@@ -26,18 +31,31 @@ export interface WeekPlanTables {
   P_Allgemein: Row[];
   P_Technik: Row[];
   P_Element: Row[];
+  P_Werkstoffe?: Row[];
+  P_Artikel?: Row[];
 }
 
+type RequiredTable = Exclude<keyof WeekPlanTables, "P_Werkstoffe" | "P_Artikel">;
+type OptionalTable = Exclude<keyof WeekPlanTables, RequiredTable>;
+
+const FREE_FIELDS = Array.from({ length: FREE_FIELD_COUNT }, (_, i) => `Feld${i + 1}`);
+
 /** The columns read from each table; mdb-reader skips the rest (images, blobs). */
-export const WEEKPLAN_COLUMNS: Record<keyof WeekPlanTables, string[]> = {
+export const WEEKPLAN_COLUMNS: Record<RequiredTable, string[]> = {
   A_Kopf: ["ID", "AuNummer", "A_Summe", "Sachbearb1"],
-  A_KopfFreie: ["ID_A_Kopf", "Feld2", "Feld3", "Feld4", "Feld6"],
+  A_KopfFreie: ["ID_A_Kopf", ...FREE_FIELDS],
   A_Adresse: ["ID_A_Kopf", "Nummer", "Firma", "Vorname", "Name"],
   A_Planung: ["ID_A_Kopf", "WocheW"],
   A_Vorgang: ["ID_A_Kopf", "Nummer", "Benutzer"],
   P_Allgemein: ["ID_A_Kopf", "Position", "Positionstext"],
   P_Technik: ["ID_A_Kopf", "Position", "Stueck", "SerieNr", "PosZeit", "AnzFlg", "FSystem", "Typnummer", "P_Art"],
   P_Element: ["ID_A_Kopf", "Position", "Ez", "Feldnummer"],
+};
+
+/** Read when the file has them; an older export without them still reads. */
+export const OPTIONAL_COLUMNS: Record<OptionalTable, string[]> = {
+  P_Werkstoffe: ["ID_A_Kopf", "Position", "Farbe1", "Farbe2"],
+  P_Artikel: ["ID_A_Kopf", "Kreditor"],
 };
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim());
@@ -105,6 +123,8 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
   const general = groupBy(tables.P_Allgemein);
   const technical = groupBy(tables.P_Technik);
   const elements = groupBy(tables.P_Element);
+  const materials = groupBy(tables.P_Werkstoffe ?? []);
+  const articles = groupBy(tables.P_Artikel ?? []);
   const initials = initialsByHandler(tables.A_Kopf, events);
 
   const orders: WeekPlanOrder[] = [];
@@ -122,6 +142,10 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
 
     const texts = new Map<number, string[]>();
     for (const g of general.get(id) ?? []) texts.set(num(g.Position), lines(g.Positionstext));
+    const foiledPosition = new Map<number, boolean>();
+    for (const m of materials.get(id) ?? []) {
+      foiledPosition.set(num(m.Position), isFoilColour(m.Farbe1) || isFoilColour(m.Farbe2));
+    }
     const framesOf = new Map<number, Row[]>();
     for (const e of elements.get(id) ?? []) {
       const p = num(e.Position);
@@ -136,6 +160,8 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
     let welds = 0;
     let looseParts = 0;
     let freight: string | null = null;
+    let foiled = 0;
+    let plain = 0;
 
     const positions = [...(technical.get(id) ?? [])].sort((a, b) => num(a.Position) - num(b.Position));
     for (const t of positions) {
@@ -162,6 +188,8 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
       if (frames.length === 0) continue;
       elementCount += pieces * frames.length;
       welds += pieces * (frames.length + Math.max(0, Math.round(num(t.AnzFlg))));
+      if (foiledPosition.get(position)) foiled += pieces * frames.length;
+      else plain += pieces * frames.length;
 
       const facts: PositionFacts = { firstLine, secondLine, system: str(t.FSystem) || null, typeNumber: typeNumber || null };
       for (const ft of positionFrameTypes(facts, frames.map((f) => str(f.Feldnummer)))) {
@@ -177,7 +205,14 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
     }
 
     const remark = str(fields.Feld6);
-    const htm = str(fields.Feld4);
+    const htmStatus = str(fields.Feld4);
+    const htmArticles = (articles.get(id) ?? []).some((a) => str(a.Kreditor).toUpperCase() === "HTM");
+    const htm = htmArticles || htmStatus ? ["HTM", htmStatus.toLowerCase()].filter(Boolean).join(" ") : null;
+    const freeFields: Record<string, string> = {};
+    FREE_FIELDS.forEach((name, i) => {
+      const value = str(fields[name]);
+      if (!blank(value)) freeFields[String(i + 1)] = cut(value, 2000);
+    });
     orders.push({
       orderNo,
       customer: cut(customer, 200),
@@ -185,7 +220,9 @@ export function readWeekPlanTables(tables: WeekPlanTables, fileName: string | nu
       amount: head.A_Summe == null ? null : num(head.A_Summe),
       remark: cut(remark, 2000) || null,
       foilApproved: [fields.Feld2, fields.Feld3].some((v) => str(v).toLowerCase() === "ja"),
-      htm: htm ? cut(`HTM ${htm.toLowerCase()}`, 200) : null,
+      foil: foiledPosition.size > 0 ? orderFoil(foiled, plain) : null,
+      htm: htm ? cut(htm, 200) : null,
+      freeFields,
       hours: Math.round((minutes / 60) * 10) / 10,
       batches: [...batches].sort((a, b) => a - b),
       freight,
@@ -225,7 +262,7 @@ export async function readWeekPlanFile(bytes: Uint8Array, fileName: string | nul
   const { default: MDBReader } = await import("mdb-reader");
   const reader = new MDBReader(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   const names = new Set(reader.getTableNames());
-  const wanted = Object.keys(WEEKPLAN_COLUMNS) as (keyof WeekPlanTables)[];
+  const wanted = Object.keys(WEEKPLAN_COLUMNS) as RequiredTable[];
   const missing = wanted.filter((t) => !names.has(t));
   if (missing.length > 0) throw new NotA3EDatabaseError(missing);
 
@@ -234,6 +271,12 @@ export async function readWeekPlanFile(bytes: Uint8Array, fileName: string | nul
     const table = reader.getTable(name);
     const present = new Set(table.getColumnNames());
     tables[name] = table.getData({ columns: WEEKPLAN_COLUMNS[name].filter((c) => present.has(c)) }) as Row[];
+  }
+  for (const name of Object.keys(OPTIONAL_COLUMNS) as OptionalTable[]) {
+    if (!names.has(name)) continue;
+    const table = reader.getTable(name);
+    const present = new Set(table.getColumnNames());
+    tables[name] = table.getData({ columns: OPTIONAL_COLUMNS[name].filter((c) => present.has(c)) }) as Row[];
   }
   return readWeekPlanTables(tables, fileName && cut(fileName, 260));
 }

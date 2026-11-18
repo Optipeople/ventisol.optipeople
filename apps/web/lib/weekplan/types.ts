@@ -64,10 +64,22 @@ export interface WeekPlanOrder {
   amount: number | null;
   /** Free field 6 of the order: special hardware and such. */
   remark: string | null;
-  /** Free field 2 or 3 is "ja". */
+  /** Free field 2 or 3 is "ja" (3E file only). */
   foilApproved: boolean;
-  /** Free field 4 ("Bestilt"), the HTM panels. */
+  /**
+   * Foiled profiles, read from the colours: a foiled colour is two-sided,
+   * outside/inside ("Lightgrau/hvid"). "folie" when every element is foiled,
+   * "delvis" when some are, null when none (or no colours were read).
+   */
+  foil: Foil;
+  /** "HTM" when the order has HTM articles, with free field 4 ("HTM bestilt") (3E file only). */
   htm: string | null;
+  /**
+   * Every free field of the order in 3E ("Frie felter") that holds something,
+   * by field number: { 2: "ja", 4: "Bestilt" }. 3E file only; the file holds
+   * the values, not the fields' names.
+   */
+  freeFields: Record<string, string>;
   /**
    * Hours: 3E's Σ Stück × PosZeit, or from the portal the calculated time of
    * the elements. Null when the role may not see calculated times.
@@ -95,6 +107,12 @@ export interface WeekPlanOrder {
 
 export type OrderSource = "portal" | "3e" | "begge";
 
+export const FOIL_VALUES = ["folie", "delvis"] as const;
+export type Foil = (typeof FOIL_VALUES)[number] | null;
+
+/** 3E has free fields 1 to 36 on an order. */
+export const FREE_FIELD_COUNT = 36;
+
 export interface WeekPlan {
   /** The production week most orders are planned in. */
   year: number | null;
@@ -119,7 +137,12 @@ export const weekPlanOrderSchema = z.object({
   amount: z.number().finite().nullable(),
   remark: text(2000).nullable(),
   foilApproved: z.boolean(),
+  foil: z.enum(FOIL_VALUES).nullable().default(null),
   htm: text(200).nullable(),
+  freeFields: z
+    .record(z.string().regex(/^([1-9]|[1-2][0-9]|3[0-6])$/), text(2000))
+    .refine((r) => Object.keys(r).length <= FREE_FIELD_COUNT)
+    .default({}),
   hours: z.number().finite().min(0).nullable(),
   batches: z.array(z.number().int()).max(100),
   freight: text(500).nullable(),

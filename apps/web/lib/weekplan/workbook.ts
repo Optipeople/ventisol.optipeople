@@ -8,7 +8,7 @@
 
 import writeXlsxFile from "write-excel-file/node";
 import type { Cell, CellObject, Row, SheetData } from "write-excel-file/node";
-import { OFFICE_GROUPS, productionGroup, WELDS_PER_TYPE, type ProductionGroup } from "./classify";
+import { foilText, OFFICE_GROUPS, productionGroup, WELDS_PER_TYPE, type ProductionGroup } from "./classify";
 import { ELEMENT_TYPES, type ElementType, type WeekPlan, type WeekPlanOrder } from "./types";
 
 /** What the portal knows of an order's production. */
@@ -105,7 +105,7 @@ function officeColumns(): Column[] {
     { header: "Ansv.", width: 6, value: (o) => text(o.responsible) },
     { header: "Beløb", width: 11, value: (o) => int(o.amount), sum: true },
     { header: "Bemærkning", width: 28, value: (o) => text(o.remark, { wrap: true }) },
-    { header: "Folie", width: 14, value: (o) => text(o.foilApproved ? "Folie godkendt" : null) },
+    { header: "Folie", width: 16, value: (o) => text(foilText(o)) },
     { header: "HTM", width: 11, value: (o) => text(o.htm) },
     { header: "Antal D.døre", width: 8, value: (o) => int(countOf(o, OFFICE_GROUPS.doubleDoors)), sum: true },
     { header: "Antal døre", width: 8, value: (o) => int(countOf(o, OFFICE_GROUPS.doors)), sum: true },
@@ -253,7 +253,7 @@ function productionSheet(plan: WeekPlan, status: Map<number, ProductionStatus>):
     },
     { header: "Fragt", width: 20, value: (o) => text(o.freight) },
     { header: "Batch nr.", width: 15, value: (o) => text(o.batches.join("/")) },
-    { header: "Folie", width: 6, value: (o) => text(o.foilApproved ? "x" : null) },
+    { header: "Folie", width: 8, value: (o) => text(o.foilApproved || o.foil === "folie" ? "x" : o.foil === "delvis" ? "delvis" : null) },
     group("SV - SJV", "sv"),
     group("St. døre", "stableDoors"),
     group("FD-døre", "facadeDoors"),
@@ -292,15 +292,17 @@ export function infoLines(plan: WeekPlan, status: Map<number, ProductionStatus>,
     `${plan.orders.length} ordrer`,
     "",
     "Fra produktionslisterne: kunde, ordre, ansvarlig (initialer af sagsbehandlerens navn), elementtyper, elementer og",
-    "svejsninger (en pr. karm og en pr. ramme), timer (portalens kalkulerede tid pr. elementtype) og bemærkningerne på positionerne.",
+    "svejsninger (en pr. karm og en pr. ramme), timer (portalens kalkulerede tid pr. elementtype), bemærkningerne på positionerne",
+    "og folie: en todelt farve, ude/inde (\"Lightgrau/hvid\"), er folie. Folie når alle elementer er folierede, Delvis folie når nogle er.",
     "Fra 3E-filen, når den er trukket ind: beløb (ordresum ekskl. moms), batch nr. (serienumre), fragtlinjen, folie godkendt",
-    "(frit felt 2 eller 3 = ja), HTM (frit felt 4), bemærkning (frit felt 6), 3E's egne timer og 3E's eksakte optælling",
-    "(hver karm i koblede elementer for sig, Scan-typer). Står en ordre begge steder, gælder 3E-filen.",
+    "(frit felt 2 eller 3 = ja), HTM (artikler fra leverandøren HTM, og frit felt 4, Partas), bemærkning (frit felt 6), alle frie",
+    "felter på arket Frie felter, 3E's egne timer og 3E's eksakte optælling (hver karm i koblede elementer for sig, Scan-typer).",
+    "Står en ordre begge steder, gælder 3E-filen.",
     "Fra scanningerne: Prod. og Klar til afsendt.",
     "Udfyldes som før: budget, kapacitet (gule felter), spec. elementer, bue/skrå/tag, poste, sprosser, kobling,",
     "afsendelse, afsendt, påklædning og fragtmand.",
   ];
-  if (!plan.fileName) lines.push("", "Uden 3E-filen er beløb, batch nr., folie og HTM tomme.");
+  if (!plan.fileName) lines.push("", "Uden 3E-filen er beløb, batch nr., folie godkendt, HTM og de frie felter tomme.");
   if (plan.orders.some((o) => o.hours === null)) {
     lines.push("", "Timer er tomme: der er ingen kalkulerede tider, eller din rolle må ikke se dem (kun planlægger, ledelse og admin).");
   }
@@ -327,6 +329,7 @@ export async function weekPlanWorkbook({ plan, status, generated }: WorkbookInpu
   const bks = bksSheet(plan, status);
   const production = productionSheet(plan, status);
   const info = infoLines(plan, status, generated).map((line, i): Row => [i === 0 ? bold(line) : text(line)]);
+  const free = freeFieldsSheet(plan);
 
   return writeXlsxFile([
     { sheet: "Kontor", data: office.data, columns: office.widths.map((width) => ({ width })), stickyRowsCount: 8, stickyColumnsCount: 2 },
@@ -338,8 +341,36 @@ export async function weekPlanWorkbook({ plan, status, generated }: WorkbookInpu
       stickyRowsCount: 2,
       stickyColumnsCount: 2,
     },
+    { sheet: "Frie felter", data: free.data, columns: free.widths.map((width) => ({ width })), stickyRowsCount: 2, stickyColumnsCount: 2 },
     { sheet: "Om udtrækket", data: info, columns: [{ width: 120 }] },
   ]).toBuffer();
+}
+
+/**
+ * Every free field ("Frie felter") of the orders in the 3E file, one column
+ * per field that holds something in the week. The file holds the values, not
+ * the fields' names, so a column is named by its number.
+ */
+function freeFieldsSheet(plan: WeekPlan): { data: SheetData; widths: number[] } {
+  const used = [...new Set(plan.orders.flatMap((o) => Object.keys(o.freeFields ?? {})))]
+    .map(Number)
+    .filter((n) => Number.isInteger(n))
+    .sort((a, b) => a - b);
+  const columns: Column[] = [
+    { header: "Kunde", width: 30, value: (o) => text(o.customer) },
+    { header: "Ordre", width: 8, value: (o) => ({ value: o.orderNo, type: Number }) },
+    ...used.map(
+      (n): Column => ({ header: `Frit felt ${n}`, width: 18, value: (o) => text(o.freeFields?.[String(n)] ?? null, { wrap: true }) })
+    ),
+  ];
+  const withFields = plan.orders.filter((o) => Object.keys(o.freeFields ?? {}).length > 0);
+  const title = plan.fileName
+    ? `Frie felter i 3E, ${weekTitle(plan)}`
+    : `Frie felter i 3E, ${weekTitle(plan)}: træk 3E-filen ind på Ugeplan-siden for at få dem med`;
+  return {
+    data: [[bold(title)], columns.map((c) => header(c.header)), ...withFields.map((o) => columns.map((c) => c.value(o)))],
+    widths: columns.map((c) => c.width),
+  };
 }
 
 /** "ugeplan-uge-48-2026.xlsx". */

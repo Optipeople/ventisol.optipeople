@@ -230,3 +230,26 @@ export function documentFrameType(
   // Each part carries its own text, so no second line: "alu" and "H.I." are read from the parts.
   return frameType(parts, { firstLine: "", secondLine: "", system, typeNumber: null });
 }
+
+/**
+ * A foiled profile's colour is two-sided, outside/inside: "Anthrazitgrå fin
+ * struktur/hvid", "Lightgrau/hvid", in the 3E file shortened to
+ * "FAnthrazitgrå/h". A plain one is one colour: "Hvid", "Grå".
+ */
+export function isFoilColour(colour: unknown): boolean {
+  return typeof colour === "string" && colour.includes("/");
+}
+
+/** The order's foil from its elements: all foiled, some, or none. */
+export function orderFoil(foiledElements: number, plainElements: number): "folie" | "delvis" | null {
+  if (foiledElements === 0) return null;
+  return plainElements === 0 ? "folie" : "delvis";
+}
+
+/** Kontor and BKS "Folie": approved in 3E, else what the colours say. */
+export function foilText(o: { foilApproved: boolean; foil: "folie" | "delvis" | null }): string | null {
+  if (o.foilApproved) return o.foil === "delvis" ? "Folie godkendt (delvis)" : "Folie godkendt";
+  if (o.foil === "folie") return "Folie";
+  if (o.foil === "delvis") return "Delvis folie";
+  return null;
+}
