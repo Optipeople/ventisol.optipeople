@@ -130,10 +130,34 @@ describe("pairHistory", () => {
 
   it("a missing scan-out does not make the next pass a rework", () => {
     const ivs = pairHistory(
-      [scan("In", at("07:00")), ...pass(at("08:00"), at("08:10")), ...pass(at("09:00"), at("09:05"))],
+      [scan("In", at("07:00")), ...pass(at("08:00"), at("08:10")), ...pass(at("09:30"), at("09:35"))],
       { now: NOW }
     );
     expect(ivs.map((iv) => iv.visit)).toEqual([null, 1, 2]);
+  });
+
+  it("a pass back after a short pause continues the visit, a longer gap is rework", () => {
+    const ivs = pairHistory(
+      [
+        ...pass(at("07:00"), at("09:30")),
+        ...pass(at("10:30"), at("11:00")), // back exactly 60 min later: a pause
+        ...pass(at("12:01"), at("12:10")), // back after 61 min: rework
+      ],
+      { now: NOW }
+    );
+    expect(ivs.map((iv) => iv.visit)).toEqual([1, 1, 2]);
+  });
+
+  it("a short gap is still rework when the element was at another station in between", () => {
+    const ivs = pairHistory(
+      [
+        ...pass(at("07:00"), at("07:10")),
+        ...pass(at("07:12"), at("07:20"), { station: "Station 20", stationNo: 2 }),
+        ...pass(at("07:25"), at("07:30")),
+      ],
+      { now: NOW }
+    );
+    expect(ivs.map((iv) => [iv.stationNo, iv.visit])).toEqual([[1, 1], [2, 1], [1, 2]]);
   });
 
   it("rework visits are numbered per station", () => {

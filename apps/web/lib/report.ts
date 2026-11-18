@@ -184,14 +184,41 @@ export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): Wo
   }
 
   result.sort((a, b) => a.start - b.start || a.end - b.end);
-  const visits = new Map<string, number>();
-  for (const iv of result) {
-    const key = keyOf(iv);
-    const n = (visits.get(key) ?? 0) + 1;
-    visits.set(key, n);
-    iv.visit = n;
-  }
+  numberVisits(result, stationKey);
   return result;
+}
+
+/**
+ * A gap this short between two passes of an element at the same station is a
+ * pause (a break, lunch: scanned out on the way, back in on return), not a
+ * return for rework.
+ */
+export const PAUSE_MAX_MS = 60 * 60_000;
+
+/**
+ * Sets `visit` on passes sorted by start: 1 for an element's first pass at a
+ * station, 2+ when it comes back. A pass continues the visit before it (same
+ * number) when the element's previous pass was at the same station, with no
+ * other station in between, and ended at most PAUSE_MAX_MS before this one
+ * started.
+ */
+export function numberVisits<T extends { barcode: string; start: number; end: number | null; visit: number | null }>(
+  passes: T[],
+  station: (pass: T) => string
+): void {
+  const visits = new Map<string, number>();
+  const last = new Map<string, { station: string; end: number | null }>();
+  for (const pass of passes) {
+    const at = station(pass);
+    const key = `${pass.barcode}\u0000${at}`;
+    const n = visits.get(key) ?? 0;
+    const prev = last.get(pass.barcode);
+    const paused = n > 0 && prev?.station === at && prev.end != null && pass.start - prev.end <= PAUSE_MAX_MS;
+    const visit = paused ? n : n + 1;
+    visits.set(key, visit);
+    pass.visit = visit;
+    last.set(pass.barcode, { station: at, end: pass.end });
+  }
 }
 
 /**

@@ -178,7 +178,7 @@ describe("deriveStationDay", () => {
       ...pass(at("07:00"), at("07:10"), el(1)),
       ...pass(at("07:10"), at("07:30"), el(2)),
       ...pass(at("07:30"), at("08:00"), el(1, 6)),
-      ...pass(at("08:00"), at("08:04"), el(1)),
+      ...pass(at("08:20"), at("08:24"), el(1)),
     ];
     const now = at("12:00");
     const f = deriveStationDay(1, DAY, rows(scans, now, [info]), { now, calendar: DEFAULT_CALENDAR }) as StationDayFactsRow;

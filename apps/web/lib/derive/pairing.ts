@@ -10,7 +10,7 @@
 //
 // docs/scan-rules-vectors.json runs against this in pairing.test.ts.
 
-import { dedupeScans, maxOpenAt, stationKey, type MaxOpen } from "@/lib/report";
+import { dedupeScans, maxOpenAt, numberVisits, stationKey, type MaxOpen } from "@/lib/report";
 import { isPacking, type Scan } from "@/lib/scans";
 import { DEFAULT_PARAMS, type IntervalStatus, type MissingReason, type StationKind } from "./types";
 
@@ -133,7 +133,8 @@ function inProgress(fresh: Scan[], opts: PairOptions): Set<Scan> {
  *   older ones are missing scan-outs (superseded).
  *
  * Visits number the done and open intervals per element and station, oldest
- * first. Sorted by start.
+ * first; a pass back after a short pause continues its visit (numberVisits).
+ * Sorted by start.
  */
 export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] {
   const { now } = opts;
@@ -177,13 +178,9 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
   }
 
   result.sort((a, b) => a.start - b.start || endOrNow(a, now) - endOrNow(b, now));
-  const visits = new Map<string, number>();
-  for (const iv of result) {
-    if (iv.status === "missing_out") continue;
-    const key = `${iv.barcode}\u0000${iv.stationNo}\u0000${iv.stationNo === 0 ? iv.station : ""}`;
-    const n = (visits.get(key) ?? 0) + 1;
-    visits.set(key, n);
-    iv.visit = n;
-  }
+  numberVisits(
+    result.filter((iv) => iv.status !== "missing_out"),
+    (iv) => `${iv.stationNo}\u0000${iv.stationNo === 0 ? iv.station : ""}`
+  );
   return result;
 }
