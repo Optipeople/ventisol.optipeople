@@ -18,7 +18,7 @@ public class BarcodeTests
         Assert.Equal(inProgress.Raw, b.Raw);
         // Only that very element: another one is not let in this way, nor is anything with none in progress.
         Assert.False(Barcode.TryParseInProgress("057000010102", inProgress, out _, hints));
-        Assert.False(Barcode.TryParseInProgress(text, null, out _, hints));
+        Assert.False(Barcode.TryParseInProgress(text, (Barcode?)null, out _, hints));
         Assert.False(Barcode.TryParseInProgress("not a barcode", inProgress, out _, hints));
     }
 
@@ -320,5 +320,18 @@ public class BarcodeTests
             Assert.True(Barcode.TryParseScan(text, out var scanned));
             Assert.Equal(stored, scanned);
         }
+    }
+
+    [Fact]
+    public void At_a_station_with_several_any_element_in_progress_is_read_whatever_its_order()
+    {
+        var hints = new OrderHints(Exists: _ => false, Recent: 58830);
+        Assert.True(Barcode.TryParse("057000010101", out var old));
+        Assert.True(Barcode.TryParse("058830010101", out var other));
+
+        Assert.True(Barcode.TryParseInProgress("057000010101", [other, old], out var b, hints));
+        Assert.Equal(old.Raw, b.Raw);
+        Assert.False(Barcode.TryParseInProgress("057000010102", [other, old], out _, hints));
+        Assert.False(Barcode.TryParseInProgress("057000010101", [], out _, hints));
     }
 }

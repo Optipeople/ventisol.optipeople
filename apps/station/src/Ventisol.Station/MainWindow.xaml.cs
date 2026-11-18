@@ -96,6 +96,7 @@ public partial class MainWindow : Window
         {
             s.DocumentsOn = _documents.IsOn;
             s.StopOn = _settings.Mode == StationMode.Scan;
+            s.MarkAfter = TimeSpan.FromHours(_settings.MarkAfterHours);
         }
         Document.Attach(_document, _vm.Stations);
         Document.CloseRequested += (_, _) => CloseDocument();
@@ -214,8 +215,7 @@ public partial class MainWindow : Window
         if (loaded.Refresh) { _vm.ApplyDone(today); FollowDocument(); return; }
         _vm.Apply(today, now);
         SendMachineOrders(loaded.FromCloud);
-        foreach (var s in _vm.Stations)
-            if (s.Current is { } b) PrefetchDocument(b);
+        foreach (var a in _vm.Stations.SelectMany(s => s.State.Active)) PrefetchDocument(a.Barcode);
         FollowDocument();
     }
 
@@ -255,16 +255,25 @@ public partial class MainWindow : Window
     // The station and element the open confirm is about. Null: no confirm open.
     (StationViewModel Station, Barcode Barcode)? _stopping;
 
-    // The stop button on a busy station tile: asks first, as a slip of a thumb or mouse is easy.
+    // The stop button on a busy station tile, or on one row of a tile with several elements in
+    // progress: asks first, as a slip of a thumb or mouse is easy.
     void OnTileStop(object sender, RoutedEventArgs e)
     {
         if (_editing || Setup.IsOpen || _settings.Mode != StationMode.Scan) return;
-        if (sender is not FrameworkElement { DataContext: StationViewModel s } || s.Current is not { } barcode) return;
+        var (s, barcode, elapsed) = sender switch
+        {
+            FrameworkElement { DataContext: StationViewModel t } when t.Current is { } b => (t, b, t.ElapsedText),
+            FrameworkElement { DataContext: ActiveRowViewModel r } when r.Station.Has(r.Code) => (r.Station, r.Barcode, r.ElapsedText),
+            _ => default((StationViewModel?, Barcode?, string?)),
+        };
+        if (s is null || barcode is null) return;
         CloseMenu();
         _stopping = (s, barcode);
+        var others = s.State.Active.Count - 1;
         StopStation.Text = s.Name.ToUpperInvariant();
         StopTitle.Text = $"Stop ordre {barcode.Order} på {s.Name}?";
-        StopDetail.Text = $"{barcode.PositionLabel} · stk. {barcode.Piece} · i gang {s.ElapsedText}\nStationen bliver ledig, og ordren stoppes i OptiPeople.";
+        StopDetail.Text = $"{barcode.PositionLabel} · stk. {barcode.Piece} · i gang {elapsed}\n"
+            + (others > 0 ? $"Kun dette element stoppes. {others} andre er stadig i gang." : "Stationen bliver ledig, og ordren stoppes i OptiPeople.");
         StopLayer.Visibility = Visibility.Visible;
         Motion.FadeIn(StopLayer, Motion.Normal);
         Motion.Enter(StopCard, fromY: 16);
@@ -439,7 +448,7 @@ public partial class MainWindow : Window
         _vm.Tick(now);
         // A viewer's data grows stale with time alone.
         if (_settings.Mode == StationMode.Viewer) ShowCloudStatus();
-        if (_stopping is { } stop && stop.Station.Current?.Raw != stop.Barcode.Raw) CloseStop();
+        if (_stopping is { } stop && !stop.Station.Has(stop.Barcode.Raw)) CloseStop();
         if (Pin.IsOpen && now - _lastTouch > PinIdle) Pin.Cancel();
         if (_confirmedClose is not null && now - _lastTouch > PinIdle) HideClose();
         if (_vm.ShowingReport && now - _lastTouch > ReportIdle) ShowReport(false);
@@ -472,27 +481,40 @@ public partial class MainWindow : Window
 
     // ===== Order documents =====
 
-    // What a station's document shows: the element in progress there, else the last one done there today.
-    DocumentTarget TargetFor(int station)
+    // The element whose row was tapped on a tile with several in progress, for the open document:
+    // it shows that one for as long as it is in progress. Null: the station's latest.
+    (int Station, string Barcode)? _documentPick;
+
+    // What a station's document shows: the element in progress there (the one scanned in last, or the
+    // one picked), else the last one done there today.
+    DocumentTarget TargetFor(int station, string? pick = null)
     {
         var s = _vm.Stations.First(x => x.Number == station);
+        if (pick is not null && s.State.Find(pick) is { } picked) return new(s.Name, picked.Barcode, true, picked.Since);
         if (s.State.Current is { } current) return new(s.Name, current, true, s.State.StartedAt);
         if (_vm.LastDoneAt(station) is { } last) return new(s.Name, last.Barcode, false, last.End);
         return new(s.Name, null, false, null);
     }
 
-    void OpenDocument(int station)
+    // A station's document; with pick, that element of the ones in progress there.
+    void OpenDocument(int station, string? pick = null)
     {
         if (_editing || Setup.IsOpen) return;
         CloseMenu();
         _lastTouch = DateTimeOffset.Now;
-        if (Document.Station != station) _document.Show(TargetFor(station));
+        var other = Document.Station != station;
+        if (pick is not null || other) _documentPick = pick is null ? null : (station, pick);
+        if (other) _document.Show(TargetFor(station, PickFor(station)));
+        else if (pick is not null) _document.Follow(TargetFor(station, pick));
         Document.Open(station);
     }
+
+    string? PickFor(int station) => _documentPick is { } p && p.Station == station ? p.Barcode : null;
 
     void CloseDocument()
     {
         if (!Document.IsOpen) return;
+        _documentPick = null;
         Document.Close();
         // Back on the window, so a keyboard-mode scanner is heard (as after the setup).
         Keyboard.Focus(this);
@@ -501,7 +523,7 @@ public partial class MainWindow : Window
     // The open document and every document widget follow their station to its element now.
     void FollowDocument()
     {
-        if (Document.Station is { } n) _document.Follow(TargetFor(n));
+        if (Document.Station is { } n) _document.Follow(TargetFor(n, PickFor(n)));
         foreach (var w in _vm.Widgets.OfType<DocumentWidget>()) w.Document.Follow(TargetFor(w.Station));
     }
 
@@ -836,9 +858,11 @@ public partial class MainWindow : Window
         {
             // Demo: a tap on a station scans (its document button opens the document).
             // Otherwise a tap opens the station's document.
+            // A tap on a row of a tile with several elements opens that element's document.
             if (tile.Station is { } n)
             {
-                if (_demoInput) _demo.Scan(n);
+                if (RowAt(e.OriginalSource) is { } tapped) OpenDocument(n, tapped.Code);
+                else if (_demoInput) _demo.Scan(n);
                 else OpenDocument(n);
             }
             // A document widget opens its station's full document, with the drawing big and every table.
@@ -903,6 +927,14 @@ public partial class MainWindow : Window
     {
         Ghost.Visibility = Visibility.Collapsed;
         SaveLayout();
+    }
+
+    // The row of a tile with several elements that a tap landed on, if any.
+    static ActiveRowViewModel? RowAt(object source)
+    {
+        for (var d = source as DependencyObject; d is not null; d = d is Visual ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+            if (d is FrameworkElement { DataContext: ActiveRowViewModel row }) return row;
+        return null;
     }
 
     static bool IsInside<T>(DependencyObject d) where T : DependencyObject

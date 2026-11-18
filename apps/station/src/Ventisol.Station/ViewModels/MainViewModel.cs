@@ -85,10 +85,10 @@ public sealed partial class MainViewModel : ObservableObject
         LastScanAt = now;
 
         // A new scan: the strict reading, so a retail code on a box is not taken for an element.
-        // The element in progress at this station is read whatever its order, so it can always be
-        // scanned out; its order is not noted as the last one (the strict rules never passed it).
+        // An element in progress at this station (any of them) is read whatever its order, so it can
+        // always be scanned out; its order is not noted as the last one (the strict rules never passed it).
         var strict = Barcode.TryParseScan(raw, out var barcode, Hints);
-        if (!strict) Barcode.TryParseInProgress(raw, station.Current, out barcode, Hints);
+        if (!strict) Barcode.TryParseInProgress(raw, station.State.Active.Select(a => a.Barcode), out barcode, Hints);
         if (barcode is not null)
         {
             if (strict && _lastOrder != barcode.Order)
@@ -121,10 +121,11 @@ public sealed partial class MainViewModel : ObservableObject
     // The element barcode at station was stopped in OptiPeople or by hand on its tile: it ends there as
     // an Out, recorded like a scan's. Not a scan: no Scanned, and updates don't wait for it. False when
     // the station no longer has that element in progress (it was scanned out or switched meanwhile).
+    // At a station with several in progress only that one ends.
     public bool Stop(int station, string barcode, StopReason reason, DateTimeOffset now)
     {
         var s = Stations.FirstOrDefault(x => x.Number == station);
-        if (s?.Current?.Raw != barcode || s.Stop(reason, now) is not { } result) return false;
+        if (s?.Stop(barcode, reason, now) is not { } result) return false;
         if (result.Duration is { } d) History.Add(new WorkRecord(result.Station, result.Barcode, now - d, now));
         Recorded?.Invoke(this, result);
         return true;
@@ -141,8 +142,7 @@ public sealed partial class MainViewModel : ObservableObject
         History.AddRange(today.Done);
         foreach (var s in Stations)
         {
-            if (today.InProgress.TryGetValue(s.Number, out var p)) s.Restore(p.Barcode, p.Since, now);
-            else s.Restore(null, default, now);
+            s.Restore(today.InProgress.GetValueOrDefault(s.Number) ?? [], now);
         }
         _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
     }

@@ -26,7 +26,8 @@ foreground back after a moment, so a scanner in keyboard mode is heard again. Th
 Start menu (press the Windows key) are left in front for 20 seconds: that is the way to the tray icon.
 
 Scans come from the cradles (and, for a demo, from `DemoScanner`: tap a tile, or press 1 to 7;
-Shift+number scans a different element, Ctrl+number unplugs that scanner). With OptiCloud set up,
+Shift+number scans a different element, Ctrl+number unplugs that scanner; at a station with "Max i gang"
+above 1 a tap starts another element until it is full, then scans the oldest out). With OptiCloud set up,
 every scan goes to the `VentisolScans` table and the station's machine gets the element in progress as its order
 (see `docs/opticloud-scans.md`).
 
@@ -46,6 +47,19 @@ Next, working down: COM port scanner reader (`IScanSource`), setup screen, then 
   be read keeps Opsætning shut and says "PIN-filen kan ikke læses"; delete it then too.
 - The saved password only goes to the address and user it was saved for. Change the API address
   or the username and it must be typed again ("Skriv adgangskoden igen").
+- "Max i gang" per station (1 to 20, default 1): how many elements may be in progress there at once
+  (`StationConfig.MaxActive`, rules in `docs/opticloud-scans.md`). At 1 the station works as it always
+  has: a different barcode stops the element and starts the new one. Above 1 a new barcode starts
+  beside the others ("Startet – 3 i gang"), a scan of one in progress stops only that one, and one
+  beyond the max is refused and not stored ("Maks 4 i gang – scan en ud først"). The tile then shows
+  a row per element, each with its own timer and stop button; a tap on a row opens that element's
+  document. The machine in OptiPeople gets the element scanned in last. A viewer shows the stations
+  with its own settings, so give it the same "Max i gang" as the scan PC (with 1 it shows only the
+  latest element of each station).
+- "Marker efter (timer)" (default 4): on a station with "Max i gang" above 1, an element in progress
+  longer than that gets an amber timer and "i gang over 4 t" on its row. A forgotten element would
+  otherwise take a share of the station's time in the reports. Settings saved before either existed
+  read as 1 and 4.
 - The API address must begin with `https://`. Plain `http://` is taken only for this PC itself
   (`localhost`, `127.0.0.1`), for FakeOptiCloud. A PC with an older `http://` address saved does
   not connect: the menu says `Fejl: API-adressen skal begynde med https://`, and its scans wait

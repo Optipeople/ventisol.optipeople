@@ -16,7 +16,7 @@ public class ScanRulesVectorsTests
     public static TheoryData<string> Names => [.. Cases.Select(c => c.GetProperty("name").GetString()!)];
 
     [Fact]
-    public void There_are_vectors() => Assert.True(Cases.Count() >= 10);
+    public void There_are_vectors() => Assert.True(Cases.Count() >= 14);
 
     [Theory]
     [MemberData(nameof(Names))]
@@ -29,8 +29,12 @@ public class ScanRulesVectorsTests
         var events = c.GetProperty("events").EnumerateArray().Select(Event).Where(e => e.At >= window).ToList();
         var expected = c.GetProperty("expected");
 
-        // No stations from settings: each one is taken from its scans, as the vectors give them.
-        var r = ScanReplay.Replay(events, [], today);
+        // No stations from settings: each one is taken from its scans, as the vectors give them, and
+        // its "Max i gang" from the case's maxOpen (a station not listed has 1).
+        var maxOpen = c.TryGetProperty("maxOpen", out var m)
+            ? m.EnumerateObject().ToDictionary(p => int.Parse(p.Name, CultureInfo.InvariantCulture), p => p.Value.GetInt32())
+            : [];
+        var r = ScanReplay.Replay(events, [], today, maxOpen);
 
         Assert.Equal(
             expected.GetProperty("done").EnumerateArray().Select(d => (d.GetProperty("barcode").GetString()!, d.GetProperty("stationNo").GetInt32(), Time(d, "start"), Time(d, "end")))
@@ -39,8 +43,10 @@ public class ScanRulesVectorsTests
                 .OrderBy(d => d.End).ThenBy(d => d.Number).ThenBy(d => d.Raw, StringComparer.Ordinal));
 
         Assert.Equal(
-            expected.GetProperty("inProgress").EnumerateArray().Select(p => (p.GetProperty("stationNo").GetInt32(), p.GetProperty("barcode").GetString()!, Time(p, "since"))).OrderBy(p => p.Item1),
-            r.InProgress.Select(p => (p.Key, p.Value.Barcode.Raw, p.Value.Since)).OrderBy(p => p.Key));
+            expected.GetProperty("inProgress").EnumerateArray().Select(p => (p.GetProperty("stationNo").GetInt32(), p.GetProperty("barcode").GetString()!, Time(p, "since")))
+                .OrderBy(p => p.Item1).ThenBy(p => p.Item3).ThenBy(p => p.Item2, StringComparer.Ordinal),
+            r.InProgress.SelectMany(p => p.Value.Select(a => (p.Key, a.Barcode.Raw, a.Since)))
+                .OrderBy(p => p.Key).ThenBy(p => p.Since).ThenBy(p => p.Raw, StringComparer.Ordinal));
 
     }
 

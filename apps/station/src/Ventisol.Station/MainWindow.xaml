@@ -129,8 +129,9 @@
         <DataTemplate DataType="{x:Type vm:StationViewModel}">
             <Grid Margin="10">
                 <Border x:Name="Panel" CornerRadius="8" Background="{StaticResource Panel}">
+                    <Grid>
                     <!-- Laid out at one size and only ever scaled down, so a small block still fits -->
-                    <Viewbox Margin="24,20" StretchDirection="DownOnly">
+                    <Viewbox x:Name="Single" Margin="24,20" StretchDirection="DownOnly">
                     <StackPanel Width="340">
                         <StackPanel>
                             <TextBlock Style="{StaticResource TextBase}" FontSize="24" Text="{Binding Name}" />
@@ -166,6 +167,92 @@
                         </Border>
                     </StackPanel>
                     </Viewbox>
+
+                    <!-- "Max i gang" above 1: the state over a row per element in progress, oldest first.
+                         Each row is a slot of its own that scales to fill it; the slots are as many as the
+                         max (up to six), so a row keeps its size as elements come and go. A tap on a row
+                         opens that element's document (MainWindow.RowAt). -->
+                    <DockPanel x:Name="Multi" Margin="20,14" Visibility="Collapsed">
+                        <Viewbox DockPanel.Dock="Top" StretchDirection="DownOnly">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock Style="{StaticResource TextBase}" FontSize="26" VerticalAlignment="Center" Margin="0,0,22,0" Text="{Binding Name}" />
+                                <local:StatusDot x:Name="MultiDot" Fill="{StaticResource Off}" VerticalAlignment="Center" Margin="0,2,12,0" />
+                                <TextBlock x:Name="MultiState" Style="{StaticResource TextBase}" FontSize="34" FontWeight="Bold" VerticalAlignment="Center" Text="Ledig" />
+                            </StackPanel>
+                        </Viewbox>
+                        <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,2,0,0">
+                            <Grid>
+                                <ItemsControl ItemsSource="{Binding Rows}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="1" Rows="{Binding RowSlots}" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:ActiveRowViewModel}">
+                                            <Border Background="Transparent" Cursor="Hand" BorderBrush="{StaticResource Rule}" BorderThickness="0,0,0,1">
+                                                <Viewbox Margin="0,2">
+                                                    <Grid Width="400" Height="52">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <!-- Stops this element only, after the same confirm as the tile's -->
+                                                        <Button Width="44" Height="44" Margin="0,0,6,0" VerticalAlignment="Center"
+                                                                Cursor="Hand" Focusable="False" ToolTip="Stop dette element" Click="OnTileStop"
+                                                                Visibility="{Binding Station.StopOn, Converter={x:Static vm:Present.Instance}}">
+                                                            <Button.Template>
+                                                                <ControlTemplate TargetType="Button">
+                                                                    <Grid Background="Transparent">
+                                                                        <Ellipse x:Name="Ring" Width="32" Height="32" Stroke="{StaticResource Quiet}" StrokeThickness="2" />
+                                                                        <Rectangle x:Name="Square" Width="11" Height="11" RadiusX="2" RadiusY="2" Fill="{StaticResource Quiet}" />
+                                                                    </Grid>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                                            <Setter TargetName="Ring" Property="Stroke" Value="{StaticResource AlarmText}" />
+                                                                            <Setter TargetName="Square" Property="Fill" Value="{StaticResource AlarmText}" />
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Button.Template>
+                                                        </Button>
+                                                        <TextBlock Grid.Column="1" Style="{StaticResource Figures}" FontSize="44" FontWeight="Bold" VerticalAlignment="Center"
+                                                                   Foreground="{StaticResource OkText}" Text="{Binding OrderNumber}" />
+                                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="12,0,8,0">
+                                                            <TextBlock Style="{StaticResource TextBase}" FontSize="17" Foreground="{StaticResource Ink3}" HorizontalAlignment="Left"
+                                                                       Text="{Binding DetailText}" />
+                                                            <TextBlock x:Name="Mark" Style="{StaticResource TextBase}" FontSize="14" FontWeight="Bold" Foreground="{StaticResource Warn}"
+                                                                       HorizontalAlignment="Left" Visibility="Collapsed" Text="{Binding Station.MarkText}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <TextBlock x:Name="Clock" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" Text="&#xE823;"
+                                                                       Foreground="{StaticResource Warn}" VerticalAlignment="Center" Margin="0,0,6,0" Visibility="Collapsed" />
+                                                            <TextBlock x:Name="RowTime" Style="{StaticResource Timer}" FontSize="26" Text="{Binding ElapsedText}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Viewbox>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <!-- In progress longer than "Marker efter": a forgotten element would take a share of the time -->
+                                                <DataTrigger Binding="{Binding IsMarked}" Value="True">
+                                                    <Setter TargetName="Clock" Property="Visibility" Value="Visible" />
+                                                    <Setter TargetName="RowTime" Property="Foreground" Value="{StaticResource Warn}" />
+                                                    <Setter TargetName="Mark" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Viewbox x:Name="MultiHint" StretchDirection="DownOnly" VerticalAlignment="Center">
+                                    <TextBlock x:Name="MultiHintText" Style="{StaticResource TextBase}" FontSize="22" Foreground="{StaticResource Quiet}"
+                                               Text="{Binding DataContext.IdleText, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                </Viewbox>
+                            </Grid>
+                        </Border>
+                    </DockPanel>
+                    </Grid>
                 </Border>
 
                 <!-- Opens the element's document; the way in for the demo, where a tap on the tile scans -->
@@ -272,6 +359,17 @@
                     <Setter TargetName="Hint" Property="Visibility" Value="Hidden" />
                 </DataTrigger>
 
+                <!-- "Max i gang" above 1: the rows instead of the one big order, idle or busy -->
+                <DataTrigger Binding="{Binding IsMulti}" Value="True">
+                    <Setter TargetName="Single" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="Multi" Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                    <Setter TargetName="MultiDot" Property="Fill" Value="{StaticResource Ok}" />
+                    <Setter TargetName="MultiState" Property="Text" Value="{Binding CountText}" />
+                    <Setter TargetName="MultiHint" Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+
                 <!-- Later than IsBusy, so a missing scanner wins: red state and the alarm glow -->
                 <DataTrigger Binding="{Binding ScannerConnected}" Value="False">
                     <DataTrigger.EnterActions>
@@ -289,6 +387,10 @@
                     <Setter TargetName="Order" Property="Foreground" Value="{StaticResource Ink3}" />
                     <Setter TargetName="Hint" Property="Text" Value="Sæt scanneren i holderen" />
                     <Setter TargetName="Hint" Property="Foreground" Value="{StaticResource AlarmText}" />
+                    <Setter TargetName="MultiDot" Property="Fill" Value="{StaticResource Alarm}" />
+                    <Setter TargetName="MultiState" Property="Text" Value="Ingen scanner" />
+                    <Setter TargetName="MultiHintText" Property="Text" Value="Sæt scanneren i holderen" />
+                    <Setter TargetName="MultiHintText" Property="Foreground" Value="{StaticResource AlarmText}" />
                     <Setter TargetName="Panel" Property="Effect">
                         <Setter.Value>
                             <DropShadowEffect Color="{StaticResource AlarmGlow}" BlurRadius="28" ShadowDepth="0" Opacity="0.55" />

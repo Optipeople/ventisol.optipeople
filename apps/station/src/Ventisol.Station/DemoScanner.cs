@@ -3,7 +3,8 @@ using Ventisol.Station.ViewModels;
 namespace Ventisol.Station;
 
 // Stands in for the 7 scanners until the COM port reader is in. Makes up label
-// barcodes: a new element when the station is free, the same one again to scan it out.
+// barcodes: a new element when the station is free, the same one again to scan it out
+// (at a station with "Max i gang" above 1, see Scan).
 // It ignores a scanner that is switched off, like a real one would be silent.
 sealed class DemoScanner(MainViewModel vm)
 {
@@ -14,7 +15,11 @@ sealed class DemoScanner(MainViewModel vm)
         var station = vm.Stations.FirstOrDefault(s => s.Number == scannerNumber);
         if (station is not { ScannerConnected: true }) return;
 
-        var code = station.Current is { } current && !otherElement ? current.Raw : NextCode();
+        // A station with several at once: a new element beside the others until it is full, then the
+        // oldest out. otherElement always tries a new one, so the refusal can be seen.
+        var code = station.IsMulti
+            ? !otherElement && station.State.IsFull ? station.State.Active[0].Barcode.Raw : NextCode(station.Has)
+            : station.Current is { } current && !otherElement ? current.Raw : NextCode();
         vm.Scan(scannerNumber, code, DateTimeOffset.Now);
     }
 
@@ -53,6 +58,14 @@ sealed class DemoScanner(MainViewModel vm)
         vm.Stations[2].ScannerConnected = false;
         vm.Scan(2, "058557030101", now);
         vm.Scan(6, "058558030102", now);
+    }
+
+    // One that is not in progress at the station, as long as there is one among the codes made up.
+    string NextCode(Func<string, bool> taken)
+    {
+        var code = NextCode();
+        for (var i = 0; i < 12 && taken(code); i++) code = NextCode();
+        return code;
     }
 
     string NextCode()

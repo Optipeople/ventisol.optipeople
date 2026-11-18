@@ -1,10 +1,11 @@
 namespace Ventisol.Station.Core.Cloud;
 
-// What the screen shows, rebuilt from scans: per station number the element in progress and
-// since when, and the finished work, in the order it finished.
-public sealed record ReplayResult(IReadOnlyDictionary<int, (Barcode Barcode, DateTimeOffset Since)> InProgress, IReadOnlyList<WorkRecord> Done)
+// What the screen shows, rebuilt from scans: per station number the elements in progress and
+// since when (oldest first, at most the station's "Max i gang"; a station with none is left out),
+// and the finished work, in the order it finished.
+public sealed record ReplayResult(IReadOnlyDictionary<int, IReadOnlyList<ActiveElement>> InProgress, IReadOnlyList<WorkRecord> Done)
 {
-    public static ReplayResult Empty { get; } = new(new Dictionary<int, (Barcode, DateTimeOffset)>(), []);
+    public static ReplayResult Empty { get; } = new(new Dictionary<int, IReadOnlyList<ActiveElement>>(), []);
 }
 
 // The scans CloudSync has, raw, from Since (the start of the window read) on. The app adds the
@@ -23,13 +24,17 @@ public static class ScanReplay
     // - A second In while one is open: the earlier never got its Out (a missed scan), the later wins.
     // - An Out with no In: its In is older than the scans given, so the start is put back from
     //   DurationSec; without one it can't be timed and is skipped.
-    // - In progress at a station: its latest In with no Out, over all the scans given, so an
-    //   element scanned in before midnight is still there in the morning.
+    // - In progress at a station: its latest Ins with no Out, as many as its "Max i gang" (one at a
+    //   station with 1), over all the scans given, so an element scanned in before midnight is still
+    //   there in the morning. An older open In beyond that is a missed scan-out.
     // - Done: with today, only records that end at or after today (one spanning midnight counts
     //   for the day it ends); without, all.
     // Each ScanId counts once. Stations come from the settings by number, so records compare
     // equal to the screen's; a station number the settings don't know is built from the scan.
-    public static ReplayResult Replay(IEnumerable<ScanEvent> events, IEnumerable<StationConfig> stations, DateTimeOffset? today = null)
+    // "Max i gang" per station number: maxOpen when it has the station, else the station's own
+    // (StationConfig.MaxActive), else 1.
+    public static ReplayResult Replay(IEnumerable<ScanEvent> events, IEnumerable<StationConfig> stations, DateTimeOffset? today = null,
+        IReadOnlyDictionary<int, int>? maxOpen = null)
     {
         var known = stations.GroupBy(s => s.Number).ToDictionary(g => g.Key, g => g.First());
         var open = new Dictionary<(int Station, string Barcode), ScanEvent>();
@@ -54,9 +59,15 @@ public static class ScanReplay
             done.Add(new WorkRecord(station, e.Barcode, start, e.At));
         }
 
-        var inProgress = open.Values.GroupBy(e => e.StationNo)
-            .Select(g => g.MaxBy(e => e.At)!)
-            .ToDictionary(e => e.StationNo, e => (e.Barcode, e.At));
+        int Max(int station)
+        {
+            var max = maxOpen is not null && maxOpen.TryGetValue(station, out var given) ? given : known.GetValueOrDefault(station)?.MaxActive ?? 1;
+            return Math.Clamp(max, 1, StationConfig.MaxActiveLimit);
+        }
+        var inProgress = open.Values.GroupBy(e => e.StationNo).ToDictionary(
+            g => g.Key,
+            g => (IReadOnlyList<ActiveElement>)[.. g.OrderBy(e => e.At).ThenBy(e => e.Barcode.Raw, StringComparer.Ordinal)
+                .TakeLast(Max(g.Key)).Select(e => new ActiveElement(e.Barcode, e.At))]);
         return new ReplayResult(inProgress, done);
     }
 }

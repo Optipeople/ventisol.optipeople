@@ -121,7 +121,7 @@ public sealed class CloudSyncTests : IDisposable
 
         var today = Today(loaded[1]);
         Assert.Equal([1], today.InProgress.Keys);
-        Assert.Equal(Midnight.AddHours(-2), today.InProgress[1].Since);
+        Assert.Equal(Midnight.AddHours(-2), Assert.Single(today.InProgress[1]).Since);
         var done = Assert.Single(today.Done);
         Assert.Equal((Code(B), Midnight.AddHours(-1)), (done.Barcode, done.Start));
     }
@@ -185,7 +185,7 @@ public sealed class CloudSyncTests : IDisposable
 
         sync.Start();
         await Until(() => Count(loaded) == 1);
-        Assert.Equal(Code(A), Today(loaded[0]).InProgress[1].Barcode);
+        Assert.Equal(Code(A), Assert.Single(Today(loaded[0]).InProgress[1]).Barcode);
 
         var polls = api.Count("GetRowsPaged");
         await Until(() => api.Count("GetRowsPaged") > polls + 2);

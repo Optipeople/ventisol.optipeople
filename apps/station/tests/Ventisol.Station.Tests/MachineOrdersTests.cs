@@ -1176,4 +1176,32 @@ public sealed class MachineOrdersTests : IDisposable
         await client.SetOrderToMachineAsync(machine, MachineOrder.None);
         Assert.Equal("", await client.GetCurrentOrderAsync(machine));
     }
+
+    [Fact]
+    public void At_a_station_with_several_the_machine_runs_the_one_scanned_in_last()
+    {
+        var setups = new[] { new StationSetup(1, "Station 10", StationKind.Assembly, M1, MaxActive: 4) };
+        var state = new StationState(setups[0].Config);
+        state.Scan(Code(A), T0);
+        state.Scan(Code(B), T0.AddMinutes(1));
+        state.Scan(Code(C), T0.AddMinutes(2));
+
+        var latest = MachineOrders.DesiredFrom(setups, [state])[M1];
+        Assert.Equal(C, latest.Number);
+        Assert.Equal(Local(T0.AddMinutes(2)), ScannedIn(latest));
+
+        // An older one out: the machine keeps the latest.
+        state.Scan(Code(A), T0.AddMinutes(3));
+        Assert.Equal(C, MachineOrders.DesiredFrom(setups, [state])[M1].Number);
+
+        // The latest out: the latest of the others takes over, with its own In.
+        state.Scan(Code(C), T0.AddMinutes(4));
+        var next = MachineOrders.DesiredFrom(setups, [state])[M1];
+        Assert.Equal(B, next.Number);
+        Assert.Equal(Local(T0.AddMinutes(1)), ScannedIn(next));
+
+        // None left: cleared.
+        state.Scan(Code(B), T0.AddMinutes(5));
+        Assert.Equal("", MachineOrders.DesiredFrom(setups, [state])[M1].Number);
+    }
 }

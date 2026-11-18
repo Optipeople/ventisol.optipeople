@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Ventisol.Station.Core;
 
@@ -9,7 +10,8 @@ public enum FlashKind { None, In, Out, Switched, Rejected }
 public enum StopReason { OptiPeople, Manual }
 
 // One tile on the screen: a station, what it works on, for how long, and whether its scanner is there.
-// A scan answers on the tile itself, where the operator is already looking.
+// A scan answers on the tile itself, where the operator is already looking. At a station with
+// "Max i gang" 1 the tile shows its one element big; with more, a row per element in progress (Rows).
 public sealed partial class StationViewModel(StationConfig config) : ObservableObject
 {
     static readonly TimeSpan FlashOk = TimeSpan.FromSeconds(1.6);
@@ -22,6 +24,10 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     public int Number => config.Number;
     public string Name => config.Name;
 
+    public int MaxActive => _state.MaxActive;
+    // Several elements at once: the tile shows Rows, each with its own timer and stop button.
+    public bool IsMulti => MaxActive > 1;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowsStop))]
     public partial bool IsBusy { get; private set; }
@@ -29,6 +35,8 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [ObservableProperty] public partial string? OrderNumber { get; private set; }
     [ObservableProperty] public partial string? DetailText { get; private set; }
     [ObservableProperty] public partial string ElapsedText { get; private set; } = "";
+    // At a station with several: "3 i gang", the state line over the rows.
+    [ObservableProperty] public partial string CountText { get; private set; } = "";
     [ObservableProperty] public partial bool ScannerConnected { get; set; } = true;
     // Order documents are set up: the tile shows a button for its element's document.
     [ObservableProperty] public partial bool DocumentsOn { get; set; }
@@ -37,8 +45,20 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [NotifyPropertyChangedFor(nameof(ShowsStop))]
     public partial bool StopOn { get; set; }
 
-    // The stop button shows while an element is in progress here.
-    public bool ShowsStop => StopOn && IsBusy;
+    // "Marker efter (timer)": an element in progress longer than this is marked on its row, as one
+    // forgotten at a station with several would take a share of the station's time in the reports.
+    public TimeSpan MarkAfter { get; set; } = TimeSpan.FromHours(StationSettings.DefaultMarkAfterHours);
+    public string MarkText => $"i gang over {(int)MarkAfter.TotalHours} t";
+
+    // The tile's own stop button, for its one element. With several, each row has its own.
+    public bool ShowsStop => StopOn && IsBusy && !IsMulti;
+
+    // The elements in progress, oldest first, at a station with several (empty at one with 1).
+    public ObservableCollection<ActiveRowViewModel> Rows { get; } = [];
+
+    // The tile has a slot per element it may have in progress, up to six (more only while more are
+    // in progress), so a row keeps its size as elements come and go.
+    public int RowSlots => Math.Max(Math.Min(MaxActive, 6), Rows.Count);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsFlashOk), nameof(IsFlashWarn))]
@@ -49,75 +69,69 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     public bool IsFlashOk => Flash is FlashKind.In or FlashKind.Out or FlashKind.Switched;
     public bool IsFlashWarn => Flash is FlashKind.Rejected;
 
+    // The element scanned in last (at a station with 1, the one in progress).
     public Barcode? Current => _state.Current;
     public StationState State => _state;
+
+    public bool Has(string raw) => _state.Has(raw);
+
+    static string Element(Barcode b) => $"Ordre {b.Order} · {b.PositionLabel} · stk. {b.Piece}";
 
     public ScanResult Scan(Barcode barcode, DateTimeOffset now)
     {
         var result = _state.Scan(barcode, now);
-        var element = $"Ordre {barcode.Order} · {barcode.PositionLabel} · stk. {barcode.Piece}";
+        var element = Element(barcode);
         switch (result.Kind)
         {
             case ScanKind.In:
-                IsBusy = true;
-                Code = barcode.Raw;
-                OrderNumber = barcode.Order.ToString();
-                DetailText = $"{barcode.PositionLabel} · stk. {barcode.Piece}";
-                ElapsedText = Format.Duration(TimeSpan.Zero);
-                ShowFlash(FlashKind.In, "Scannet ind", element, now);
+                Show(now);
+                ShowFlash(FlashKind.In, IsMulti ? $"Startet – {_state.Active.Count} i gang" : "Scannet ind", element, now);
                 break;
             case ScanKind.Out:
-                Clear();
+                Show(now);
                 ShowFlash(FlashKind.Out, "Scannet ud", $"{element} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
                 break;
             case ScanKind.Switched:
                 // Stopped old order, started new one
-                IsBusy = true;
-                Code = barcode.Raw;
-                OrderNumber = barcode.Order.ToString();
-                DetailText = $"{barcode.PositionLabel} · stk. {barcode.Piece}";
-                ElapsedText = Format.Duration(TimeSpan.Zero);
+                Show(now);
                 var prev = result.Previous!;
                 ShowFlash(FlashKind.Switched, $"Skiftet fra {prev.Order}",
                     $"{prev.PositionLabel} stk. {prev.Piece} stoppet · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
                 break;
             default:
-                var current = _state.Current!;
-                ShowFlash(FlashKind.Rejected, $"Scan først {current.Order} ud",
-                    $"{current.PositionLabel} · stk. {current.Piece} er stadig i gang", now);
+                // As many in progress as the station takes: nothing is started, nothing is stored.
+                ShowFlash(FlashKind.Rejected, $"Maks {MaxActive} i gang – scan en ud først", $"{element} er ikke startet", now);
                 break;
         }
         return result;
     }
 
-    // The element in progress ends without a scan (stopped in OptiPeople, or by hand on the tile):
-    // the same Out as a scan of it would give, with a flash that says why. Null when nothing is in progress.
-    public ScanResult? Stop(StopReason reason, DateTimeOffset now)
+    // An element in progress ends without a scan (stopped in OptiPeople, or by hand on the tile):
+    // the same Out as a scan of it would give, with a flash that says why. Null when it is not in
+    // progress here.
+    public ScanResult? Stop(string raw, StopReason reason, DateTimeOffset now)
     {
-        if (_state.Current is not { } barcode) return null;
+        if (_state.Find(raw) is not { } running) return null;
+        var barcode = running.Barcode;
         var result = _state.Scan(barcode, now);
-        Clear();
+        Show(now);
         ShowFlash(FlashKind.Out, reason == StopReason.Manual ? "Stoppet manuelt" : "Stoppet i OptiPeople",
-            $"Ordre {barcode.Order} · {barcode.PositionLabel} · stk. {barcode.Piece} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
+            $"{Element(barcode)} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
         return result;
     }
 
     // What OptiCloud says this station is working on, after a restart or on a viewer. No flash:
     // nobody just scanned.
-    public void Restore(Barcode? barcode, DateTimeOffset since, DateTimeOffset now)
+    public void Restore(IReadOnlyList<ActiveElement> active, DateTimeOffset now)
     {
-        if (barcode is null)
+        if (active.Count == 0)
         {
-            if (_state.IsBusy) { _state.Reset(); Clear(); }
+            if (_state.IsBusy) { _state.Reset(); Show(now); }
             return;
         }
-        if (_state.Current?.Raw == barcode.Raw && _state.StartedAt == since) return;
-        _state.Restore(barcode, since);
-        IsBusy = true;
-        Code = barcode.Raw;
-        OrderNumber = barcode.Order.ToString();
-        DetailText = $"{barcode.PositionLabel} · stk. {barcode.Piece}";
-        ElapsedText = Format.Duration(_state.Elapsed(now));
+        if (_state.Active.SequenceEqual(active.OrderBy(a => a.Since).TakeLast(MaxActive))) return;
+        _state.Restore(active);
+        Show(now);
     }
 
     public void Unreadable(string raw, DateTimeOffset now) =>
@@ -126,6 +140,7 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     public void Tick(DateTimeOffset now)
     {
         if (IsBusy) ElapsedText = Format.Duration(_state.Elapsed(now));
+        foreach (var r in Rows) r.Tick(now, MarkAfter);
         if (Flash != FlashKind.None && now >= _flashUntil) Flash = FlashKind.None;
     }
 
@@ -139,10 +154,57 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
         Flash = kind;
     }
 
-    void Clear()
+    // The tile after a change: the element scanned in last, and at a station with several, a row
+    // per element. A row still in progress keeps its view model.
+    void Show(DateTimeOffset now)
     {
-        IsBusy = false;
-        Code = OrderNumber = DetailText = null;
-        ElapsedText = "";
+        if (_state.Current is { } current)
+        {
+            IsBusy = true;
+            Code = current.Raw;
+            OrderNumber = current.Order.ToString();
+            DetailText = $"{current.PositionLabel} · stk. {current.Piece}";
+            ElapsedText = Format.Duration(_state.Elapsed(now));
+        }
+        else
+        {
+            IsBusy = false;
+            Code = OrderNumber = DetailText = null;
+            ElapsedText = "";
+        }
+        CountText = $"{_state.Active.Count} i gang";
+        if (!IsMulti) return;
+
+        var keep = Rows.Where(r => _state.Active.Contains(r.Element)).ToDictionary(r => r.Element);
+        Rows.Clear();
+        foreach (var a in _state.Active)
+        {
+            var row = keep.GetValueOrDefault(a) ?? new ActiveRowViewModel(this, a);
+            row.Tick(now, MarkAfter);
+            Rows.Add(row);
+        }
+        OnPropertyChanged(nameof(RowSlots));
+    }
+}
+
+// One element in progress on the tile of a station with several: its order, position and piece,
+// its own timer and its own stop button. Marked once it has been in progress longer than "Marker efter".
+public sealed partial class ActiveRowViewModel(StationViewModel station, ActiveElement element) : ObservableObject
+{
+    public StationViewModel Station => station;
+    public ActiveElement Element => element;
+    public Barcode Barcode => element.Barcode;
+    public string Code => element.Barcode.Raw;
+    public string OrderNumber => element.Barcode.Order.ToString();
+    public string DetailText => $"{element.Barcode.PositionLabel} · stk. {element.Barcode.Piece}";
+
+    [ObservableProperty] public partial string ElapsedText { get; private set; } = "";
+    [ObservableProperty] public partial bool IsMarked { get; private set; }
+
+    internal void Tick(DateTimeOffset now, TimeSpan markAfter)
+    {
+        var elapsed = element.Elapsed(now);
+        ElapsedText = Format.Duration(elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed);
+        IsMarked = elapsed > markAfter;
     }
 }

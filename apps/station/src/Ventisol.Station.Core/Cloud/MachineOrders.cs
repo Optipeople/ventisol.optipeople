@@ -127,7 +127,9 @@ public sealed class MachineOrders(TimeSpan? settle = null, bool held = false, Ti
         public DateTimeOffset DueAt(TimeSpan settle) => ChangedAt + settle > RetryAt ? ChangedAt + settle : RetryAt;
     }
 
-    // Per mapped machine, the element in progress at its station, else none.
+    // Per mapped machine, the element in progress at its station, else none. At a station with
+    // several in progress ("Max i gang" above 1) it is the one scanned In last (StationState.Current);
+    // when that one is scanned out, the latest of the others takes over.
     // Stations with no machine are left out. Two stations on one machine (a setup mistake):
     // the one that started last wins.
     public static IReadOnlyDictionary<Guid, MachineOrder> DesiredFrom(IEnumerable<StationSetup> setups, IEnumerable<StationState> states)

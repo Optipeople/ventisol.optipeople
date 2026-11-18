@@ -19,25 +19,26 @@ public sealed record StationLine(StationConfig Station, int Done, TimeSpan? Aver
 // Time on an element that is still in progress counts up to now.
 public static class DayReport
 {
-    // Orders seen today, most recent first.
+    // Orders seen today, most recent first. Each element in progress counts, also several at one
+    // station, each with its own wall-clock time.
     public static IReadOnlyList<OrderLine> Orders(IEnumerable<WorkRecord> done, IEnumerable<StationState> stations, DateTimeOffset now)
     {
-        var active = stations.Where(s => s.Current is not null).ToList();
+        var active = stations.SelectMany(s => s.Active.Select(a => (s.Station, a.Barcode, a.Since))).ToList();
         var finished = done.ToList();
 
         return finished.Select(r => r.Barcode.Order)
-            .Concat(active.Select(s => s.Current!.Order))
+            .Concat(active.Select(a => a.Barcode.Order))
             .Distinct()
             .Select(order =>
             {
                 var mine = finished.Where(r => r.Barcode.Order == order).ToList();
-                var here = active.Where(s => s.Current!.Order == order).ToList();
+                var here = active.Where(a => a.Barcode.Order == order).ToList();
                 var total = mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration)
-                          + here.Aggregate(TimeSpan.Zero, (t, s) => t + s.Elapsed(now));
+                          + here.Aggregate(TimeSpan.Zero, (t, a) => t + (now - a.Since));
                 var lastSeen = here.Count > 0 ? now : mine.Max(r => r.End);
                 var last = mine.MaxBy(r => r.End)?.Station.Name;
                 return new OrderLine(order, mine.Select(r => r.Barcode.Raw).Distinct().Count(), total,
-                    [.. here.Select(s => s.Station.Name)], lastSeen, last);
+                    [.. here.Select(a => a.Station.Name).Distinct()], lastSeen, last);
             })
             .OrderByDescending(o => o.LastSeen)
             .ToList();
@@ -53,7 +54,7 @@ public static class DayReport
     {
         var finished = done.ToList();
         var all = stations.ToList();
-        var elements = finished.Select(r => r.Barcode.Raw).Concat(all.Where(s => s.Current is not null).Select(s => s.Current!.Raw)).Distinct().Count();
+        var elements = finished.Select(r => r.Barcode.Raw).Concat(all.SelectMany(s => s.Active).Select(a => a.Barcode.Raw)).Distinct().Count();
         TimeSpan? average = finished.Count > 0 ? finished.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) / finished.Count : null;
         var atPacking = finished.Where(r => r.Station.Kind == StationKind.Packing).Select(r => r.Barcode.Order).Distinct().Count();
         return new Kpis(elements, average, all.Count(s => s.IsBusy), all.Count, atPacking);
@@ -64,26 +65,47 @@ public static class DayReport
     // now unless given): an element counts from its scan in, or from its scan out when it was
     // scanned in before today (from now, when it is still in progress). Only the time worked since
     // that first scan counts. So one element left in over night neither stretches the day back to
-    // midnight for every station nor gets the night as work. The average is of the elements' whole time.
+    // midnight for every station nor gets the night as work. Time with several elements in progress
+    // at once (a station with "Max i gang" above 1) counts once: the union of the elements' times,
+    // not their sum. The average is of the elements' whole time.
     public static IReadOnlyList<StationLine> Stations(IEnumerable<WorkRecord> done, IEnumerable<StationState> stations, DateTimeOffset now, DateTimeOffset? today = null)
     {
         var finished = done.ToList();
         var all = stations.ToList();
         var midnight = today ?? Cloud.CloudSync.Midnight(now);
         var scans = finished.Select(r => r.Start >= midnight ? r.Start : r.End)
-            .Concat(all.Where(s => s.StartedAt is not null).Select(s => s.StartedAt!.Value >= midnight ? s.StartedAt!.Value : now)).ToList();
+            .Concat(all.SelectMany(s => s.Active).Select(a => a.Since >= midnight ? a.Since : now)).ToList();
         var first = scans.Count > 0 ? Later(scans.Min(), midnight) : now;
         var day = Positive(now - first);
 
         return all.Select(s =>
         {
             var mine = finished.Where(r => r.Station == s.Station).ToList();
-            var busy = mine.Aggregate(TimeSpan.Zero, (t, r) => t + Positive(r.End - Later(r.Start, first)))
-                     + (s.StartedAt is { } since ? Positive(now - Later(since, first)) : TimeSpan.Zero);
+            var busy = Union(mine.Select(r => (Later(r.Start, first), r.End))
+                .Concat(s.Active.Select(a => (Later(a.Since, first), now))));
             TimeSpan? average = mine.Count > 0 ? mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) / mine.Count : null;
             var utilization = day > TimeSpan.Zero ? Math.Clamp(busy / day, 0, 1) : 0;
             return new StationLine(s.Station, mine.Count, average, utilization);
         }).ToList();
+    }
+
+    // The time covered by the intervals, overlaps counted once. Empty or reversed ones add nothing.
+    static TimeSpan Union(IEnumerable<(DateTimeOffset From, DateTimeOffset To)> intervals)
+    {
+        var total = TimeSpan.Zero;
+        DateTimeOffset? from = null, to = null;
+        foreach (var (f, t) in intervals.Where(i => i.To > i.From).OrderBy(i => i.From))
+        {
+            if (to is { } end && f <= end)
+            {
+                if (t > end) to = t;
+                continue;
+            }
+            if (from is { } a && to is { } b) total += b - a;
+            (from, to) = (f, t);
+        }
+        if (from is { } x && to is { } y) total += y - x;
+        return total;
     }
 
     static DateTimeOffset Later(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;

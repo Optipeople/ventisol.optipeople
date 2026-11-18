@@ -16,7 +16,7 @@ public class ScanReplayTests
     {
         var r = Replay(In(A, 1, T0));
 
-        Assert.Equal((Code(A), T0), r.InProgress[1]);
+        Assert.Equal(new ActiveElement(Code(A), T0), Assert.Single(r.InProgress[1]));
         Assert.Empty(r.Done);
     }
 
@@ -45,7 +45,7 @@ public class ScanReplayTests
         var r = Replay(In(A, 1, T0), Out(A, 1, T0.AddMinutes(10)), In(A, 1, T0.AddMinutes(30)));
 
         Assert.Single(r.Done);
-        Assert.Equal(T0.AddMinutes(30), r.InProgress[1].Since);
+        Assert.Equal(T0.AddMinutes(30), Assert.Single(r.InProgress[1]).Since);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public class ScanReplayTests
         var r = Replay(Out(A, 1, T0), In(B, 1, T0.AddMinutes(1)));
 
         Assert.Empty(r.Done);
-        Assert.Equal(Code(B), r.InProgress[1].Barcode);
+        Assert.Equal(Code(B), Assert.Single(r.InProgress[1]).Barcode);
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public class ScanReplayTests
             In(C, 3, midnight.AddHours(-5)), Out(C, 3, midnight.AddHours(-4)),
         ], StationConfig.Defaults, midnight);
 
-        Assert.Equal(midnight.AddHours(-2), r.InProgress[1].Since);
+        Assert.Equal(midnight.AddHours(-2), Assert.Single(r.InProgress[1]).Since);
         var done = Assert.Single(r.Done);
         Assert.Equal((Code(B), midnight.AddHours(-3), T0), (done.Barcode, done.Start, done.End));
     }
@@ -132,7 +132,7 @@ public class ScanReplayTests
     {
         var r = Replay(In(A, 1, T0));
         var s = new StationState(StationConfig.Defaults[0]);
-        s.Restore(r.InProgress[1].Barcode, r.InProgress[1].Since);
+        s.Restore(r.InProgress[1]);
 
         var end = s.Scan(Code(A), T0.AddMinutes(4));
 
@@ -150,5 +150,20 @@ public class ScanReplayTests
 
         Assert.False(s.IsBusy);
         Assert.Null(s.StartedAt);
+    }
+
+    [Fact]
+    public void A_station_set_up_for_several_keeps_its_latest_open_ins_up_to_its_max()
+    {
+        StationConfig[] stations = [.. StationConfig.Defaults.Select(s => s.Number == 3 ? s with { MaxActive = 2 } : s)];
+
+        var r = ScanReplay.Replay([In(A, 3, T0), In(B, 3, T0.AddMinutes(5)), In(C, 3, T0.AddMinutes(10)), In(A, 1, T0), In(B, 1, T0.AddMinutes(1))], stations);
+
+        Assert.Equal([new ActiveElement(Code(B), T0.AddMinutes(5)), new ActiveElement(Code(C), T0.AddMinutes(10))], r.InProgress[3]);
+        Assert.Equal([new ActiveElement(Code(B), T0.AddMinutes(1))], r.InProgress[1]);
+
+        // maxOpen, when given for a station, is its max.
+        var given = ScanReplay.Replay([In(A, 3, T0), In(B, 3, T0.AddMinutes(5)), In(C, 3, T0.AddMinutes(10))], stations, maxOpen: new Dictionary<int, int> { [3] = 6 });
+        Assert.Equal(3, given.InProgress[3].Count);
     }
 }

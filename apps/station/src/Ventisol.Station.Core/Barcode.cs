@@ -45,10 +45,14 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // A scan coming in at a station that has an element in progress: when the scan is that very
     // element, it is its Out, whatever its order. It was taken once (by an older version, or under
     // other hints) and must be able to end. False for any other scan: those go by TryParseScan.
-    public static bool TryParseInProgress(string? text, Barcode? inProgress, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null)
+    public static bool TryParseInProgress(string? text, Barcode? inProgress, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null) =>
+        TryParseInProgress(text, inProgress is null ? [] : [inProgress], out barcode, hints);
+
+    // The same at a station with several elements in progress: the scan is one of them.
+    public static bool TryParseInProgress(string? text, IEnumerable<Barcode> inProgress, [NotNullWhen(true)] out Barcode? barcode, OrderHints? hints = null)
     {
         barcode = null;
-        if (inProgress is null || !TryParse(text, out var read, hints, incoming: false) || read.Raw != inProgress.Raw) return false;
+        if (!TryParse(text, out var read, hints, incoming: false) || !inProgress.Any(b => b.Raw == read.Raw)) return false;
         barcode = read;
         return true;
     }

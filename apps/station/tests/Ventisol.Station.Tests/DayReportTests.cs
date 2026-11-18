@@ -151,4 +151,54 @@ public class DayReportTests
         // another day, both elements would count whole.
         Assert.Equal(1.0 / 3, lines[0].Utilization, 3);
     }
+
+    [Fact]
+    public void Several_in_progress_at_one_station_each_count_for_their_order()
+    {
+        var s30 = new StationState(StationConfig.Defaults[2] with { MaxActive = 4 });
+        s30.Scan(Code("058556050101"), T0);
+        s30.Scan(Code("058556050102"), T0.AddMinutes(10));
+        s30.Scan(Code("058557010101"), T0.AddMinutes(20));
+
+        var orders = DayReport.Orders([], [s30], T0.AddMinutes(30));
+        var k = DayReport.Totals([], [s30, new StationState(S10)], T0.AddMinutes(30));
+
+        Assert.Equal(2, orders.Count);
+        var o = orders.Single(x => x.Order == 58556);
+        // Each element's own wall-clock time: 30 + 20 minutes.
+        Assert.Equal(TimeSpan.FromMinutes(50), o.Total);
+        Assert.Equal(["Station 30"], o.ActiveAt);
+        Assert.Equal(3, k.Elements);
+        Assert.Equal((1, 2), (k.StationsBusy, k.Stations));
+    }
+
+    [Fact]
+    public void Time_with_several_in_progress_at_a_station_counts_once_for_its_utilization()
+    {
+        var s30cfg = StationConfig.Defaults[2] with { MaxActive = 4 };
+        // Station 30: two done that overlap, 0-30 and 10-40. Station 10 gives the day its start at 0.
+        var done = new[]
+        {
+            new WorkRecord(s30cfg, Code("058556050101"), T0, T0.AddMinutes(30)),
+            new WorkRecord(s30cfg, Code("058556050102"), T0.AddMinutes(10), T0.AddMinutes(40)),
+            Done(S10, "058557010101", 0, 5),
+        };
+
+        // Seen at 80: 0 to 40 is 40 of 80 minutes, not the sum of 60.
+        var lines = DayReport.Stations(done, [new StationState(s30cfg), new StationState(S10)], T0.AddMinutes(80), T0.AddHours(-8));
+        Assert.Equal(0.5, lines[0].Utilization, 3);
+        Assert.Equal(TimeSpan.FromMinutes(30), lines[0].Average);
+
+        // Two more in progress since 35 and 70, overlapping each other and the done: 0 to 80, all of it,
+        // where the sum (30 + 30 + 45 + 10) would be far over.
+        var s30 = new StationState(s30cfg);
+        s30.Restore([new ActiveElement(Code("058558010101"), T0.AddMinutes(35)), new ActiveElement(Code("058558010102"), T0.AddMinutes(70))]);
+        var busy = DayReport.Stations(done, [s30, new StationState(S10)], T0.AddMinutes(80), T0.AddHours(-8));
+        Assert.Equal(1, busy[0].Utilization, 3);
+
+        // A gap counts as a gap: done 0-30 and 10-40, one in progress since 60, seen at 80: 60 of 80.
+        var gap = new StationState(s30cfg);
+        gap.Restore(Code("058558010103"), T0.AddMinutes(60));
+        Assert.Equal(0.75, DayReport.Stations(done, [gap, new StationState(S10)], T0.AddMinutes(80), T0.AddHours(-8))[0].Utilization, 3);
+    }
 }
