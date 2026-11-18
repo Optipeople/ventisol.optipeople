@@ -14,6 +14,7 @@ import { UnknownPositionsNotice } from "@/components/weekplan/unknown-notice";
 import { WeekNav } from "@/components/weekplan/week-nav";
 import { WeekPlanUpload } from "@/components/weekplan/weekplan-upload";
 import { requireCapability } from "@/lib/auth";
+import { can } from "@/lib/portal/roles";
 import { orderHref } from "@/lib/orders-view/params";
 import { capitalize, formatLongDay, requestTime } from "@/lib/time";
 import { loadPortalWeekPlan } from "@/lib/weekplan/portal";
@@ -46,6 +47,10 @@ export default async function WeekPlanPage({
   const known = plan.orders.filter((o) => o.hours !== null);
   const hours = known.reduce((sum, o) => sum + (o.hours ?? 0), 0);
   const noHourAccess = plan.orders.length > 0 && known.length === 0;
+  // Hours are null either because the role may not read config.calculated_times
+  // (the costs.view roles may) or because no calculated times are set up yet.
+  const seesTimes = can(ctx.claims.role, "costs.view");
+  const noHours = seesTimes ? "Ingen tider" : "Ikke vist";
 
   return (
     <PageShell>
@@ -69,8 +74,14 @@ export default async function WeekPlanPage({
         <KpiTile label="Elementer" value={countFormat.format(elements)} hint="Karme ifølge produktionslisterne" />
         <KpiTile
           label="Timer"
-          value={noHourAccess ? "Ikke vist" : hoursFormat.format(hours)}
-          hint={noHourAccess ? "Din rolle kan ikke se beregnede tider" : "Beregnet tid for elementerne"}
+          value={noHourAccess ? noHours : hoursFormat.format(hours)}
+          hint={
+            !noHourAccess
+              ? "Beregnet tid for elementerne"
+              : seesTimes
+                ? "Ingen kalkulerede tider endnu. De sættes under Indstillinger, Tider"
+                : "Din rolle kan ikke se beregnede tider"
+          }
         />
       </KpiRow>
 
@@ -105,7 +116,7 @@ export default async function WeekPlanPage({
                       {countFormat.format(o.elements)}
                     </DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">
-                      {o.hours === null ? "Ikke vist" : hoursFormat.format(o.hours)}
+                      {o.hours === null ? noHours : hoursFormat.format(o.hours)}
                     </DataTableCell>
                   </DataTableRow>
                 ))}
