@@ -31,6 +31,8 @@ import {
   type ReportContext,
 } from "./shared";
 import type {
+  AllOrderRow,
+  AllOrderStatus,
   DeliveryStatusKey,
   DeviationNote,
   FinishedOrderRow,
@@ -304,6 +306,74 @@ export async function listInProgressOrders(
 ): Promise<Paged<InProgressOrderRow>> {
   const { clock, ...p } = inProgressParams.parse(params);
   return report(claims, clock, (db, ctx) => inProgressOn(db, ctx, p));
+}
+
+// ---------------------------------------------------------------------------
+// Alle ordrer: the production lists and the scans, started or not
+// ---------------------------------------------------------------------------
+
+export const ALL_ORDER_STATUS_LABELS: Record<AllOrderStatus, string> = {
+  not_started: "Ikke startet",
+  in_progress: "I gang",
+  packed: "Pakket",
+};
+
+interface AllRaw extends Omit<AllOrderRow, "statusLabel"> {
+  totalCount: number;
+}
+
+export const allOrdersParams = z.object({
+  search: z.string().max(200).optional(),
+  status: z.enum(["not_started", "in_progress", "packed"]).optional(),
+  ...deliveryWeekShape,
+  sort: z.enum(["order", "customer", "elements", "delivery", "status", "first_scan", "last_scan"]).default("order"),
+  dir: z.enum(["asc", "desc"]).default("desc"),
+  ...pageShape,
+});
+
+/** Alle ordrer: every order with a 3E list or a scan, with search, filters, sort and paging. Any role. */
+export async function listAllOrders(
+  claims: Claims,
+  params: z.input<typeof allOrdersParams> = {}
+): Promise<Paged<AllOrderRow>> {
+  const p = allOrdersParams.parse(params);
+  return report(claims, undefined, (db) =>
+    paged<AllRaw, AllOrderRow>(
+      p.page,
+      p.pageSize,
+      (limit, offset) =>
+        rows<AllRaw>(
+          db,
+          `select * from rpt.orders_all($1::text, $2::text, $3::text, $4::text, $5::integer, $6::integer,
+                                        $7::integer, $8::integer)`,
+          [
+            p.search ?? null,
+            p.status ?? null,
+            p.sort,
+            p.dir,
+            limit,
+            offset,
+            p.deliveryYear ?? null,
+            p.deliveryWeek ?? null,
+          ]
+        ),
+      ({ totalCount, ...r }) => {
+        void totalCount;
+        return { ...r, statusLabel: ALL_ORDER_STATUS_LABELS[r.status] };
+      }
+    )
+  );
+}
+
+/** The delivery weeks of Alle ordrer, newest first, with how many. Any role. */
+export async function listAllDeliveryWeeks(claims: Claims): Promise<DeliveryWeekCount[]> {
+  return report(claims, undefined, async (db) => {
+    const list = await rows<{ deliveryYear: number; deliveryWeek: number; orderCount: number | string }>(
+      db,
+      "select * from rpt.all_order_delivery_weeks()"
+    );
+    return list.map((r) => ({ year: r.deliveryYear, week: r.deliveryWeek, orders: Number(r.orderCount) }));
+  });
 }
 
 // ---------------------------------------------------------------------------

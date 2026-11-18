@@ -6,12 +6,13 @@
 // lib/stations-view/params.ts), whose links carry `from`, `to`, `clock` and
 // `status` here:
 //
-//   view     in-progress | finished. Left out: finished when the link carries
+//   view     in-progress | finished | all. Left out: finished when the link carries
 //            a period (from or to) and no in-progress-only status, else in-progress
 //   q        free text: start of an order number, or part of customer or case
-//   status   on_time | late | at_risk (in progress only) | unknown
+//   status   on_time | late | at_risk (in progress only) | unknown;
+//            on all: not_started | in_progress | packed
 //   from, to packed day range, yyyy-MM-dd (finished only)
-//   uge      delivery week, ISO year and week: 2026-47 (both tabs, as Ugeplan's ?uge=)
+//   uge      delivery week, ISO year and week: 2026-47 (every tab, as Ugeplan's ?uge=)
 //   clock    working | wall. Left out: the setting deduct_off_shift decides
 //   active   all: every order not packed. Left out: scanned the last 14 days (in progress only)
 //   sort     a sort key of the wrapper (order, customer, ...)
@@ -27,12 +28,14 @@ export const PAGE_SIZE = 50;
 /** In progress, by default: scanned within this many days. */
 export const ACTIVE_DAYS = 14;
 
-export type OrdersTab = "in-progress" | "finished";
+export type OrdersTab = "in-progress" | "finished" | "all";
 
 export const FINISHED_SORTS = ["order", "customer", "elements", "start", "packed", "lead", "wait", "status"] as const;
 export const IN_PROGRESS_SORTS = ["order", "customer", "elements", "start", "elapsed", "forecast", "due", "last_scan"] as const;
 export type FinishedSort = (typeof FINISHED_SORTS)[number];
 export type InProgressSort = (typeof IN_PROGRESS_SORTS)[number];
+export const ALL_SORTS = ["order", "customer", "elements", "delivery", "status", "first_scan", "last_scan"] as const;
+export type AllSort = (typeof ALL_SORTS)[number];
 
 export type SortDir = "asc" | "desc";
 
@@ -40,11 +43,14 @@ export const FINISHED_STATUSES = ["on_time", "late", "unknown"] as const;
 export const IN_PROGRESS_STATUSES = ["late", "at_risk", "on_time", "unknown"] as const;
 export type FinishedStatus = (typeof FINISHED_STATUSES)[number];
 export type InProgressStatus = (typeof IN_PROGRESS_STATUSES)[number];
+export const ALL_STATUSES = ["not_started", "in_progress", "packed"] as const;
+export type AllStatus = (typeof ALL_STATUSES)[number];
 
 /** The filter's labels. The same words as the wrappers' status labels. */
-export const STATUS_LABELS: Record<OrdersTab, Partial<Record<DeliveryStatusKey, string>>> = {
+export const STATUS_LABELS: Record<OrdersTab, Partial<Record<DeliveryStatusKey | AllStatus, string>>> = {
   finished: { on_time: "Til tiden", late: "Forsinket", unknown: "Ingen leveringsuge" },
   "in-progress": { late: "Forsinket", at_risk: "Risiko for forsinkelse", on_time: "Til tiden", unknown: "Ukendt" },
+  all: { not_started: "Ikke startet", in_progress: "I gang", packed: "Pakket" },
 };
 
 /** As Overblik and Stationer word them. */
@@ -76,7 +82,14 @@ export interface InProgressView extends Common {
   sort: InProgressSort;
 }
 
-export type OrdersView = FinishedView | InProgressView;
+/** Alle ordrer: every order with a 3E production list or a scan, started or not. */
+export interface AllView extends Common {
+  tab: "all";
+  status: AllStatus | undefined;
+  sort: AllSort;
+}
+
+export type OrdersView = FinishedView | InProgressView | AllView;
 
 export type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -84,11 +97,11 @@ const one = (value: string | string[] | undefined): string =>
   typeof value === "string" ? value : Array.isArray(value) ? (value[0] ?? "") : "";
 
 /** The default sort of each tab: what the wrapper sorts by when asked nothing. */
-export const DEFAULT_SORT = { finished: "packed", "in-progress": "start" } as const;
+export const DEFAULT_SORT = { finished: "packed", "in-progress": "start", all: "order" } as const;
 
 function pickTab(params: SearchParams): OrdersTab {
   const view = one(params.view);
-  if (view === "finished" || view === "in-progress") return view;
+  if (view === "finished" || view === "in-progress" || view === "all") return view;
   if (one(params.status) === "at_risk") return "in-progress";
   return one(params.from) || one(params.to) ? "finished" : "in-progress";
 }
@@ -107,6 +120,14 @@ export function parseOrdersView(params: SearchParams): OrdersView {
   const week = parseWeekParam(one(params.uge)) ?? undefined;
   const common = { search, week, clock, dir, page };
 
+  if (tab === "all") {
+    return {
+      tab,
+      ...common,
+      status: ALL_STATUSES.find((s) => s === status),
+      sort: (ALL_SORTS as readonly string[]).includes(sort) ? (sort as AllSort) : DEFAULT_SORT.all,
+    };
+  }
   if (tab === "finished") {
     let from = isIsoDay(one(params.from)) ? one(params.from) : undefined;
     let to = isIsoDay(one(params.to)) ? one(params.to) : undefined;
@@ -138,7 +159,7 @@ export function viewParams(view: OrdersView): Record<string, string> {
   if (view.tab === "finished") {
     if (view.from) out.from = view.from;
     if (view.to) out.to = view.to;
-  } else if (!view.activeOnly) {
+  } else if (view.tab === "in-progress" && !view.activeOnly) {
     out.active = "all";
   }
   if (view.clock) out.clock = view.clock;
@@ -177,8 +198,8 @@ export function tabHref(view: OrdersView, tab: OrdersTab): string {
  * descending (largest, latest first), except names, numbers and deadlines,
  * which read naturally upwards. Always back to page 1.
  */
-export function sortHref(view: OrdersView, key: FinishedSort | InProgressSort): string {
-  const ascFirst = key === "order" || key === "customer" || key === "due" || key === "forecast";
+export function sortHref(view: OrdersView, key: FinishedSort | InProgressSort | AllSort): string {
+  const ascFirst = key === "order" || key === "customer" || key === "due" || key === "forecast" || key === "delivery";
   const dir: SortDir = key === view.sort ? (view.dir === "asc" ? "desc" : "asc") : ascFirst ? "asc" : "desc";
   return viewHref({ ...view, sort: key, dir, page: 1 } as OrdersView);
 }

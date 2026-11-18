@@ -17,10 +17,12 @@ import {
   formatNumber,
   NO_DATA,
 } from "@/lib/reports/format";
-import type { FinishedOrderRow, InProgressOrderRow } from "@/lib/reports/types";
+import type { AllOrderRow, FinishedOrderRow, InProgressOrderRow } from "@/lib/reports/types";
 import {
   orderHref,
   sortHref,
+  type AllSort,
+  type AllView,
   type FinishedSort,
   type FinishedView,
   type InProgressSort,
@@ -55,10 +57,15 @@ function Elements({ row, packed }: { row: { elements: number; expectedSource: st
   );
 }
 
-/** "Uge 47" with the deadline as a tooltip, or "Ingen leveringsuge". */
-function DeliveryWeek({ week, dueAt }: { week: number | null; dueAt: string | null }) {
+/** "Uge 47" (or "Uge 47, 2026" given the year) with the deadline as a tooltip, or "Ingen leveringsuge". */
+function DeliveryWeek({ week, dueAt, year }: { week: number | null; dueAt: string | null; year?: number | null }) {
   if (week == null) return <span className={muted}>Ingen leveringsuge</span>;
-  return <span title={dueAt ? `Frist ${formatDayTime(dueAt)}` : undefined}>Uge {week}</span>;
+  return (
+    <span title={dueAt ? `Frist ${formatDayTime(dueAt)}` : undefined}>
+      Uge {week}
+      {year != null && `, ${year}`}
+    </span>
+  );
 }
 
 export function FinishedOrdersTable({ rows, view }: { rows: FinishedOrderRow[]; view: FinishedView }) {
@@ -104,6 +111,61 @@ export function FinishedOrdersTable({ rows, view }: { rows: FinishedOrderRow[]; 
               </DataTableCell>
               <DataTableCell>
                 <DeliveryStatusTag status={r.status} label={r.statusLabel} />
+              </DataTableCell>
+            </DataTableRow>
+          ))}
+        </DataTableBody>
+      </DataTable>
+    </TableFrame>
+  );
+}
+
+export function AllOrdersTable({ rows, view }: { rows: AllOrderRow[]; view: AllView }) {
+  const head = (key: AllSort, label: string, align?: "right") => (
+    <SortHeader href={sortHref(view, key)} active={view.sort === key} direction={view.dir} align={align}>
+      {label}
+    </SortHeader>
+  );
+  const day = (iso: string | null) => (iso ? formatDayTime(iso) : <span className={muted}>{NO_DATA}</span>);
+  return (
+    <TableFrame>
+      <DataTable stickyHeader>
+        <DataTableHead>
+          {head("order", "Ordre")}
+          {head("customer", "Kunde")}
+          {head("elements", "Elementer", "right")}
+          {head("delivery", "Leveringsuge")}
+          {head("first_scan", "Start")}
+          {head("last_scan", "Seneste scanning")}
+          {head("status", "Status")}
+        </DataTableHead>
+        <DataTableBody>
+          {rows.map((r) => (
+            <DataTableRow key={r.orderNo} href={orderHref(r.orderNo, view.clock)}>
+              <DataTableCell className="font-bold tabular-nums">{r.orderNo}</DataTableCell>
+              <DataTableCell>
+                <Customer customer={r.customer} caseName={r.caseName} />
+              </DataTableCell>
+              <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                {r.elements == null ? (
+                  <span className={muted}>{NO_DATA}</span>
+                ) : r.status === "in_progress" && r.elementsPacked != null ? (
+                  `${formatNumber(r.elementsPacked)} af ${formatNumber(r.elements)}`
+                ) : (
+                  formatNumber(r.elements)
+                )}
+              </DataTableCell>
+              <DataTableCell className="whitespace-nowrap">
+                <DeliveryWeek week={r.deliveryWeek} dueAt={r.dueAt} year={r.deliveryYear} />
+              </DataTableCell>
+              <DataTableCell className="whitespace-nowrap tabular-nums">{day(r.firstScanAt)}</DataTableCell>
+              <DataTableCell className="whitespace-nowrap tabular-nums">{day(r.lastScanAt)}</DataTableCell>
+              <DataTableCell
+                className={r.status === "not_started" ? `whitespace-nowrap ${muted}` : "whitespace-nowrap"}
+                title={r.hasDocument ? undefined : "Uden produktionsliste"}
+              >
+                {r.statusLabel}
+                {!r.hasDocument && <span className={muted}>*</span>}
               </DataTableCell>
             </DataTableRow>
           ))}

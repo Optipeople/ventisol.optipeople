@@ -10,6 +10,8 @@ import {
   getOrderDocuments,
   getOrderRoute,
   getOrderStatus,
+  listAllDeliveryWeeks,
+  listAllOrders,
   listFinishedOrders,
   listDeliveryWeeks,
   listInProgressOrders,
@@ -164,6 +166,102 @@ describe("listInProgressOrders", () => {
     expect(numbers((await listInProgressOrders(viewer, { now: NOW, sort: "elapsed", dir: "desc" })).rows)).toEqual([
       50008, 50006, 50007,
     ]);
+  });
+});
+
+describe("listAllOrders", () => {
+  beforeEach(async () => {
+    await db.withService((tx) =>
+      tx.query(
+        `insert into raw.order_documents (file_name, order_no, prefix, print_date, synced_at, parsed)
+         values ('59999_20261110.pdf', 59999, '', date '2026-11-10', now(), $1::jsonb),
+                ('59998_20261101.pdf', 59998, '', date '2026-11-01', now(), $2::jsonb),
+                ('50001_20261019.pdf', 50001, '', date '2026-10-19', now(), $3::jsonb)`,
+        [
+          JSON.stringify({
+            header: { orderNumber: 59999, customer: ["", "Ny Kunde A/S", "Vej 1"], deliveryWeek: 2, date: "2026-11-10" },
+            positions: [
+              { number: 1, subNumber: null, quantity: 2 },
+              { number: 1, subNumber: null, quantity: 2 },
+              { number: 2, subNumber: 1, quantity: 1 },
+            ],
+          }),
+          JSON.stringify({ header: { orderNumber: 59998, customer: ["Anden Kunde"], deliveryWeek: 48 }, positions: [] }),
+          JSON.stringify({ header: { orderNumber: 50001, customer: ["Dokumentkunde"], deliveryWeek: 43 }, positions: [] }),
+        ]
+      )
+    );
+  });
+
+  it("lists the scanned orders and the production lists not started yet", async () => {
+    const all = await listAllOrders(viewer, { pageSize: 100 });
+    // The eight scanned orders and the two lists without scans.
+    expect(all.total).toBe(10);
+    expect(numbers(all.rows).slice(0, 2)).toEqual([59999, 59998]);
+    expect(all.rows[0]).toMatchObject({
+      orderNo: 59999,
+      customer: "Ny Kunde A/S",
+      // Week 2 after a list dated November 2026 is in 2027.
+      deliveryYear: 2027,
+      deliveryWeek: 2,
+      elements: 3,
+      status: "not_started",
+      statusLabel: "Ikke startet",
+      firstScanAt: null,
+      hasDocument: true,
+      documentDate: "2026-11-10",
+    });
+    expect(all.rows[1]).toMatchObject({ deliveryYear: 2026, deliveryWeek: 48, elements: null });
+    // A scanned order keeps what the scans and core.orders say.
+    expect(all.rows.find((r) => r.orderNo === 50001)).toMatchObject({
+      customer: "Kunde 50001",
+      status: "packed",
+      hasDocument: true,
+    });
+    expect(all.rows.find((r) => r.orderNo === 50006)).toMatchObject({ status: "in_progress", hasDocument: false });
+  });
+
+  it("takes a missing week from the list, prefers a parsed list, and leaves a week outside the window unknown", async () => {
+    await db.withService((tx) =>
+      tx.query(
+        `insert into raw.order_documents (file_name, order_no, prefix, print_date, synced_at, parsed)
+         values ('50003_20261020.pdf', 50003, '', date '2026-10-20', now(), $1::jsonb),
+                ('50003_20261030.pdf', 50003, '', date '2026-10-30', now(), null),
+                ('59997_20260105.pdf', 59997, '', date '2026-01-05', now(), $2::jsonb)`,
+        [
+          JSON.stringify({ header: { customer: ["X"], deliveryWeek: 45 }, positions: [] }),
+          JSON.stringify({ header: { customer: ["Y"], deliveryWeek: 40 }, positions: [] }),
+        ]
+      )
+    );
+    const all = (await listAllOrders(viewer, { pageSize: 100 })).rows;
+    // 50003 was scanned with no delivery week; the parsed list gives it one.
+    expect(all.find((r) => r.orderNo === 50003)).toMatchObject({ deliveryYear: 2026, deliveryWeek: 45, status: "packed" });
+    // Week 40 is more than 30 weeks after a list printed in January.
+    expect(all.find((r) => r.orderNo === 59997)).toMatchObject({ deliveryYear: null, deliveryWeek: null });
+  });
+
+  it("filters on status, search and delivery week", async () => {
+    expect(numbers((await listAllOrders(viewer, { status: "not_started" })).rows)).toEqual([59999, 59998]);
+    expect(numbers((await listAllOrders(viewer, { search: "ny kunde" })).rows)).toEqual([59999]);
+    expect(numbers((await listAllOrders(viewer, { search: "5999" })).rows)).toEqual([59999, 59998]);
+    expect(numbers((await listAllOrders(viewer, { deliveryYear: 2026, deliveryWeek: 48, status: "not_started" })).rows)).toEqual([
+      59998,
+    ]);
+    expect(numbers((await listAllOrders(viewer, { status: "packed", sort: "order", dir: "asc" })).rows)).toEqual([
+      50001, 50002, 50003, 50004, 50005,
+    ]);
+    expect((await listAllDeliveryWeeks(viewer)).find((w) => w.year === 2027 && w.week === 2)).toEqual({
+      year: 2027,
+      week: 2,
+      orders: 1,
+    });
+  });
+
+  it("the base function stays closed to users", async () => {
+    await expect(
+      db.withUser(testClaims("admin"), (tx) => tx.query("select * from rpt.all_orders_base()"))
+    ).rejects.toThrow();
   });
 });
 

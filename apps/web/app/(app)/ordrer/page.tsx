@@ -4,7 +4,7 @@ import { EmptyState, PageHeader, PageShell, PillTabs, SectionTitle } from "@opti
 import { ExportMenu, type ExportEntry } from "@/components/export/export-menu";
 import { OrdersFilters, type OrdersFilterSelect } from "@/components/orders/orders-filters";
 import { OrdersSearch } from "@/components/orders/orders-search";
-import { FinishedOrdersTable, InProgressOrdersTable } from "@/components/orders/orders-tables";
+import { AllOrdersTable, FinishedOrdersTable, InProgressOrdersTable } from "@/components/orders/orders-tables";
 import { AuditPager } from "@/components/settings/audit-pager";
 import { ClockToggle, PageControls } from "@/components/page-controls";
 import { requireCapability } from "@/lib/auth";
@@ -12,6 +12,7 @@ import { periodPresets } from "@/lib/overview/filters";
 import type { Claims } from "@/lib/db";
 import {
   ACTIVE_DAYS,
+  ALL_STATUSES,
   FINISHED_STATUSES,
   IN_PROGRESS_STATUSES,
   ORDERS_PATH,
@@ -21,6 +22,7 @@ import {
   STATUS_LABELS,
   tabHref,
   viewHref,
+  type AllView,
   type FinishedView,
   type InProgressView,
   type OrdersView,
@@ -28,6 +30,8 @@ import {
 } from "@/lib/orders-view/params";
 import {
   formatCount,
+  listAllDeliveryWeeks,
+  listAllOrders,
   listDeliveryWeeks,
   listFinishedOrders,
   listInProgressOrders,
@@ -46,14 +50,20 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   const now = requestTime();
   // The clock the lists are read on: the URL's, else the setting's.
   const clock: Clock = view.clock ?? (await report(ctx.claims, undefined, async (_db, c) => c.clock));
-  const weeks = await listDeliveryWeeks(ctx.claims, { status: view.tab === "finished" ? "packed" : "in_progress" });
+  const weeks =
+    view.tab === "all"
+      ? await listAllDeliveryWeeks(ctx.claims)
+      : await listDeliveryWeeks(ctx.claims, { status: view.tab === "finished" ? "packed" : "in_progress" });
   const weekFilter = weekSelect(view, weeks);
 
   // The file holds the list as it is filtered and sorted, every page of it.
-  const exportEntry: ExportEntry =
+  // Alle ordrer has no export yet.
+  const exportEntry: ExportEntry | undefined =
     view.tab === "finished"
       ? { report: "finished_orders", params: finishedParams(view) }
-      : { report: "orders_in_progress", params: inProgressParams(view, now) };
+      : view.tab === "in-progress"
+        ? { report: "orders_in_progress", params: inProgressParams(view, now) }
+        : undefined;
 
   const search = <OrdersSearch value={view.search} basePath={ORDERS_PATH} preserve={preserveFor(view, "q")} />;
 
@@ -61,13 +71,21 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
     <PageShell width="wide">
       <PageHeader
         title="Ordrer"
-        intro="Ordrer i gang nu og pakkede ordrer. Klik på en ordre for ruten, afvigelserne og produktionslisten."
-        actions={<ExportMenu entries={[exportEntry]} />}
+        intro="Ordrer i gang nu, pakkede ordrer, og under Alle ordrer også dem fra produktionslisterne, der ikke er startet. Klik på en ordre for ruten, afvigelserne og produktionslisten."
+        actions={exportEntry ? <ExportMenu entries={[exportEntry]} /> : undefined}
       />
       <PageControls
         clock={<ClockToggle clock={clock} path={ORDERS_PATH} params={preserveFor(view, "clock")} />}
         filters={
-          view.tab === "finished" ? (
+          view.tab === "all" ? (
+            <OrdersFilters
+              basePath={ORDERS_PATH}
+              search={search}
+              selects={[weekFilter, statusSelect(view)]}
+              preserve={preserveFor(view, "uge", "status")}
+              hasActiveFilters={Boolean(view.week || view.status)}
+            />
+          ) : view.tab === "finished" ? (
             <OrdersFilters
               basePath={ORDERS_PATH}
               search={search}
@@ -109,12 +127,15 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
             tabs={[
               { id: "in-progress", label: "I gang nu", href: tabHref(view, "in-progress") },
               { id: "finished", label: "Afsluttede", href: tabHref(view, "finished") },
+              { id: "all", label: "Alle ordrer", href: tabHref(view, "all") },
             ]}
           />
         </div>
       </PageControls>
 
-      {view.tab === "finished" ? (
+      {view.tab === "all" ? (
+        <AllList view={view} claims={ctx.claims} />
+      ) : view.tab === "finished" ? (
         <FinishedList view={view} claims={ctx.claims} />
       ) : (
         <InProgressList view={view} claims={ctx.claims} now={now} />
@@ -170,7 +191,7 @@ function weekSelect(view: OrdersView, weeks: DeliveryWeekCount[]): OrdersFilterS
 }
 
 function statusSelect(view: OrdersView): OrdersFilterSelect {
-  const keys = view.tab === "finished" ? FINISHED_STATUSES : IN_PROGRESS_STATUSES;
+  const keys = view.tab === "all" ? ALL_STATUSES : view.tab === "finished" ? FINISHED_STATUSES : IN_PROGRESS_STATUSES;
   return {
     param: "status",
     label: "Status",
@@ -239,6 +260,49 @@ async function FinishedList({ view, claims }: { view: FinishedView; claims: Clai
           {filtered
             ? "Ret søgningen, vælg en anden uge, status eller periode, eller ryd filtrene."
             : "En ordre kommer her, når den er pakket."}
+        </EmptyState>
+      )}
+    </>
+  );
+}
+
+async function AllList({ view, claims }: { view: AllView; claims: Claims }) {
+  const list = await listAllOrders(claims, {
+    search: view.search || undefined,
+    status: view.status,
+    deliveryYear: view.week?.year,
+    deliveryWeek: view.week?.week,
+    sort: view.sort,
+    dir: view.dir,
+    page: view.page,
+    pageSize: PAGE_SIZE,
+  });
+  const filtered = Boolean(view.search || view.week || view.status);
+
+  return (
+    <>
+      <SectionTitle
+        title="Alle ordrer"
+        aside={list.rows.length > 0 ? rangeText(list.page, list.rows.length, list.total) : undefined}
+      />
+
+      {list.rows.length > 0 ? (
+        <>
+          <AllOrdersTable rows={list.rows} view={view} />
+          <Pager view={view} total={list.total} />
+          {list.rows.some((r) => !r.hasDocument) && (
+            <p className="mt-4 text-[12px] leading-[18px] text-[var(--ds-grey-medium-05)]">
+              * Uden produktionsliste: ordren kendes kun fra scanningerne.
+            </p>
+          )}
+        </>
+      ) : list.total > 0 ? (
+        <PastLastPage view={view} />
+      ) : (
+        <EmptyState title={filtered ? "Ingen ordrer med de filtre" : "Ingen ordrer endnu"}>
+          {filtered
+            ? "Ret søgningen, vælg en anden uge eller status, eller ryd filtrene."
+            : "En ordre kommer her, når dens produktionsliste er hentet ind, eller når den bliver scannet."}
         </EmptyState>
       )}
     </>

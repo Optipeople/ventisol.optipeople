@@ -439,6 +439,35 @@ export interface InProgressOrderRow {
   computedAt: Iso;
 }
 
+/** not_started: a 3E production list and no scan yet. */
+export type AllOrderStatus = "not_started" | "in_progress" | "packed";
+
+/** Alle ordrer: one order from the production lists or the scans. */
+export interface AllOrderRow {
+  orderNo: number;
+  customer: string | null;
+  caseName: string | null;
+  deliveryYear: number | null;
+  deliveryWeek: number | null;
+  dueAt: Iso | null;
+  /** The 3E count, else the elements seen. Null: a list with no positions read. */
+  elements: number | null;
+  /** Null when not started. */
+  elementsPacked: number | null;
+  status: AllOrderStatus;
+  /** "Ikke startet", "I gang" or "Pakket". */
+  statusLabel: string;
+  firstScanAt: Iso | null;
+  lastScanAt: Iso | null;
+  packedAt: Iso | null;
+  onTime: boolean | null;
+  atRisk: boolean | null;
+  /** A 3E production list is in. */
+  hasDocument: boolean;
+  /** The list's date (Dato, else print date). */
+  documentDate: Day | null;
+}
+
 export interface FoundOrder {
   orderNo: number;
   customer: string | null;
