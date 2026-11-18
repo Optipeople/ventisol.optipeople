@@ -13,6 +13,14 @@ export const STATION_KIND_LABELS: Readonly<Record<StationKind, string>> = {
   buffer: "Buffer",
 };
 
+/** Highest "Max i gang"; the same bound as the check on config.stations.max_open. */
+export const MAX_OPEN_LIMIT = 20;
+
+/** "Flere elementer i gang samtidig": from this many opens taken over by another element... */
+export const PARALLEL_HINT_MIN = 3;
+/** ...in this many days back from now. */
+export const PARALLEL_HINT_DAYS = 7;
+
 /** ISO weekdays: index 0 is Monday (weekday 1). */
 export const WEEKDAY_LABELS: ReadonlyArray<string> = [
   "Mandag",

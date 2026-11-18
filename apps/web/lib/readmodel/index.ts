@@ -592,6 +592,16 @@ export function onCalendarChanged(now: number, options: Omit<RebuildOptions, "re
 }
 
 /**
+ * Call after a commit that changed config.stations.max_open ("Max i gang").
+ * Which open Ins are in progress and which are missing scan-outs rests on it
+ * (pairHistory), and with them every time and the split time, so everything
+ * is rebuilt, from the start.
+ */
+export function onMaxOpenChanged(now: number, options: Omit<RebuildOptions, "restart"> = {}): Promise<RebuildResult> {
+  return rebuildAll(now, { ...options, restart: true });
+}
+
+/**
  * Call after a commit that changed rows of config.settings, with the keys
  * that changed. Only the keys in DERIVE_TIME_SETTINGS are stored in core.*
  * and need a rebuild. Every other key (deduct_off_shift and the thresholds)

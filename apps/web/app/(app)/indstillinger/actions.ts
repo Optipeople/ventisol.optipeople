@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { getPortalAccess } from "@/lib/auth";
 import type { Claims } from "@/lib/db";
-import { onCalendarChanged, onElementTypesChanged, onSettingsChanged } from "@/lib/readmodel";
+import { onCalendarChanged, onElementTypesChanged, onMaxOpenChanged, onSettingsChanged } from "@/lib/readmodel";
 import { can, isPortalRole, type Capability } from "@/lib/portal/roles";
 import { SET_ROLE_ERRORS, setPortalUserRole } from "@/lib/portal/users";
 import {
@@ -31,7 +31,7 @@ import {
 } from "@/lib/settings/element-types";
 import { fail, FORBIDDEN_MESSAGE, OK, type ActionResult } from "@/lib/settings/result";
 import { SETTINGS_PATH } from "@/lib/settings/sections";
-import { createStation, setStationActive, updateStation } from "@/lib/settings/stations";
+import { saveStationChanged, setStationActive } from "@/lib/settings/stations";
 import { saveThresholdsChanged } from "@/lib/settings/thresholds";
 import { saveTimes } from "@/lib/settings/times";
 import { requestRebuildAsAdmin, requestSyncAsAdmin, type AdminRunResult } from "@/lib/sync/status";
@@ -110,8 +110,21 @@ export async function saveStationAction(
   mode: "create" | "update",
   input: unknown
 ): Promise<ActionResult> {
-  return run("masterdata.edit", "config", (claims) =>
-    mode === "create" ? createStation(claims, input) : updateStation(claims, input)
+  // A changed "Max i gang" changes which elements are in progress: rebuild.
+  let maxOpenChanged = false;
+  return run(
+    "masterdata.edit",
+    "config",
+    async (claims) => {
+      const saved = await saveStationChanged(claims, mode === "create" ? "create" : "update", input);
+      maxOpenChanged = saved.maxOpenChanged;
+      return saved.result;
+    },
+    async () => {
+      if (maxOpenChanged) {
+        await refreshReadModel((now) => onMaxOpenChanged(now, { budgetMs: READ_MODEL_BUDGET_MS }));
+      }
+    }
   );
 }
 

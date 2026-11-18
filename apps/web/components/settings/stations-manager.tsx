@@ -19,7 +19,13 @@ import {
 } from "@optipeople/ui";
 import { EmptyState, FieldRow, Notice, SectionCard, TableFrame } from "@optipeople/ui/blocks";
 import { saveStationAction, setStationActiveAction } from "@/app/(app)/indstillinger/actions";
-import { STATION_KIND_LABELS, STATION_KINDS, type StationKind } from "@/lib/settings/format";
+import {
+  MAX_OPEN_LIMIT,
+  PARALLEL_HINT_DAYS,
+  STATION_KIND_LABELS,
+  STATION_KINDS,
+  type StationKind,
+} from "@/lib/settings/format";
 import type { OptiCloudMachine } from "@/lib/settings/machines";
 import type { Station } from "@/lib/settings/stations";
 import { FieldError, FormMessage, useSettingsAction } from "./use-settings-action";
@@ -31,11 +37,14 @@ const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 export function StationsManager({
   stations,
   machines,
+  parallelHints = {},
   canEdit,
 }: {
   stations: Station[];
   /** The machines of the account in OptiCloud. Null: the list could not be read. */
   machines: OptiCloudMachine[] | null;
+  /** Stations at Max i gang 1 that look like they work several elements at once (listParallelHints). */
+  parallelHints?: Record<number, number>;
   canEdit: boolean;
 }) {
   // The form in the dialog: a station to edit, "new" for a new one, null when closed.
@@ -95,6 +104,7 @@ export function StationsManager({
                 <DataTableHeader>Art</DataTableHeader>
                 <DataTableHeader>Maskine i OptiCloud</DataTableHeader>
                 <DataTableHeader align="right">Rækkefølge</DataTableHeader>
+                <DataTableHeader align="right">Max i gang</DataTableHeader>
                 <DataTableHeader>Status</DataTableHeader>
                 {canEdit && <DataTableHeader><span className="sr-only">Handlinger</span></DataTableHeader>}
               </DataTableHead>
@@ -112,6 +122,15 @@ export function StationsManager({
                       )}
                     </DataTableCell>
                     <DataTableCell align="right" className="tabular-nums">{station.sortOrder}</DataTableCell>
+                    <DataTableCell align="right">
+                      <span className="tabular-nums">{station.maxOpen}</span>
+                      {station.maxOpen === 1 && parallelHints[station.stationNo] != null && (
+                        <p className="mt-1 max-w-[240px] whitespace-normal text-left text-[12px] leading-[17px] text-[var(--ds-grey-dark-09)]">
+                          <Tag size="small" variant="warning">Tjek</Tag> Flere elementer i gang samtidig set de
+                          sidste {PARALLEL_HINT_DAYS} dage – skal Max i gang hæves?
+                        </p>
+                      )}
+                    </DataTableCell>
                     <DataTableCell>
                       <Tag size="small" variant={station.active ? "positive" : "default"}>
                         {station.active ? "Aktiv" : "Inaktiv"}
@@ -177,13 +196,14 @@ function StationForm({
   const [machineId, setMachineId] = useState(editing?.opticloudMachineId ?? "");
   const [sortOrder, setSortOrder] = useState(String(editing?.sortOrder ?? defaultSortOrder));
   const [active, setActive] = useState(editing?.active ?? true);
+  const [maxOpen, setMaxOpen] = useState(String(editing?.maxOpen ?? 1));
   const { pending, result, run, fieldErrors } = useSettingsAction({
     okText: editing ? "Stationen er gemt." : "Stationen er tilføjet.",
   });
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const input = { stationNo, name, kind, opticloudMachineId: machineId, sortOrder, active };
+    const input = { stationNo, name, kind, opticloudMachineId: machineId, sortOrder, active, maxOpen };
     run(() => saveStationAction(editing ? "update" : "create", input), onDone);
   }
 
@@ -313,6 +333,20 @@ function StationForm({
             />
           )}
           <FieldError message={fieldErrors.opticloudMachineId} />
+        </div>
+
+        <div className="mb-6 max-w-[280px]">
+          <TextField
+            label="Max i gang"
+            inputMode="numeric"
+            helpText={`Hvor mange elementer én person kan have i gang på én gang ved denne station, 1 til ${MAX_OPEN_LIMIT}. Sæt det samme tal på stationens pc.`}
+            value={maxOpen}
+            onChange={(e) => setMaxOpen(e.target.value)}
+            disabled={pending}
+            validation={state("maxOpen")}
+            aria-invalid={Boolean(fieldErrors.maxOpen)}
+          />
+          <FieldError message={fieldErrors.maxOpen} />
         </div>
 
         <Switch label="Aktiv" checked={active} onCheckedChange={setActive} disabled={pending} />

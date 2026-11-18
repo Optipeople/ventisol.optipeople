@@ -27,8 +27,18 @@ import {
 import { formatMinutes, parseMinutes } from "./format";
 import { FORBIDDEN_MESSAGE, type ActionResult } from "./result";
 import { settingsSectionsFor } from "./sections";
-import { createStation, listStations, setStationActive, updateStation } from "./stations";
+import {
+  createStation,
+  listParallelHints,
+  listStations,
+  saveStationChanged,
+  setStationActive,
+  updateStation,
+} from "./stations";
 import { getThresholds, saveThresholds, THRESHOLDS } from "./thresholds";
+import { DEFAULT_CALENDAR, deriveOrder, insertSql, type DerivedOrder } from "@/lib/derive";
+import type { Scan } from "@/lib/scans";
+import { at, pass, scan } from "@/lib/test-helpers";
 import { listTimes, saveTimes } from "./times";
 
 const admin = testClaims("admin");
@@ -135,7 +145,7 @@ describe("stations", () => {
   it("lets an admin add, edit and deactivate, with audit rows", async () => {
     expect(await createStation(admin, montage)).toEqual({ ok: true });
     expect(await listStations(admin)).toEqual([
-      { stationNo: 1, name: "Montage 1", kind: "assembly", opticloudMachineId: null, sortOrder: 10, active: true },
+      { stationNo: 1, name: "Montage 1", kind: "assembly", opticloudMachineId: null, sortOrder: 10, active: true, maxOpen: 1 },
     ]);
 
     expect(
@@ -150,6 +160,26 @@ describe("stations", () => {
     expect(log.map((r) => r.action)).toEqual(["station.create", "station.update", "station.deactivate"]);
     expect(log[1]).toMatchObject({ opti_user_id: "test-admin", role: "admin", subject: "1" });
     expect(log[1].detail).toMatchObject({ before: { name: "Montage 1" }, after: { name: "Montage A" } });
+  });
+
+  it("keeps Max i gang when an edit leaves it out, and tells when it changed", async () => {
+    expect(await createStation(admin, { ...montage, maxOpen: "6" })).toEqual({ ok: true });
+    expect((await listStations(admin))[0].maxOpen).toBe(6);
+    expect(await saveStationChanged(admin, "update", { ...montage, name: "Glas" })).toEqual({
+      result: { ok: true },
+      maxOpenChanged: false,
+    });
+    expect((await listStations(admin))[0]).toMatchObject({ name: "Glas", maxOpen: 6 });
+    expect(await saveStationChanged(admin, "update", { ...montage, maxOpen: 1 })).toEqual({
+      result: { ok: true },
+      maxOpenChanged: true,
+    });
+    expect(await saveStationChanged(admin, "create", { ...montage, stationNo: 2, maxOpen: 3 })).toEqual({
+      result: { ok: true },
+      maxOpenChanged: true,
+    });
+    expect(fieldErrors(await updateStation(admin, { ...montage, maxOpen: "21" }))).toHaveProperty("maxOpen");
+    expect(fieldErrors(await updateStation(admin, { ...montage, maxOpen: "0" }))).toHaveProperty("maxOpen");
   });
 
   it("refuses bad input with a message per field", async () => {
@@ -173,6 +203,47 @@ describe("stations", () => {
     expectForbidden(await setStationActive(claims, { stationNo: 1, active: false }));
     expect(await listStations(admin)).toEqual([expect.objectContaining({ stationNo: 1, name: "Montage 1", active: true })]);
     expect((await auditRows()).map((r) => r.action)).toEqual(["station.create"]);
+  });
+});
+
+describe("the hint to raise Max i gang", () => {
+  const el = (piece: number) => ({ barcode: `0585560501${String(piece).padStart(2, "0")}`, piece });
+
+  /** Derives one order from these scans and stores its rows, as the read model would. */
+  async function store(scans: Scan[], now: number) {
+    const derived = deriveOrder(scans, null, { now, calendar: DEFAULT_CALENDAR }) as DerivedOrder;
+    await testDb.withService(async (db) => {
+      for (const [table, list] of [
+        ["orders", [derived.order]],
+        ["elements", derived.elements],
+        ["stationIntervals", derived.intervals],
+      ] as const) {
+        for (const row of list) {
+          const { sql, values } = insertSql(table, row);
+          await db.query(sql, values);
+        }
+      }
+    });
+  }
+
+  it("names a station at 1 where elements were taken over by another three times, not by a re-scan", async () => {
+    await createStation(admin, montage);
+    const now = at("12:00");
+    // Four elements scanned in one after the other, never out: three taken over by another.
+    // A fifth scanned in twice: taken over by itself, which does not count.
+    await store(
+      [
+        ...[1, 2, 3, 4].map((piece, i) => scan("In", at("07:00") + i * 600_000, el(piece))),
+        scan("In", at("06:00"), el(5)),
+        ...pass(at("06:10"), at("06:20"), el(5)),
+      ],
+      now
+    );
+    expect(await listParallelHints(viewer, now)).toEqual({ 1: 3 });
+    // Gone after seven days, and never shown for a station above 1.
+    expect(await listParallelHints(viewer, now + 8 * 86_400_000)).toEqual({});
+    expect(await updateStation(admin, { ...montage, maxOpen: 6 })).toEqual({ ok: true });
+    expect(await listParallelHints(viewer, now)).toEqual({});
   });
 });
 
