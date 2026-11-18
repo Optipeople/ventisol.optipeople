@@ -2,25 +2,30 @@
 // a zod schema and a ToolContext; no import from `ai` or from the chat route,
 // so the same tools can be served over MCP later.
 //
-// A role gets one tool per report query it may run (reportQueriesFor) plus
-// search_documents. A tool it does not get is never offered to the model,
-// and running one anyway still fails in runReportQuery and in the database.
+// A role gets one tool per report query it may run (reportQueriesFor), plus
+// station_timeline (reports.view) and search_documents. A tool it does not
+// get is never offered to the model, and running one anyway still fails in
+// runReportQuery (or the tool's own check) and in the database.
 
 import { ZodError } from "zod";
 import type { Claims } from "@/lib/db";
+import { can } from "@/lib/portal/roles";
 import { ReportAccessError, reportQueriesFor } from "@/lib/reports";
 import { reportTool } from "./report-tools";
 import { searchDocumentsTool } from "./search-documents";
+import { stationTimelineTool } from "./station-timeline";
 import type { ChatTool, ToolContext, ToolResult } from "./types";
 
 export type { ChatTool, ToolContext, ToolResult, ToolView, ViewColumn } from "./types";
 export { compact, compactResult, MAX_LIST } from "./compact";
 export { findDocuments, searchDocuments, searchDocumentsTool } from "./search-documents";
+export { stationTimeline, stationTimelineTool, TIMELINE_MAX_DAYS, TIMELINE_MAX_ROWS } from "./station-timeline";
 export { buildSystemPrompt, buildSystemPromptParts, type PromptContext } from "./prompt";
 
 /** The tools this role may use, in a fixed order (stable for prompt caching). */
 export function chatToolsFor(claims: Claims): ChatTool[] {
-  return [...reportQueriesFor(claims).map(reportTool), searchDocumentsTool];
+  const timeline = can(claims.role, "reports.view") ? [stationTimelineTool as ChatTool] : [];
+  return [...reportQueriesFor(claims).map(reportTool), ...timeline, searchDocumentsTool];
 }
 
 /** A tool result the model can read when the call failed: never a stack trace. */

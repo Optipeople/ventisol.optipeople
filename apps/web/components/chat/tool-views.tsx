@@ -39,6 +39,7 @@ export const TOOL_LABELS: Record<string, string> = {
   baseline_suggestion: "Beregner forslag til normaltider",
   capacity_plan: "Henter kapacitetsplan",
   staffing_analysis: "Henter bemanding",
+  station_timeline: "Henter stationens passager",
   search_documents: "Søger i produktionslisterne",
 };
 

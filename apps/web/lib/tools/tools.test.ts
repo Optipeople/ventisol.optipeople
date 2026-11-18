@@ -6,7 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
 import { REPORT_QUERY_NAMES, type ReportQueryName } from "@/lib/reports";
-import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
+import { element, IN_PROGRESS_ORDERS, local, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
+import { pass } from "@/lib/test-helpers";
 import { estimateCostUsd } from "@/app/api/chat/pricing";
 import {
   buildSystemPrompt,
@@ -16,8 +17,10 @@ import {
   compactResult,
   MAX_LIST,
   runChatTool,
+  TIMELINE_MAX_ROWS,
   type ToolContext,
 } from "./index";
+import { withMaxOpen } from "./report-tools";
 
 const admin = testClaims("admin");
 const ledelse = testClaims("ledelse");
@@ -29,7 +32,7 @@ const ctx = (claims = admin): ToolContext => ({ claims, now: NOW });
 const names = (claims = admin) => chatToolsFor(claims).map((t) => t.name);
 
 /** What the model would send to every tool: no `now`, the tool adds it. */
-const MODEL_INPUTS: Record<ReportQueryName | "search_documents", unknown> = {
+const MODEL_INPUTS: Record<ReportQueryName | "station_timeline" | "search_documents", unknown> = {
   find_order: { query: "5000" },
   order_status: { orderNo: 50006 },
   order_route: { orderNo: 50002 },
@@ -51,12 +54,17 @@ const MODEL_INPUTS: Record<ReportQueryName | "search_documents", unknown> = {
   baseline_suggestion: { ...OCTOBER, minSamples: 1 },
   capacity_plan: { day: "2026-11-18" },
   staffing_analysis: OCTOBER,
+  station_timeline: { stationNo: 1, from: "2026-10-21" },
   search_documents: { query: "terrassedør" },
 };
 
 describe("which tools a role gets", () => {
-  it("admin gets one tool per report query plus search_documents", () => {
-    expect(names(admin)).toEqual([...REPORT_QUERY_NAMES, "search_documents"]);
+  it("admin gets one tool per report query plus station_timeline and search_documents", () => {
+    expect(names(admin)).toEqual([...REPORT_QUERY_NAMES, "station_timeline", "search_documents"]);
+  });
+
+  it("every role that sees stations gets station_timeline", () => {
+    for (const claims of [admin, ledelse, planner, viewer]) expect(names(claims)).toContain("station_timeline");
   });
 
   it("a viewer never gets calc_vs_measured or the Ledelse tools", () => {
@@ -208,6 +216,108 @@ describe("running the tools", () => {
   });
 });
 
+// Station 1 with "Max i gang" 3: order 50009 is on it 07:10-07:40 on
+// 21 October, beside 50001 (07:00-07:30). The split is set by hand as the
+// station-day rebuild would: 50001 gets 1200 s of its 1800, 50009 1500.
+describe("parallel work at a station", () => {
+  let db: TestDb;
+  const DAY = "2026-10-21";
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+  beforeEach(async () => {
+    await db.reset();
+    await seedConfig(db);
+    await seedOctober(db, [
+      { scans: pass(local(DAY, "08:10"), local(DAY, "08:40"), element(50009, 1)), info: null },
+    ]);
+    await db.withService(async (tx) => {
+      await tx.query("update config.stations set max_open = 3 where station_no = 1");
+      await tx.query(
+        `update core.station_intervals set start_at = start_at - interval '1 hour', end_at = end_at - interval '1 hour',
+           allocated_seconds = 1500, allocated_working_seconds = 1500
+         where order_no = 50009 and station_no = 1`
+      );
+      await tx.query(
+        `update core.station_intervals set allocated_seconds = 1200, allocated_working_seconds = 1200
+         where order_no = 50001 and station_no = 1`
+      );
+    });
+  });
+  afterAll(() => db.close());
+
+  type Timeline = {
+    maxOpen: number;
+    parallel: boolean;
+    passes: number;
+    maxConcurrent: number;
+    passesSplit: number;
+    rows: { orderNo: number; durationSeconds: number | null; splitSeconds: number | null; overlapping: number }[];
+  };
+
+  it("station_timeline gives each pass its wall-clock time and its split time", async () => {
+    const result = await runChatTool(ctx(admin), "station_timeline", { stationNo: 1, from: DAY, clock: "wall" });
+    const t = result.data as Timeline;
+    expect(t).toMatchObject({ maxOpen: 3, parallel: true, passes: 2, maxConcurrent: 2, passesSplit: 2 });
+    expect(t.rows.map((r) => [r.orderNo, r.durationSeconds, r.splitSeconds, r.overlapping])).toEqual([
+      [50001, 1800, 1200, 1],
+      [50009, 1800, 1500, 1],
+    ]);
+    const json = JSON.stringify(t);
+    expect(json).not.toContain("wallSeconds");
+    expect(json).not.toContain("intervalId");
+    const table = result.views.find((v) => v.kind === "table");
+    if (table?.kind !== "table") throw new Error("expected a table view");
+    expect(table.columns.map((c) => c.label)).toEqual(["Ind", "Ud", "Element", "Type", "Tid", "Delt tid"]);
+    expect(table.rows).toHaveLength(2);
+    expect(result.views[0]).toMatchObject({ kind: "note" });
+    expect(result.href).toBe(`/stationer/1?day=${DAY}&clock=wall`);
+  });
+
+  it("a station with one at a time is not parallel, and a range is cut at a week", async () => {
+    const result = await runChatTool(ctx(viewer), "station_timeline", { stationNo: 7, from: "2026-10-01", to: "2026-10-31" });
+    const t = result.data as Timeline & { period: { from: string; to: string }; daysOmitted: number };
+    expect(t).toMatchObject({ maxOpen: 1, parallel: false, period: { from: "2026-10-01", to: "2026-10-07" }, daysOmitted: 24 });
+    expect(result.views.some((v) => v.kind === "note")).toBe(false);
+  });
+
+  it("keeps at most TIMELINE_MAX_ROWS passes and counts the rest", () => {
+    expect(TIMELINE_MAX_ROWS).toBeLessThanOrEqual(MAX_LIST);
+  });
+
+  it.each(["station_day", "station_performance", "calc_vs_measured", "bottleneck", "baseline_suggestion", "stations"])(
+    "%s carries each station's maxOpen",
+    async (name) => {
+      const input = name === "station_day" ? { day: DAY } : name === "stations" ? {} : { ...OCTOBER, ...(name === "baseline_suggestion" ? { minSamples: 1 } : {}) };
+      const result = await runChatTool(ctx(admin), name, input);
+      const found: { stationNo: number; maxOpen: unknown }[] = [];
+      JSON.stringify(result.data, (key, value) => {
+        if (value && typeof value === "object" && typeof (value as { stationNo?: unknown }).stationNo === "number") {
+          found.push(value as { stationNo: number; maxOpen: unknown });
+        }
+        return value;
+      });
+      expect(found.length, name).toBeGreaterThan(0);
+      for (const s of found) expect(s.maxOpen, `${name} station ${s.stationNo}`).toBe(s.stationNo === 1 ? 3 : 1);
+    }
+  );
+});
+
+describe("withMaxOpen", () => {
+  it("puts maxOpen beside every stationNo, 1 for an unknown station, and keeps one already there", () => {
+    const map = new Map([[1, 6]]);
+    expect(withMaxOpen({ rows: [{ stationNo: 1 }, { stationNo: 9 }], stationNo: null }, map)).toEqual({
+      rows: [
+        { stationNo: 1, maxOpen: 6 },
+        { stationNo: 9, maxOpen: 1 },
+      ],
+      stationNo: null,
+    });
+    expect(withMaxOpen([{ stationNo: 1, maxOpen: 2 }], map)).toEqual([{ stationNo: 1, maxOpen: 2 }]);
+  });
+});
+
 describe("compact", () => {
   it("turns a Duration into one headline number with the unit in the key", () => {
     expect(compact({ lead: { seconds: 61.4, wallSeconds: 70, workingSeconds: 61.4 } })).toEqual({ leadSeconds: 61 });
@@ -262,6 +372,9 @@ describe("system prompt", () => {
     expect(prompt).toContain("mandag");
     expect(prompt).toContain("Denne uge: 2026-11-16 til 2026-11-22");
     expect(prompt).toContain("Alle tal skal komme fra værktøjerne");
+    expect(prompt).toContain("Max i gang");
+    expect(prompt).toContain("delt tid");
+    expect(prompt).toContain("ur-tid");
     expect(prompt).toContain("Læser");
     expect(prompt).not.toMatch(/[–—]/);
   });

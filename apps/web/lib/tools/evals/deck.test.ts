@@ -1,6 +1,7 @@
 // The six questions from the sales deck (docs/web-portal-plan.md section 1
 // and 5.2) against the real model on the Anthropic API, on the seeded
-// test database. Asserts tool choice: the right tool is called, and a role
+// test database, plus questions the deck did not have (parallel work at a
+// station). Asserts tool choice: the right tool is called, and a role
 // never reaches a tool it may not use.
 //
 // Costs real money, so it runs only with a key in the shell (vitest does not
@@ -29,6 +30,8 @@ interface DeckCase {
   claims: Claims;
   /** None of these may be called. */
   never?: string[];
+  /** The answer must match this. */
+  says?: RegExp;
 }
 
 // Order 1042 from the deck is 50006 in the test data (an order in progress).
@@ -46,6 +49,14 @@ const CASES: DeckCase[] = [
     question: "Hvad skal ledelsen vide i dag?",
     anyOf: ["kpi_summary", "management_kpis"],
     claims: testClaims("ledelse"),
+  },
+  // Not from the deck: the glazing station (seeded below with "Max i gang" 6)
+  // works several elements at once, so its time per piece is split time.
+  {
+    question: "Hvorfor ser glas-stationen langsom ud?",
+    anyOf: ["station_performance", "station_timeline", "station_day"],
+    claims: testClaims("planner"),
+    says: /delt/i,
   },
 ];
 
@@ -69,6 +80,9 @@ describe.skipIf(!enabled)("deck questions (live model)", () => {
   beforeAll(async () => {
     db = await createTestDb();
     await seedConfig(db);
+    await db.withService((tx) =>
+      tx.query(`insert into config.stations (station_no, name, kind, sort_order, max_open) values (3, 'Glas', 'assembly', 30, 6)`)
+    );
     await seedOctober(db, IN_PROGRESS_ORDERS);
   });
   afterAll(() => db.close());
@@ -77,6 +91,7 @@ describe.skipIf(!enabled)("deck questions (live model)", () => {
     const { called, text } = await ask(c);
     expect(called.some((name) => c.anyOf.includes(name)), `called: ${called.join(", ")}`).toBe(true);
     for (const name of c.never ?? []) expect(called).not.toContain(name);
+    if (c.says) expect(text).toMatch(c.says);
     expect(text.trim().length).toBeGreaterThan(0);
   }, 180_000);
 
