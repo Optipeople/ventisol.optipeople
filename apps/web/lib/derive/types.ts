@@ -304,6 +304,14 @@ export interface StationIntervalRow {
   startEstimated: boolean;
   durationSeconds: number | null;
   durationWorkingSeconds: number | null;
+  /**
+   * Split time (docs/read-model.md §2): the pass's share of its station's time
+   * when several elements were on it at once; the whole time when alone. Up to
+   * now while open, null on a missing scan-out. Set by the station-day rebuild
+   * (it needs the other orders' passes): null when an order is derived.
+   */
+  allocatedSeconds: number | null;
+  allocatedWorkingSeconds: number | null;
   /** Time since the element's previous Out, at any station. Null on its first pass. */
   waitBeforeSeconds: number | null;
   waitBeforeWorkingSeconds: number | null;

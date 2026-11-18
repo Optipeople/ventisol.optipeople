@@ -9,7 +9,13 @@
 import { revalidatePath } from "next/cache";
 import { getPortalAccess } from "@/lib/auth";
 import type { Claims } from "@/lib/db";
-import { onCalendarChanged, onElementTypesChanged, onMaxOpenChanged, onSettingsChanged } from "@/lib/readmodel";
+import {
+  onCalculatedTimesChanged,
+  onCalendarChanged,
+  onElementTypesChanged,
+  onMaxOpenChanged,
+  onSettingsChanged,
+} from "@/lib/readmodel";
 import { can, isPortalRole, type Capability } from "@/lib/portal/roles";
 import { SET_ROLE_ERRORS, setPortalUserRole } from "@/lib/portal/users";
 import {
@@ -32,6 +38,7 @@ import {
 import { fail, FORBIDDEN_MESSAGE, OK, type ActionResult } from "@/lib/settings/result";
 import { SETTINGS_PATH } from "@/lib/settings/sections";
 import { saveStationChanged, setStationActive } from "@/lib/settings/stations";
+import { setParallelSplit } from "@/lib/settings/parallel-split";
 import { saveThresholdsChanged } from "@/lib/settings/thresholds";
 import { saveTimes } from "@/lib/settings/times";
 import { requestRebuildAsAdmin, requestSyncAsAdmin, type AdminRunResult } from "@/lib/sync/status";
@@ -153,7 +160,15 @@ export async function restoreDefaultElementTypesAction(): Promise<ActionResult> 
 // --- Tider ---
 
 export async function saveTimesAction(kind: unknown, entries: unknown): Promise<ActionResult> {
-  return run("times.edit", "config", (claims) => saveTimes(claims, kind, entries));
+  // Split time is weighed by the calculated times; normal times are read at report time.
+  return run(
+    "times.edit",
+    "config",
+    (claims) => saveTimes(claims, kind, entries),
+    kind === "calculated"
+      ? () => refreshReadModel((now) => onCalculatedTimesChanged(now, { budgetMs: READ_MODEL_BUDGET_MS }))
+      : undefined
+  );
 }
 
 /**
@@ -215,6 +230,27 @@ export async function saveThresholdsAction(values: unknown): Promise<ActionResul
     },
     () =>
       refreshReadModel((now) => onSettingsChanged(changed, now, { budgetMs: READ_MODEL_BUDGET_MS }))
+  );
+}
+
+/** "Fordel tid ved parallelt arbejde": stored in core.* (split time), so a change rebuilds. */
+export async function setParallelSplitAction(value: unknown): Promise<ActionResult> {
+  let changed = false;
+  return run(
+    "times.edit",
+    "config",
+    async (claims) => {
+      const saved = await setParallelSplit(claims, value);
+      changed = saved.changed;
+      return saved.result;
+    },
+    async () => {
+      if (changed) {
+        await refreshReadModel((now) =>
+          onSettingsChanged(["parallel_split"], now, { budgetMs: READ_MODEL_BUDGET_MS })
+        );
+      }
+    }
   );
 }
 

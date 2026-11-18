@@ -47,6 +47,10 @@ function PassStatus({ iv }: { iv: TimelineInterval }) {
 }
 
 export function PassesTable({ day, intervals }: { day: string; intervals: TimelineInterval[] }) {
+  // Only a station that had several elements in progress at once has a split time to show.
+  const shared = intervals.some(
+    (iv) => iv.status === "done" && iv.split.seconds != null && iv.split.seconds !== iv.duration.seconds
+  );
   return (
     <TableFrame>
       <DataTable stickyHeader>
@@ -54,6 +58,11 @@ export function PassesTable({ day, intervals }: { day: string; intervals: Timeli
           <DataTableHeader>Ind</DataTableHeader>
           <DataTableHeader>Ud</DataTableHeader>
           <DataTableHeader align="right">Tid</DataTableHeader>
+          {shared && (
+            <DataTableHeader align="right">
+              <span title="Elementets andel af stationens tid, når flere elementer var i gang samtidig">Delt tid</span>
+            </DataTableHeader>
+          )}
           <DataTableHeader align="right">Ventede før</DataTableHeader>
           <DataTableHeader>Ordre</DataTableHeader>
           <DataTableHeader>Element</DataTableHeader>
@@ -82,6 +91,15 @@ export function PassesTable({ day, intervals }: { day: string; intervals: Timeli
                   formatDuration(iv.duration.seconds)
                 )}
               </DataTableCell>
+              {shared && (
+                <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
+                  {iv.status === "missing_out" ? (
+                    <span className="text-[var(--ds-grey-medium-05)]">Ukendt</span>
+                  ) : (
+                    formatDuration(iv.split.seconds)
+                  )}
+                </DataTableCell>
+              )}
               <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
                 {formatDuration(iv.waitBefore.seconds)}
               </DataTableCell>

@@ -34,6 +34,24 @@ const morning = () => [
 ];
 
 describe("deriveStationDay", () => {
+  it("takes time per piece from the split time, and busy time from the wall clock", () => {
+    // Two elements on the station together 08:00 to 09:00: half an hour of the station's time each.
+    const list = rows([...pass(at("08:00"), at("09:00"), el(1)), ...pass(at("08:00"), at("09:00"), el(2))], at("10:00"));
+    const split = list.map((r) => ({ ...r, allocatedSeconds: 30 * MIN, allocatedWorkingSeconds: 30 * MIN }));
+    const f = deriveStationDay(1, DAY, split, { now: at("10:00"), calendar: DEFAULT_CALENDAR }) as StationDayFactsRow;
+    expect(f).toMatchObject({
+      timePerPieceSeconds: 30 * MIN,
+      timePerPieceWorkingSeconds: 30 * MIN,
+      meanPieceSeconds: 30 * MIN,
+      passSecondsTotal: 60 * MIN,
+      busySeconds: 60 * MIN,
+    });
+    expect(f.byElementType).toEqual([{ elementTypeId: null, count: 2, medianSeconds: 30 * MIN, meanSeconds: 30 * MIN }]);
+    // Not split yet: the wall clock.
+    const wall = deriveStationDay(1, DAY, list, { now: at("10:00"), calendar: DEFAULT_CALENDAR }) as StationDayFactsRow;
+    expect(wall.timePerPieceSeconds).toBe(60 * MIN);
+  });
+
   it("counts, times and gaps for a day in progress", () => {
     const f = facts(morning(), at("10:00")) as StationDayFactsRow;
     expect(f).toMatchObject({

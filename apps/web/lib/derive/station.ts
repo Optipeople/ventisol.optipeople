@@ -1,7 +1,9 @@
 // Station figures per Copenhagen day, and the read-time status label. Pure.
 //
 // deriveStationDay turns the interval rows of one station around one day into
-// one core.station_day_facts row. It stores primitives only (median time per
+// one core.station_day_facts row. Time per piece (median, mean, by element
+// type, the pass-time total) is split time; busy time, utilisation and gaps
+// are wall clock, where overlapping passes count once. It stores primitives only (median time per
 // piece, the in-shift gaps, the longest wait). Everything that depends on a
 // setting (normal time, thresholds) is applied at read time by stationStatus,
 // so changing a normal time or a threshold needs no rebuild.
@@ -126,8 +128,15 @@ export function deriveStationDay(
     .filter(([s, e]) => e - s >= params.gapFloorSeconds * 1000)
     .map(([s, e]) => ({ startAt: iso(s), endAt: iso(e), seconds: seconds(e - s) }));
 
-  const durations = done.map((m) => m.row.durationSeconds ?? seconds((m.end as number) - m.start));
-  const workingDurations = done.map((m) => m.row.durationWorkingSeconds).filter((v): v is number => v != null);
+  // Time per piece is split time (docs/read-model.md §2): with several
+  // elements on the station at once, each pass counts its share. A row not
+  // split yet counts its wall-clock time.
+  const durations = done.map(
+    (m) => m.row.allocatedSeconds ?? m.row.durationSeconds ?? seconds((m.end as number) - m.start)
+  );
+  const workingDurations = done
+    .map((m) => m.row.allocatedWorkingSeconds ?? m.row.durationWorkingSeconds)
+    .filter((v): v is number => v != null);
 
   const byType = new Map<string | null, number[]>();
   done.forEach((m, i) => {

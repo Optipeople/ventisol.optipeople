@@ -121,7 +121,8 @@ in force (read-model.md section 7, Normal, deviation and status).
 ### `listStations(claims)`: `StationInfo[]`
 
 SQL: `rpt.stations`. Active stations in sort order with kind, Danish kind
-label and normal times per element type. Any role.
+label, normal times per element type and `maxOpen` ("Max i gang",
+`config.stations.max_open`, 1 unless set). Any role.
 
 ### `getStationDay(claims, { day, clock? })`: `StationDayReport`
 
@@ -129,7 +130,10 @@ SQL: `rpt.station_day`. One `StationRow` per active station:
 
 - `countThrough`, `elementsThrough`, `reworkPasses`, `openCount`,
   `missingScanOutCount` from `core.station_day_facts` (section 7).
-- `timePerPiece`: the median pass time. `meanPieceSeconds` is the mean.
+- `timePerPiece`: the median pass time, in split time (read-model.md §2,
+  Split time: at a station with several elements in progress at once each
+  pass counts its share). `meanPieceSeconds` is the mean. Utilisation, busy
+  time and standstill stay wall clock.
 - `normalSeconds` and `deviationPercent`: the normal time weighted by the
   day's element types, and the headline time per piece against it.
 - `standstillSeconds`, `gaps`, `utilisationPercent`, `availableSeconds`,
@@ -154,8 +158,10 @@ SQL: `rpt.station_day`, `rpt.station_timeline`,
 `rpt.station_type_distribution`, `rpt.station_performance` per week. The
 station's row for the day, the day's passes (`timeline`), the spread of pass
 times per element type over the last `weeks` ISO weeks (12) ending with the
-week of `day` (`distribution`, with min, quartiles, median, max), and the
-weekly `trend` against normal. A station that is not configured comes back as
+week of `day` (`distribution`, with min, quartiles, median, max, in split
+time), and the weekly `trend` against normal. Each timeline pass has
+`duration` (wall clock) and `split` (its share of the station's time; the
+same as `duration` when it was alone, up to now while open). A station that is not configured comes back as
 a placeholder with `configured: false`. Any role.
 
 ## 4. Ordrer (`orders.ts`)
@@ -269,7 +275,7 @@ SQL: `rpt.calc_vs_measured`. Roles admin, ledelse and planner.
 - `rows`: one per station and element type with a calculated time in
   `config.calculated_times`: `calculatedSeconds`, the normal time, the number
   of finished passes that ended in the period, `measured` (the median pass
-  time, both clocks), `deviationPercent` of measured against calculated, and
+  time in split time, both clocks), `deviationPercent` of measured against calculated, and
   `flagged` when the deviation is over
   `calculation_deviation_threshold_percent` in either direction.
 - `byElementType`: per element type the sum of the calculated times and the
@@ -341,7 +347,7 @@ and packed.
 
 SQL: `rpt.baseline_suggestion`. Per station and element type: the number of
 finished passes that ended in the period, median (the suggestion), mean,
-quartiles and the normal time in force with its source. Pairs with fewer than
+quartiles (all in split time) and the normal time in force with its source. Pairs with fewer than
 `minSamples` (5) passes are left out. `weeks` is the length of the period.
 
 ### `getCapacityPlan(claims, { day })`: `CapacityPlan`

@@ -307,7 +307,14 @@ export interface TimelineInterval {
   /** Null while open and on a missing scan-out. */
   endAt: Iso | null;
   startEstimated: boolean;
+  /** Wall clock, In to Out. Null seconds while open and on a missing scan-out. */
   duration: Duration;
+  /**
+   * Split time: the pass's share of the station's time when several elements
+   * were in progress there at once; the same as `duration` when it was alone.
+   * Up to now while open, null seconds on a missing scan-out.
+   */
+  split: Duration;
   waitBefore: Duration;
 }
 

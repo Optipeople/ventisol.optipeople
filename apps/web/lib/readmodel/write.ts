@@ -14,7 +14,9 @@ import {
   deriveOrders,
   deriveStationDay,
   mergeStationDays,
+  splitStationTime,
   stationDaysTouched,
+  type SplitPass,
   toSnake,
   type CoreTable,
   type DerivedOrder,
@@ -230,8 +232,17 @@ export async function replaceOrders(
 ): Promise<ReplaceResult> {
   if (orderNos.length === 0) return { orders: 0, days: [] };
 
-  const oldRows = await db.query<{ station_no: number; start_at: Date; end_at: Date | null; status: DayRow["status"] }>(
-    "select station_no, start_at, end_at, status from core.station_intervals where order_no = any($1::int[])",
+  const oldRows = await db.query<{
+    interval_id: string;
+    station_no: number;
+    start_at: Date;
+    end_at: Date | null;
+    status: DayRow["status"];
+    allocated_seconds: number | null;
+    allocated_working_seconds: number | null;
+  }>(
+    `select interval_id, station_no, start_at, end_at, status, allocated_seconds, allocated_working_seconds
+       from core.station_intervals where order_no = any($1::int[])`,
     [orderNos]
   );
   const old: DayRow[] = oldRows.map((r) => ({
@@ -269,6 +280,34 @@ export async function replaceOrders(
   await insertRows(db, "stationIntervals", derived.flatMap((d) => d.intervals));
   await insertRows(db, "orderSteps", derived.flatMap((d) => d.steps));
 
+  // Split time is made by the station-day rebuild, which follows. Until then
+  // a pass that is the same as before keeps its share, so a rebuild that
+  // stops half way (a time budget) leaves no hole in it.
+  const kept = oldRows.filter((r) => r.allocated_seconds != null);
+  if (kept.length > 0) {
+    await db.query(
+      `update core.station_intervals n
+          set allocated_seconds = o.allocated_seconds, allocated_working_seconds = o.allocated_working_seconds
+         from jsonb_to_recordset($1::jsonb) as o(interval_id text, start_at timestamptz, end_at timestamptz,
+                                                 status text, allocated_seconds integer, allocated_working_seconds integer)
+        where n.interval_id = o.interval_id and n.start_at = o.start_at
+          and n.end_at is not distinct from o.end_at and n.status = o.status and n.status <> 'missing_out'`,
+      [
+        JSON.stringify(
+          kept.map((r) => ({
+            interval_id: r.interval_id,
+            start_at: iso(r.start_at),
+            end_at: isoOrNull(r.end_at),
+            status: r.status,
+            allocated_seconds: r.allocated_seconds,
+            allocated_working_seconds: r.allocated_working_seconds,
+          }))
+        ),
+      ]
+    );
+  }
+  await refreshTouch(db, orderNos, now);
+
   const fresh = derived.flatMap((d) => d.intervals);
   return {
     orders: orderNos.length,
@@ -277,6 +316,47 @@ export async function replaceOrders(
       stationDaysTouched(fresh, now)
     ),
   };
+}
+
+/**
+ * Order touch time in split time: core.elements, the assembly and packing
+ * rows of core.order_steps and core.orders get the sum of their passes'
+ * allocated_seconds. A pass not split yet counts its wall-clock time (an
+ * open one up to `now`), the time deriveOrders put there. Only rows whose
+ * figure changes are written.
+ */
+export async function refreshTouch(db: Db, orderNos: number[], now: number): Promise<void> {
+  if (orderNos.length === 0) return;
+  const pass = `with p as (
+      select i.order_no, i.barcode, i.station_kind,
+             coalesce(i.allocated_seconds, i.duration_seconds,
+                      greatest(0, round(extract(epoch from ($2::timestamptz - i.start_at))))::integer) as seconds
+        from core.station_intervals i
+       where i.order_no = any($1::int[]) and i.status <> 'missing_out'
+    )`;
+  const params = [orderNos, new Date(now).toISOString()];
+  await db.query(
+    `${pass}
+     update core.elements e set touch_seconds = t.seconds
+       from (select barcode, sum(seconds)::integer as seconds from p group by barcode) t
+      where e.barcode = t.barcode and e.order_no = any($1::int[]) and e.touch_seconds is distinct from t.seconds`,
+    params
+  );
+  await db.query(
+    `${pass}
+     update core.order_steps s set touch_seconds = t.seconds
+       from (select order_no, station_kind, sum(seconds)::integer as seconds from p group by order_no, station_kind) t
+      where s.order_no = t.order_no and s.step = t.station_kind and s.touch_seconds is not null
+        and s.touch_seconds is distinct from t.seconds`,
+    params
+  );
+  await db.query(
+    `${pass}
+     update core.orders o set touch_seconds = t.seconds
+       from (select order_no, sum(seconds)::integer as seconds from p group by order_no) t
+      where o.order_no = t.order_no and o.touch_seconds is distinct from t.seconds`,
+    params
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +382,8 @@ interface IntervalDbRow {
   start_estimated: boolean;
   duration_seconds: number | null;
   duration_working_seconds: number | null;
+  allocated_seconds: number | null;
+  allocated_working_seconds: number | null;
   wait_before_seconds: number | null;
   wait_before_working_seconds: number | null;
   element_type_id: string | null;
@@ -327,6 +409,8 @@ function toIntervalRow(r: IntervalDbRow): StationIntervalRow {
     startEstimated: r.start_estimated,
     durationSeconds: r.duration_seconds,
     durationWorkingSeconds: r.duration_working_seconds,
+    allocatedSeconds: r.allocated_seconds,
+    allocatedWorkingSeconds: r.allocated_working_seconds,
     waitBeforeSeconds: r.wait_before_seconds,
     waitBeforeWorkingSeconds: r.wait_before_working_seconds,
     elementTypeId: r.element_type_id,
@@ -376,7 +460,8 @@ export async function replaceStationDays(
   const rows = await db.query<IntervalDbRow>(
     `select interval_id, order_no, barcode, station_no, station, station_kind, visit, is_rework,
             status, missing_reason, start_at, end_at, start_estimated, duration_seconds,
-            duration_working_seconds, wait_before_seconds, wait_before_working_seconds,
+            duration_working_seconds, allocated_seconds, allocated_working_seconds,
+            wait_before_seconds, wait_before_working_seconds,
             element_type_id, local_day, in_scan_id, out_scan_id
        from core.station_intervals
       where station_no = any($1::int[])
@@ -392,6 +477,7 @@ export async function replaceStationDays(
     if (list) list.push(entry);
     else byStation.set(r.station_no, [entry]);
   }
+  await splitPasses(db, [...byStation.values()].flat(), config, now);
 
   const facts: StationDayFactsRow[] = [];
   const gone: { station_no: number; local_day: string }[] = [];
@@ -427,6 +513,79 @@ export async function replaceStationDays(
     );
   }
   return days.length;
+}
+
+/**
+ * Split time for these passes (docs/read-model.md §2, Split time): reads every
+ * done and open pass at their stations that overlaps them (a pass's share
+ * depends on the passes beside it, which may lie outside the days rebuilt),
+ * shares each station's time, writes allocated_* where it changed and sets
+ * it on the rows handed in, then brings the touch times of the orders
+ * concerned in line (refreshTouch). A missing scan-out gets null.
+ */
+async function splitPasses(
+  db: Db,
+  entries: { row: StationIntervalRow; start: number; end: number | null }[],
+  config: ReadModelConfig,
+  now: number
+): Promise<void> {
+  const counted = entries.filter((e) => e.row.status !== "missing_out");
+  const shares = new Map<string, { seconds: number; workingSeconds: number }>();
+  if (counted.length > 0) {
+    const until = (e: { start: number; end: number | null }) => e.end ?? Math.max(e.start, now);
+    const from = Math.min(...counted.map((e) => e.start));
+    const to = Math.max(...counted.map(until));
+    const stations = [...new Set(counted.map((e) => e.row.stationNo))];
+    const around = await db.query<{
+      interval_id: string;
+      station_no: number;
+      element_type_id: string | null;
+      start_at: Date;
+      end_at: Date | null;
+    }>(
+      `select interval_id, station_no, element_type_id, start_at, end_at
+         from core.station_intervals
+        where station_no = any($1::int[])
+          and status <> 'missing_out'
+          and start_at <= $3::timestamptz
+          and (end_at >= $2::timestamptz or (end_at is null and status = 'open'))`,
+      [stations, new Date(from).toISOString(), new Date(to).toISOString()]
+    );
+    const perStation = new Map<number, SplitPass[]>();
+    for (const r of around) {
+      const start = r.start_at.getTime();
+      const weight =
+        r.element_type_id != null ? (config.split.calculated[r.station_no]?.[r.element_type_id] ?? null) : null;
+      const pass: SplitPass = { id: r.interval_id, start, end: r.end_at?.getTime() ?? Math.max(start, now), weight };
+      const list = perStation.get(r.station_no);
+      if (list) list.push(pass);
+      else perStation.set(r.station_no, [pass]);
+    }
+    for (const list of perStation.values()) {
+      for (const [id, share] of splitStationTime(list, config.split.mode, config.calendar)) shares.set(id, share);
+    }
+  }
+
+  const changes: { interval_id: string; seconds: number | null; working: number | null }[] = [];
+  for (const { row } of entries) {
+    const share = row.status !== "missing_out" ? shares.get(row.intervalId) : undefined;
+    const seconds = share?.seconds ?? null;
+    const working = share?.workingSeconds ?? null;
+    if (row.allocatedSeconds === seconds && row.allocatedWorkingSeconds === working) continue;
+    row.allocatedSeconds = seconds;
+    row.allocatedWorkingSeconds = working;
+    changes.push({ interval_id: row.intervalId, seconds, working });
+  }
+  if (changes.length === 0) return;
+  const changed = await db.query<{ order_no: number }>(
+    `update core.station_intervals s
+        set allocated_seconds = c.seconds, allocated_working_seconds = c.working
+       from jsonb_to_recordset($1::jsonb) as c(interval_id text, seconds integer, working integer)
+      where s.interval_id = c.interval_id
+      returning s.order_no`,
+    [JSON.stringify(changes)]
+  );
+  await refreshTouch(db, [...new Set(changed.map((r) => r.order_no))], now);
 }
 
 /**

@@ -4,8 +4,10 @@
 
 import type { Db } from "@/lib/db";
 import {
+  DEFAULT_PARALLEL_SPLIT,
   DEFAULT_PARAMS,
   type DeriveParams,
+  type ParallelSplit,
   type StationKind,
   type TypicalStation,
   type TypicalTimes,
@@ -23,6 +25,10 @@ import { rulesFromConfig } from "./orderinfo";
  *   schirmer_assumed_minutes_per_batch  schirmerAssumedSeconds: the assumed
  *                                       Schirmer row of core.order_steps
  *   on_time_week_offset                 onTimeWeekOffset (not seeded; default 0)
+ *   parallel_split                      how split time is weighed: the
+ *                                       allocated_* columns of
+ *                                       core.station_intervals and the touch
+ *                                       times built on them
  *
  * Every other seeded key is applied when a report is read and needs no
  * rebuild: deduct_off_shift (picks x_seconds or x_working_seconds),
@@ -34,6 +40,7 @@ export const DERIVE_TIME_SETTINGS = [
   "late_threshold",
   "schirmer_assumed_minutes_per_batch",
   "on_time_week_offset",
+  "parallel_split",
 ] as const;
 
 /** Days of history behind the typical times. */
@@ -46,6 +53,32 @@ export interface ReadModelConfig {
   typical: TypicalTimes | null;
   /** "Max i gang" of the stations set above 1 (config.stations.max_open). Every other station has 1. */
   maxOpen: Record<number, number>;
+  /** How split time is weighed (docs/read-model.md §2, Split time). */
+  split: SplitConfig;
+}
+
+export interface SplitConfig {
+  /** config.settings.parallel_split. */
+  mode: ParallelSplit;
+  /** config.calculated_times: station number to element type to seconds. */
+  calculated: Record<number, Record<string, number>>;
+}
+
+/** config.settings.parallel_split: "equal", else the default (calculated). */
+export function parallelSplitFrom(value: unknown): ParallelSplit {
+  return value === "equal" ? "equal" : value === "calculated" ? "calculated" : DEFAULT_PARALLEL_SPLIT;
+}
+
+/** The weights of split time: the setting and the calculated times. */
+export async function loadSplit(db: Db, settings?: { key: string; value: unknown }[]): Promise<SplitConfig> {
+  const rows =
+    settings ?? (await db.query<{ key: string; value: unknown }>("select key, value from config.settings where key = 'parallel_split'"));
+  const times = await db.query<{ station_no: number; element_type_id: string; seconds: number }>(
+    "select station_no, element_type_id, seconds from config.calculated_times order by station_no, element_type_id"
+  );
+  const calculated: Record<number, Record<string, number>> = {};
+  for (const t of times) (calculated[t.station_no] ??= {})[t.element_type_id] = Number(t.seconds);
+  return { mode: parallelSplitFrom(rows.find((r) => r.key === "parallel_split")?.value), calculated };
 }
 
 function numberSetting(value: unknown): number | null {
@@ -170,5 +203,6 @@ export async function loadConfig(db: Db, now: number): Promise<ReadModelConfig> 
     rules: rulesFromConfig(types),
     typical: await loadTypical(db, now),
     maxOpen: await loadMaxOpen(db),
+    split: await loadSplit(db, settings),
   };
 }

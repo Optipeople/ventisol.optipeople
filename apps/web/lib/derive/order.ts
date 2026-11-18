@@ -508,6 +508,8 @@ function deriveOne(
       durationSeconds: iv.end != null ? Math.round((iv.end - iv.start) / 1000) : null,
       durationWorkingSeconds:
         iv.end != null ? Math.round(workingMsBetween(iv.start, iv.end, calendar) / 1000) : null,
+      allocatedSeconds: null,
+      allocatedWorkingSeconds: null,
       waitBeforeSeconds: waitMs != null ? Math.round(waitMs / 1000) : null,
       waitBeforeWorkingSeconds: waitWorkingMs != null ? Math.round(waitWorkingMs / 1000) : null,
       elementTypeId: elements.get(iv.barcode)?.group?.first.elementTypeId ?? null,

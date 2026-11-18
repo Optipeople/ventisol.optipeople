@@ -114,6 +114,7 @@ function iv(over: Partial<TimelineInterval>): TimelineInterval {
     endAt: "2026-11-13T07:20:00.000Z",
     startEstimated: false,
     duration: { seconds: 600, wallSeconds: 600, workingSeconds: 600 },
+    split: { seconds: 600, wallSeconds: 600, workingSeconds: 600 },
     waitBefore: { seconds: null, wallSeconds: null, workingSeconds: null },
     ...over,
   };

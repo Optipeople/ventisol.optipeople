@@ -35,6 +35,7 @@ import {
   setStationActive,
   updateStation,
 } from "./stations";
+import { getParallelSplit, setParallelSplit } from "./parallel-split";
 import { getThresholds, saveThresholds, THRESHOLDS } from "./thresholds";
 import { DEFAULT_CALENDAR, deriveOrder, insertSql, type DerivedOrder } from "@/lib/derive";
 import type { Scan } from "@/lib/scans";
@@ -203,6 +204,18 @@ describe("stations", () => {
     expectForbidden(await setStationActive(claims, { stationNo: 1, active: false }));
     expect(await listStations(admin)).toEqual([expect.objectContaining({ stationNo: 1, name: "Montage 1", active: true })]);
     expect((await auditRows()).map((r) => r.action)).toEqual(["station.create"]);
+  });
+});
+
+describe("parallel split", () => {
+  it("is calculated by default, and a planner can change it, audited, with changed only on a change", async () => {
+    expect((await getParallelSplit(viewer)).value).toBe("calculated");
+    expect(await setParallelSplit(planner, "equal")).toEqual({ result: { ok: true }, changed: true });
+    expect(await setParallelSplit(planner, "equal")).toEqual({ result: { ok: true }, changed: false });
+    expect(await getParallelSplit(viewer)).toMatchObject({ value: "equal", updatedBy: planner.optiUserId });
+    expect((await setParallelSplit(admin, "weighted")).result).toMatchObject({ ok: false });
+    expectForbidden((await setParallelSplit(viewer, "calculated")).result);
+    expect((await auditRows()).map((r) => r.action)).toEqual(["setting.update"]);
   });
 });
 
@@ -555,7 +568,7 @@ describe("calendar", () => {
 describe("thresholds", () => {
   it("has a definition for every seeded threshold key, and the seeded values are inside the bounds", async () => {
     const seeded = await testDb.withService((db) =>
-      db.query<{ key: string }>("select key from config.settings where key <> 'deduct_off_shift' order by key")
+      db.query<{ key: string }>("select key from config.settings where key not in ('deduct_off_shift', 'parallel_split') order by key")
     );
     expect(THRESHOLDS.map((t) => t.key).sort()).toEqual(seeded.map((r) => r.key));
     for (const threshold of await getThresholds(viewer)) {

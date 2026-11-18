@@ -281,9 +281,11 @@ export async function getStationPerformance(
   });
 }
 
-interface TimelineRaw extends Omit<TimelineInterval, "duration" | "waitBefore"> {
+interface TimelineRaw extends Omit<TimelineInterval, "duration" | "split" | "waitBefore"> {
   durationSeconds: number | null;
   durationWorkingSeconds: number | null;
+  allocatedSeconds: number | null;
+  allocatedWorkingSeconds: number | null;
   waitBeforeSeconds: number | null;
   waitBeforeWorkingSeconds: number | null;
 }
@@ -352,9 +354,18 @@ export async function getStationDetail(
       [p.stationNo, new Date(dayStart(p.day)), new Date(dayEnd(p.day))]
     );
     const timeline: TimelineInterval[] = timelineRaw.map(
-      ({ durationSeconds, durationWorkingSeconds, waitBeforeSeconds, waitBeforeWorkingSeconds, ...rest }) => ({
+      ({
+        durationSeconds,
+        durationWorkingSeconds,
+        allocatedSeconds,
+        allocatedWorkingSeconds,
+        waitBeforeSeconds,
+        waitBeforeWorkingSeconds,
+        ...rest
+      }) => ({
         ...rest,
         duration: duration(durationSeconds, durationWorkingSeconds, ctx.useWorking),
+        split: duration(allocatedSeconds, allocatedWorkingSeconds, ctx.useWorking),
         waitBefore: duration(waitBeforeSeconds, waitBeforeWorkingSeconds, ctx.useWorking),
       })
     );

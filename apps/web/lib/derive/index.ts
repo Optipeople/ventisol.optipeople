@@ -15,6 +15,14 @@ export {
   workingSecondsBetween,
 } from "./calendar";
 export { endOrNow, kindOf, pairHistory, type PairOptions, type PairedInterval } from "./pairing";
+export {
+  DEFAULT_PARALLEL_SPLIT,
+  PARALLEL_SPLITS,
+  splitStationTime,
+  type ParallelSplit,
+  type SplitPass,
+  type SplitShare,
+} from "./allocate";
 export { deriveOrder, deriveOrders, dueAtFor, resolveParams, roundParts } from "./order";
 export {
   DEFAULT_THRESHOLDS,

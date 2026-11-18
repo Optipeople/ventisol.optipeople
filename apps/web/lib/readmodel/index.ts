@@ -602,6 +602,30 @@ export function onMaxOpenChanged(now: number, options: Omit<RebuildOptions, "res
 }
 
 /**
+ * Call after a commit that changed config.calculated_times. Split time is
+ * weighed by them (parallel_split "calculated"), so the split columns and
+ * the touch times on them are rebuilt, from the start. Nothing is done while
+ * the split is equal or no station has "Max i gang" above 1: a station that
+ * works one element at a time has (nearly) no time to share, and the next
+ * rebuild catches up the rest.
+ */
+export async function onCalculatedTimesChanged(
+  now: number,
+  options: Omit<RebuildOptions, "restart"> = {}
+): Promise<RebuildResult> {
+  const needed = await withService(async (db) => {
+    const rows = await db.query<{ needed: boolean }>(
+      `select exists (select 1 from config.stations where max_open > 1)
+              and coalesce((select value #>> '{}' from config.settings where key = 'parallel_split'), 'calculated')
+                  <> 'equal' as needed`
+    );
+    return rows[0]?.needed === true;
+  });
+  if (!needed) return { orders: 0, stationDays: 0, complete: true };
+  return rebuildAll(now, { ...options, restart: true });
+}
+
+/**
  * Call after a commit that changed rows of config.settings, with the keys
  * that changed. Only the keys in DERIVE_TIME_SETTINGS are stored in core.*
  * and need a rebuild. Every other key (deduct_off_shift and the thresholds)

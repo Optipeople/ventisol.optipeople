@@ -54,7 +54,10 @@ At a station with "Max i gang" above 1 (glazing), one person works several eleme
   - Not normal times: the Normaltid suggestions come from measured time, so weighing by them would feed them back into themselves.
 - A pass alone on its station gets its whole time, so at a station with 1 the split time equals the wall-clock time.
 - Rounded to whole seconds per pass.
-- The split is worked out per station over time, not per order, so it is made in the station-day rebuild (`replaceStationDays`), from every pass at the station that overlaps the days rebuilt. A changed `parallel_split` or calculated time needs a rebuild of the split columns.
+- The split is worked out per station over time, not per order, so it is made in the station-day rebuild (`replaceStationDays`, `splitStationTime` in `lib/derive/allocate.ts`), from every pass at the station that overlaps the passes of the days rebuilt (they cross midnight, so they are read by time, not by day). An open pass's share moves with the clock; today's station days are rebuilt on every run, so it follows.
+- The order rebuild (`replaceOrders`) deletes and inserts an order's passes before the split exists. A pass that is the same as before (same id, start, end and status) gets its old share back there, and a new or changed one is null until the station-day rebuild of the same run, a few milliseconds later. Every run that rebuilds orders also rebuilds the station days their passes lie on (§9, step 7), so a null lasts only while a rebuild that ran out of time waits for the next cron run. A null counts as its wall-clock time everywhere (`coalesce(allocated_seconds, duration_seconds)`).
+- **Order touch time** (`core.orders.touch_seconds`, `core.elements.touch_seconds`, `core.order_steps.touch_seconds` of assembly and packing) is the sum of the passes' split time. It cannot be worked out per order, so `deriveOrders` writes the wall-clock sum and the writer puts the split sum over it (`refreshTouch`): after the order rebuild, and again for every order whose passes got a new share in the station-day rebuild. A pass not split yet counts its wall-clock time, an open one up to now. The report functions read the column as before.
+- What rebuilds it: a changed "Max i gang" (`onMaxOpenChanged`) or `parallel_split` (`onSettingsChanged`) rebuilds everything; a changed calculated time (`onCalculatedTimesChanged`) does too, but only while the split is `calculated` and some station has "Max i gang" above 1. Indstillinger calls these after the save, with a 5 second budget; the cron run goes on with the rest. The split columns are filled the first time by any full rebuild (Indstillinger, Synkronisering, "Genopbyg"); until then every figure reads the wall clock, as before.
 - **Which figures use it:**
   - Split time: time per piece (median, mean, by element type), "Mod normalt" and Langsommere, Kalkule mod målt, Normaltid suggestions, order touch time, a station's pass-time total.
   - Wall clock: busy time, utilisation and gaps (overlap already counts once), lead time, order work time and waiting time.
@@ -94,7 +97,7 @@ One row per order. `core.order_facts` of the first plan is merged into it: both 
 - `elapsed_seconds` is the same span for an order in progress, up to `computed_at` ("Tid indtil nu").
 - **Work (Arbejde)** = the time when at least one element of the order was at a station. Two elements worked on side by side count once.
 - **Waiting (Ventetid)** = the rest: `work_seconds + wait_seconds = elapsed_seconds`, always, to the second.
-- `touch_seconds` is something else: the sum of all passes, where side-by-side work counts twice. It is the "time per order" of the station screen and the old reports, and the figure to hold against a calculated time.
+- `touch_seconds` is something else: the sum of all passes in split time (§2, Split time). Two elements at two stations side by side count twice; several elements on one station at once share its time. It is the "time per order" of the station screen and the old reports (which show wall clock only), and the figure to hold against a calculated time.
 
 ### On time (Leveret til tiden)
 
@@ -152,7 +155,7 @@ So:
 One row per barcode seen in a scan. Elements on the 3E list that were never scanned have no row (they show in the order's `missing_elements`).
 
 - `station_path`: station numbers in the order visited, one entry per pass, so rework shows as a repeat.
-- `total_seconds`: first In to last Out of its passes (to now while one is open). `touch_seconds`: the sum of its passes.
+- `total_seconds`: first In to last Out of its passes (to now while one is open). `touch_seconds`: the sum of its passes, in split time.
 - `element_type_id`, `system`, `width_mm`, `height_mm` come from the document line of its position. Null without a document.
 - `assembled_at`: its last assembly Out. `packed_at`: its last packing Out, null while it is on a station.
 
@@ -203,7 +206,8 @@ On every run, after new rows have landed in `raw.scans`:
 Also:
 
 - **Nightly reconcile** (plan §3.4): a scan row that changed or vanished in OptiCloud is handled like a new one: pass the old and the new version to `affectedBy`.
-- **Full rebuild**: truncate `core.orders` (cascades) and `core.station_day_facts`, derive every order, then every station day found by `stationDaysTouched` over all rows. Needed after a change of calendar, of `staleOpenSeconds`, `packedQuietSeconds`, the on-time parameters or the gap floor.
+- **Full rebuild**: truncate `core.orders` (cascades) and `core.station_day_facts`, derive every order, then every station day found by `stationDaysTouched` over all rows. Needed after a change of calendar, of `staleOpenSeconds`, `packedQuietSeconds`, the on-time parameters or the gap floor, of a station's "Max i gang", of `parallel_split`, and of a calculated time while the split weighs by them.
+- Step 8 also makes the split time (§2, Split time) of the passes it reads, and brings the touch times of their orders in line.
 - Typical times for the forecast: the median pass time per station (and element type) over the last weeks, from `core.station_intervals`.
 
 ## 10. Parameters
