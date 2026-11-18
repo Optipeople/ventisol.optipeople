@@ -79,6 +79,8 @@ public sealed partial class SetupViewModel : ObservableObject
         Username = settings.Username ?? "";
         AccountIdText = settings.AccountId?.ToString() ?? "";
         DocumentsFolder = settings.DocumentsFolder ?? "";
+        MarkAfterHours = settings.MarkAfterHours;
+        MarkAfterOptions = [.. DefaultMarkAfterOptions.Append(settings.MarkAfterHours).Distinct().Order()];
 
         _ready = true;
         RebuildMachines();
@@ -194,6 +196,16 @@ public sealed partial class SetupViewModel : ObservableObject
 
     [ObservableProperty] public partial SetupStatus MachinesStatus { get; private set; }
     [ObservableProperty] public partial string MachinesText { get; private set; } = "";
+
+    // ----- Max i gang, Marker efter
+
+    // "Max i gang" per station: how many elements may be in progress there at once.
+    public IReadOnlyList<int> MaxActiveOptions { get; } = [.. Enumerable.Range(1, StationConfig.MaxActiveLimit)];
+
+    // "Marker efter (timer)", for every station: an element in progress longer is marked on its tile.
+    static readonly int[] DefaultMarkAfterOptions = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 48];
+    public IReadOnlyList<int> MarkAfterOptions { get; }
+    [ObservableProperty] public partial int MarkAfterHours { get; set; } = StationSettings.DefaultMarkAfterHours;
 
     // ----- Ordredokumenter
 
@@ -426,7 +438,8 @@ public sealed partial class SetupViewModel : ObservableObject
             account,
             string.IsNullOrWhiteSpace(Username) ? null : Username.Trim(),
             [.. Stations.Select(s => s.ToSetup())],
-            StationSettingsJson.NormalizeFolder(DocumentsFolder));
+            StationSettingsJson.NormalizeFolder(DocumentsFolder),
+            MarkAfterHours);
         return ok;
     }
 
@@ -551,6 +564,7 @@ public sealed partial class SetupStationViewModel : ObservableObject
         Kind = s.Kind;
         InitialMachineId = s.MachineId;
         InitialScanner = s.ScannerSerial;
+        MaxActive = s.MaxActive;
     }
 
     public int Number { get; }
@@ -571,6 +585,9 @@ public sealed partial class SetupStationViewModel : ObservableObject
     public bool IsAssembly { get => Kind == StationKind.Assembly; set { if (value) Kind = StationKind.Assembly; } }
     public bool IsPacking { get => Kind == StationKind.Packing; set { if (value) Kind = StationKind.Packing; } }
 
+    // "Max i gang": 1 is one at a time, a new element stops the one in progress.
+    [ObservableProperty] public partial int MaxActive { get; set; } = 1;
+
     [ObservableProperty] public partial MachineOption? Machine { get; set; }
     [ObservableProperty] public partial ScannerOption? Scanner { get; set; }
 
@@ -586,5 +603,5 @@ public sealed partial class SetupStationViewModel : ObservableObject
     void Identify() => _owner.Identify(this);
 
     public StationSetup ToSetup() =>
-        new(Number, Name.Trim(), Kind, Machine is null ? InitialMachineId : Machine.Id, Scanner is null ? InitialScanner : Scanner.Id);
+        new(Number, Name.Trim(), Kind, Machine is null ? InitialMachineId : Machine.Id, Scanner is null ? InitialScanner : Scanner.Id, MaxActive);
 }

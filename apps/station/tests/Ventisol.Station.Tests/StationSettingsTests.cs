@@ -143,4 +143,50 @@ public class StationSettingsTests
         Assert.Equal([SetupRules.HttpsOnly], p);
         Assert.Empty(SetupRules.Problems(StationSettings.Default with { ApiBaseUrl = "http://localhost:5099" }));
     }
+
+    [Fact]
+    public void Max_i_gang_and_marker_efter_survive_a_round_trip()
+    {
+        var s = Configured() with
+        {
+            Stations = [.. Configured().Stations.Select(t => t.Number == 3 ? t with { MaxActive = 4 } : t)],
+            MarkAfterHours = 6,
+        };
+        var back = StationSettingsJson.Deserialize(StationSettingsJson.Serialize(s))!;
+
+        Assert.Equal(4, back.Stations[2].MaxActive);
+        Assert.Equal(4, back.Stations[2].Config.MaxActive);
+        Assert.Equal(1, back.Stations[0].MaxActive);
+        Assert.Equal(6, back.MarkAfterHours);
+    }
+
+    [Fact]
+    public void An_older_file_without_max_i_gang_reads_as_one_at_a_time_and_marks_after_4_hours()
+    {
+        var back = StationSettingsJson.Deserialize("""
+            { "version": 1, "mode": "Scan", "apiBaseUrl": "https://api.optipeople.dk",
+              "stations": [ { "number": 1, "name": "Station 10", "kind": "Assembly", "machineId": null, "scannerSerial": "keyboard" } ] }
+            """)!;
+
+        Assert.All(back.Stations, t => Assert.Equal(1, t.MaxActive));
+        Assert.Equal(StationSettings.DefaultMarkAfterHours, back.MarkAfterHours);
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-3, 1)]
+    [InlineData(6, 6)]
+    [InlineData(99, StationConfig.MaxActiveLimit)]
+    public void Max_i_gang_is_kept_to_1_to_20(int given, int kept)
+    {
+        var s = StationSettings.Default with { Stations = [.. StationSettings.Default.Stations.Select(t => t with { MaxActive = given })] };
+        Assert.All(StationSettingsJson.Normalize(s).Stations, t => Assert.Equal(kept, t.MaxActive));
+    }
+
+    [Theory]
+    [InlineData(0, 4)]
+    [InlineData(1, 1)]
+    [InlineData(500, StationSettings.MaxMarkAfterHours)]
+    public void Marker_efter_is_kept_to_1_to_48_hours(int given, int kept) =>
+        Assert.Equal(kept, StationSettingsJson.Normalize(StationSettings.Default with { MarkAfterHours = given }).MarkAfterHours);
 }
