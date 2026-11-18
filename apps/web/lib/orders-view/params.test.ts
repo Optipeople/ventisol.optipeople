@@ -106,6 +106,16 @@ describe("links", () => {
     expect(tabHref(parseOrdersView({}), "finished")).toBe("/ordrer?view=finished");
   });
 
+  it("reads the delivery week on both tabs, and the other tab keeps it", () => {
+    const v = parseOrdersView({ view: "finished", uge: "2026-47" });
+    expect(v.week).toEqual({ year: 2026, week: 47 });
+    expect(viewHref(v)).toBe("/ordrer?view=finished&uge=2026-47");
+    expect(tabHref(v, "in-progress")).toBe("/ordrer?view=in-progress&uge=2026-47");
+    expect(parseOrdersView({ uge: "2026-7" }).week).toEqual({ year: 2026, week: 7 });
+    expect(parseOrdersView({ uge: "2026-54" }).week).toBeUndefined();
+    expect(parseOrdersView({ uge: "uge 47" }).week).toBeUndefined();
+  });
+
   it("preserves the rest without the page and the dropped params", () => {
     expect(preserveFor(finished, "status")).toEqual({ view: "finished", q: "58", clock: "wall", sort: "lead" });
   });

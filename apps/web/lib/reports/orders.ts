@@ -128,6 +128,12 @@ interface FinishedRaw {
   totalCount: number;
 }
 
+/** Only orders due in this ISO week (leveringsuge). Both or neither. */
+const deliveryWeekShape = {
+  deliveryYear: z.number().int().min(2000).max(2100).optional(),
+  deliveryWeek: z.number().int().min(1).max(53).optional(),
+};
+
 export const finishedParams = z.object({
   /** The start of an order number, or part of the customer or case name. */
   search: z.string().max(200).optional(),
@@ -135,6 +141,7 @@ export const finishedParams = z.object({
   from: daySchema.optional(),
   to: daySchema.optional(),
   status: z.enum(["on_time", "late", "unknown"]).optional(),
+  ...deliveryWeekShape,
   sort: z.enum(["order", "customer", "elements", "start", "packed", "lead", "wait", "status"]).default("packed"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   ...pageShape,
@@ -155,8 +162,20 @@ export async function listFinishedOrders(
         rows<FinishedRaw>(
           db,
           `select * from rpt.orders_finished($1::text, $2::date, $3::date, $4::text, $5::text, $6::text,
-                                             $7::integer, $8::integer, $9::boolean)`,
-          [p.search ?? null, p.from ?? null, p.to ?? null, p.status ?? null, p.sort, p.dir, limit, offset, ctx.useWorking]
+                                             $7::integer, $8::integer, $9::boolean, $10::integer, $11::integer)`,
+          [
+            p.search ?? null,
+            p.from ?? null,
+            p.to ?? null,
+            p.status ?? null,
+            p.sort,
+            p.dir,
+            limit,
+            offset,
+            ctx.useWorking,
+            p.deliveryYear ?? null,
+            p.deliveryWeek ?? null,
+          ]
         ),
       ({ totalCount, leadSeconds, leadWorkingSeconds, workSeconds, workWorkingSeconds, waitSeconds, waitWorkingSeconds, ...r }) => {
         void totalCount;
@@ -216,6 +235,7 @@ const inProgressShape = {
   now: nowSchema,
   search: z.string().max(200).optional(),
   status: z.enum(["late", "at_risk", "on_time", "unknown"]).optional(),
+  ...deliveryWeekShape,
   sort: z
     .enum(["order", "customer", "elements", "start", "elapsed", "forecast", "due", "last_scan"])
     .default("start"),
@@ -242,8 +262,21 @@ export async function inProgressOn(
       rows<InProgressRaw>(
         db,
         `select * from rpt.orders_in_progress($1::timestamptz, $2::text, $3::text, $4::text, $5::text,
-                                              $6::integer, $7::integer, $8::boolean, $9::timestamptz)`,
-        [new Date(p.now), p.search ?? null, p.status ?? null, p.sort, p.dir, limit, offset, ctx.useWorking, since]
+                                              $6::integer, $7::integer, $8::boolean, $9::timestamptz,
+                                              $10::integer, $11::integer)`,
+        [
+          new Date(p.now),
+          p.search ?? null,
+          p.status ?? null,
+          p.sort,
+          p.dir,
+          limit,
+          offset,
+          ctx.useWorking,
+          since,
+          p.deliveryYear ?? null,
+          p.deliveryWeek ?? null,
+        ]
       ),
     ({ totalCount, elapsedSeconds, elapsedWorkingSeconds, workSeconds, workWorkingSeconds, waitSeconds, waitWorkingSeconds, ...r }) => {
       void totalCount;
@@ -271,6 +304,34 @@ export async function listInProgressOrders(
 ): Promise<Paged<InProgressOrderRow>> {
   const { clock, ...p } = inProgressParams.parse(params);
   return report(claims, clock, (db, ctx) => inProgressOn(db, ctx, p));
+}
+
+// ---------------------------------------------------------------------------
+// Delivery weeks: the choices of the week filter
+// ---------------------------------------------------------------------------
+
+export interface DeliveryWeekCount {
+  year: number;
+  week: number;
+  orders: number;
+}
+
+export const deliveryWeeksParams = z.object({ status: z.enum(["packed", "in_progress"]) });
+
+/** The delivery weeks there are packed or in-progress orders in, newest first, with how many. Any role. */
+export async function listDeliveryWeeks(
+  claims: Claims,
+  params: z.input<typeof deliveryWeeksParams>
+): Promise<DeliveryWeekCount[]> {
+  const p = deliveryWeeksParams.parse(params);
+  return report(claims, undefined, async (db) => {
+    const list = await rows<{ deliveryYear: number; deliveryWeek: number; orderCount: number | string }>(
+      db,
+      "select * from rpt.order_delivery_weeks($1::text)",
+      [p.status]
+    );
+    return list.map((r) => ({ year: r.deliveryYear, week: r.deliveryWeek, orders: Number(r.orderCount) }));
+  });
 }
 
 // ---------------------------------------------------------------------------

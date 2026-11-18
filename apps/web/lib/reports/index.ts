@@ -50,11 +50,13 @@ export { listStations, getStationDay, getStationPerformance, getStationDetail, S
 export {
   listFinishedOrders,
   listInProgressOrders,
+  listDeliveryWeeks,
   findOrders,
   getOrderDetail,
   getOrderStatus,
   getOrderRoute,
   getOrderDocuments,
+  type DeliveryWeekCount,
 } from "./orders";
 export {
   getCalcVsMeasured,

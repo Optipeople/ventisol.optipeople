@@ -11,6 +11,7 @@ import {
   getOrderRoute,
   getOrderStatus,
   listFinishedOrders,
+  listDeliveryWeeks,
   listInProgressOrders,
 } from "./index";
 import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "./test-support";
@@ -69,6 +70,13 @@ describe("listFinishedOrders", () => {
     expect(numbers((await listFinishedOrders(viewer, { ...OCTOBER, status: "late" })).rows)).toEqual([50002]);
     expect(numbers((await listFinishedOrders(viewer, { ...OCTOBER, status: "on_time" })).rows)).toEqual([50004, 50001]);
     expect(numbers((await listFinishedOrders(viewer, { status: "unknown" })).rows)).toEqual([50003, 50005]);
+  });
+
+  it("filters on the delivery week", async () => {
+    const week43 = { deliveryYear: 2026, deliveryWeek: 43 };
+    expect(numbers((await listFinishedOrders(viewer, week43)).rows)).toEqual([50002, 50001]);
+    expect(numbers((await listFinishedOrders(viewer, { ...week43, status: "late" })).rows)).toEqual([50002]);
+    expect((await listFinishedOrders(viewer, { deliveryYear: 2025, deliveryWeek: 43 })).total).toBe(0);
   });
 
   it("sorts by a whitelisted column on the headline clock", async () => {
@@ -150,8 +158,24 @@ describe("listInProgressOrders", () => {
     expect(numbers((await listInProgressOrders(viewer, { now: NOW, status: "late" })).rows)).toEqual([50006]);
     expect(numbers((await listInProgressOrders(viewer, { now: NOW, status: "unknown" })).rows)).toEqual([50007, 50008]);
     expect(numbers((await listInProgressOrders(viewer, { now: NOW, activeDays: 3 })).rows)).toEqual([50007, 50006]);
+    expect(
+      numbers((await listInProgressOrders(viewer, { now: NOW, deliveryYear: 2026, deliveryWeek: 48 })).rows)
+    ).toEqual([50007]);
     expect(numbers((await listInProgressOrders(viewer, { now: NOW, sort: "elapsed", dir: "desc" })).rows)).toEqual([
       50008, 50006, 50007,
+    ]);
+  });
+});
+
+describe("listDeliveryWeeks", () => {
+  it("the weeks there are packed or in-progress orders in, newest first", async () => {
+    expect(await listDeliveryWeeks(viewer, { status: "packed" })).toEqual([
+      { year: 2026, week: 44, orders: 1 },
+      { year: 2026, week: 43, orders: 2 },
+    ]);
+    expect(await listDeliveryWeeks(viewer, { status: "in_progress" })).toEqual([
+      { year: 2026, week: 48, orders: 1 },
+      { year: 2026, week: 45, orders: 1 },
     ]);
   });
 });

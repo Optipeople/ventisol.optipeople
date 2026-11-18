@@ -11,6 +11,7 @@
 //   q        free text: start of an order number, or part of customer or case
 //   status   on_time | late | at_risk (in progress only) | unknown
 //   from, to packed day range, yyyy-MM-dd (finished only)
+//   uge      delivery week, ISO year and week: 2026-47 (both tabs, as Ugeplan's ?uge=)
 //   clock    working | wall. Left out: the setting deduct_off_shift decides
 //   active   all: every order not packed. Left out: scanned the last 14 days (in progress only)
 //   sort     a sort key of the wrapper (order, customer, ...)
@@ -19,6 +20,7 @@
 
 import type { Clock, DeliveryStatusKey } from "@/lib/reports/types";
 import { isIsoDay } from "@/lib/time";
+import { parseWeekParam, weekParam, type PlanWeek } from "@/lib/weekplan/week";
 
 export const ORDERS_PATH = "/ordrer";
 export const PAGE_SIZE = 50;
@@ -50,6 +52,8 @@ export const CLOCK_LABELS: Record<Clock, string> = { working: "Arbejdstid", wall
 
 interface Common {
   search: string;
+  /** The delivery week. Undefined: every week, and orders without one. */
+  week: PlanWeek | undefined;
   /** Undefined: the setting decides. */
   clock: Clock | undefined;
   dir: SortDir;
@@ -100,7 +104,8 @@ export function parseOrdersView(params: SearchParams): OrdersView {
   const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.min(rawPage, 100_000) : 1;
   const sort = one(params.sort);
   const status = one(params.status);
-  const common = { search, clock, dir, page };
+  const week = parseWeekParam(one(params.uge)) ?? undefined;
+  const common = { search, week, clock, dir, page };
 
   if (tab === "finished") {
     let from = isIsoDay(one(params.from)) ? one(params.from) : undefined;
@@ -129,6 +134,7 @@ export function viewParams(view: OrdersView): Record<string, string> {
   const out: Record<string, string> = { view: view.tab };
   if (view.search) out.q = view.search;
   if (view.status) out.status = view.status;
+  if (view.week) out.uge = weekParam(view.week);
   if (view.tab === "finished") {
     if (view.from) out.from = view.from;
     if (view.to) out.to = view.to;
@@ -154,11 +160,16 @@ export function viewHref(view: OrdersView): string {
 }
 
 /**
- * The other tab. Keeps the search and the clock; filters and sort keys
- * differ per tab, so they are left behind.
+ * The other tab. Keeps the search, the delivery week and the clock; the
+ * other filters and sort keys differ per tab, so they are left behind.
  */
 export function tabHref(view: OrdersView, tab: OrdersTab): string {
-  return ordersHref({ view: tab, q: view.search || undefined, clock: view.clock });
+  return ordersHref({
+    view: tab,
+    q: view.search || undefined,
+    uge: view.week ? weekParam(view.week) : undefined,
+    clock: view.clock,
+  });
 }
 
 /**

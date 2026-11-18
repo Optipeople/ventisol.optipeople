@@ -26,9 +26,17 @@ import {
   type OrdersView,
   type SearchParams,
 } from "@/lib/orders-view/params";
-import { formatCount, listFinishedOrders, listInProgressOrders, type Clock } from "@/lib/reports";
+import {
+  formatCount,
+  listDeliveryWeeks,
+  listFinishedOrders,
+  listInProgressOrders,
+  type Clock,
+  type DeliveryWeekCount,
+} from "@/lib/reports";
 import { report } from "@/lib/reports/shared";
 import { dayKey, requestTime } from "@/lib/time";
+import { weekParam } from "@/lib/weekplan/week";
 
 export const metadata: Metadata = { title: "Ordrer" };
 
@@ -38,6 +46,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   const now = requestTime();
   // The clock the lists are read on: the URL's, else the setting's.
   const clock: Clock = view.clock ?? (await report(ctx.claims, undefined, async (_db, c) => c.clock));
+  const weeks = await listDeliveryWeeks(ctx.claims, { status: view.tab === "finished" ? "packed" : "in_progress" });
+  const weekFilter = weekSelect(view, weeks);
 
   // The file holds the list as it is filtered and sorted, every page of it.
   const exportEntry: ExportEntry =
@@ -67,15 +77,16 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                 max: dayKey(now),
                 presets: periodPresets(dayKey(now)).map(({ label, from, to }) => ({ label, from, to })),
               }}
-              selects={[statusSelect(view)]}
-              preserve={preserveFor(view, "status", "from", "to")}
-              hasActiveFilters={Boolean(view.status || view.from || view.to)}
+              selects={[weekFilter, statusSelect(view)]}
+              preserve={preserveFor(view, "uge", "status", "from", "to")}
+              hasActiveFilters={Boolean(view.week || view.status || view.from || view.to)}
             />
           ) : (
             <OrdersFilters
               basePath={ORDERS_PATH}
               search={search}
               selects={[
+                weekFilter,
                 statusSelect(view),
                 {
                   param: "active",
@@ -85,8 +96,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                   options: [{ value: "all", label: "Alle ordrer, der ikke er pakket" }],
                 },
               ]}
-              preserve={preserveFor(view, "status", "active")}
-              hasActiveFilters={Boolean(view.status || !view.activeOnly)}
+              preserve={preserveFor(view, "uge", "status", "active")}
+              hasActiveFilters={Boolean(view.week || view.status || !view.activeOnly)}
             />
           )
         }
@@ -118,6 +129,8 @@ function finishedParams(view: FinishedView) {
     from: view.from,
     to: view.to,
     status: view.status,
+    deliveryYear: view.week?.year,
+    deliveryWeek: view.week?.week,
     sort: view.sort,
     dir: view.dir,
     clock: view.clock,
@@ -129,10 +142,30 @@ function inProgressParams(view: InProgressView, now: number) {
     now,
     search: view.search || undefined,
     status: view.status,
+    deliveryYear: view.week?.year,
+    deliveryWeek: view.week?.week,
     sort: view.sort,
     dir: view.dir,
     activeDays: view.activeOnly ? ACTIVE_DAYS : undefined,
     clock: view.clock,
+  };
+}
+
+/** The delivery weeks there are orders in, newest first. The chosen week stays a choice when it has none. */
+function weekSelect(view: OrdersView, weeks: DeliveryWeekCount[]): OrdersFilterSelect {
+  const list = [...weeks];
+  const chosen = view.week;
+  if (chosen && !list.some((w) => w.year === chosen.year && w.week === chosen.week)) {
+    list.push({ ...chosen, orders: 0 });
+    list.sort((a, b) => b.year - a.year || b.week - a.week);
+  }
+  return {
+    param: "uge",
+    label: "Leveringsuge",
+    value: chosen ? weekParam(chosen) : "",
+    emptyLabel: "Alle uger",
+    // No count: on I gang nu it would count orders the "Seneste scanning" filter hides.
+    options: list.map((w) => ({ value: weekParam(w), label: `Uge ${w.week}, ${w.year}` })),
   };
 }
 
@@ -184,7 +217,7 @@ function PastLastPage({ view }: { view: OrdersView }) {
 async function FinishedList({ view, claims }: { view: FinishedView; claims: Claims }) {
   const params = finishedParams(view);
   const list = await listFinishedOrders(claims, { ...params, page: view.page, pageSize: PAGE_SIZE });
-  const filtered = Boolean(view.search || view.status || view.from || view.to);
+  const filtered = Boolean(view.search || view.week || view.status || view.from || view.to);
 
   return (
     <>
@@ -204,7 +237,7 @@ async function FinishedList({ view, claims }: { view: FinishedView; claims: Clai
       ) : (
         <EmptyState title={filtered ? "Ingen ordrer med de filtre" : "Ingen pakkede ordrer endnu"}>
           {filtered
-            ? "Ret søgningen, vælg en anden status eller periode, eller ryd filtrene."
+            ? "Ret søgningen, vælg en anden uge, status eller periode, eller ryd filtrene."
             : "En ordre kommer her, når den er pakket."}
         </EmptyState>
       )}
@@ -215,7 +248,7 @@ async function FinishedList({ view, claims }: { view: FinishedView; claims: Clai
 async function InProgressList({ view, claims, now }: { view: InProgressView; claims: Claims; now: number }) {
   const params = inProgressParams(view, now);
   const list = await listInProgressOrders(claims, { ...params, page: view.page, pageSize: PAGE_SIZE });
-  const filtered = Boolean(view.search || view.status);
+  const filtered = Boolean(view.search || view.week || view.status);
 
   return (
     <>
@@ -238,7 +271,7 @@ async function InProgressList({ view, claims, now }: { view: InProgressView; cla
       ) : (
         <EmptyState title={filtered ? "Ingen ordrer med de filtre" : "Ingen ordrer i gang"}>
           {filtered
-            ? "Ret søgningen, vælg en anden status, eller ryd filtrene."
+            ? "Ret søgningen, vælg en anden uge eller status, eller ryd filtrene."
             : view.activeOnly
               ? `Ingen ordre, der ikke er pakket, er scannet de seneste ${ACTIVE_DAYS} dage.`
               : "Alle scannede ordrer er pakket."}
