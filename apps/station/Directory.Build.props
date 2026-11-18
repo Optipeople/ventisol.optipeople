@@ -12,8 +12,8 @@
          files. On the build servers (CI is set there) a restore that does not match them fails. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
-    <!-- The release is published for win-x64, and a publish restores the projects it references for
+    <!-- The release is published for win-x64 and win-x86 (32-bit Windows), and a publish restores the projects it references for
          that runtime as well: naming it here puts it in every lock file, so that restore is locked too. -->
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
   </PropertyGroup>
 </Project>

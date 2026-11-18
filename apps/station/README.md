@@ -3,7 +3,7 @@
 Native Windows app for the central PC at Ventisol. WPF on .NET 10, in the Optipeople product language
 (Hanken Grotesk, midnight green, status colours mean state).
 
-**[Download the latest installer](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-Setup.exe)** (always the newest version). See [Release and updates](#release-and-updates).
+**[Download the latest installer](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-Setup.exe)** (always the newest version). For a PC with 32-bit Windows: [the 32-bit installer](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-x86-Setup.exe). See [Release and updates](#release-and-updates).
 
 ```
 src/Ventisol.Station        WPF app: window, theme, view models
@@ -101,7 +101,8 @@ Every push to main that touches what goes into the app (`apps/station/src`, `Dir
 `Ventisol.Station.slnx` or the workflow itself) makes `station-release.yml` build, test and publish
 version `1.0.<run number>`. A change to the tests, the tools or this README alone ships nothing.
 It can also be started by hand from the Actions tab, from main only. What it does:
-self-contained win-x64, packaged with [Velopack](https://velopack.io), uploaded as a GitHub Release to
+self-contained win-x64 and win-x86, packaged with [Velopack](https://velopack.io) in two channels (`win` for
+64-bit, `win-x86` for 32-bit Windows), uploaded together as one GitHub Release to
 the public repo `Optipeople/ventisol.station.updates` (repo variable `UPDATE_REPO`). Public, because
 this repo is private and we don't want a token on every PC. `station-ci.yml` builds and tests every
 push to main and every pull request that touches `apps/station`.
@@ -115,7 +116,9 @@ Trusted Signing runs when `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_CLIENT
 the variables `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`.
 Without it the installer is unsigned and Defender may flag it.
 
-Install a station once with [`VentisolStation-win-Setup.exe`](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-Setup.exe) from the latest release. It installs for
+Install a station once with [`VentisolStation-win-Setup.exe`](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-Setup.exe) from the latest release, or [`VentisolStation-win-x86-Setup.exe`](https://github.com/Optipeople/ventisol.station.updates/releases/latest/download/VentisolStation-win-x86-Setup.exe)
+on a PC with 32-bit Windows (Settings > System > About says "32-bit operating system"; the 64-bit
+installer says "This app can't run on your PC" there). Each updates only from its own channel. It installs for
 the Windows user in `%LOCALAPPDATA%\VentisolStation` and adds the app to that user's startup
 (`HKCU\...\Run`, `--kiosk`). While that entry says `--kiosk`, every start of the installed app is
 a kiosk: the first after the install, a restart, the start after an update. `--window` opens it as

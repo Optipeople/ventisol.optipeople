@@ -109,8 +109,12 @@ static class StartupGuard
 
     static bool RollBack(IVelopackLocator locator, State s, string[] args)
     {
+        // VentisolStation-1.0.27-full.nupkg on the default channel (64-bit), and with the channel in the
+        // name on the others: VentisolStation-1.0.27-win-x86-full.nupkg on 32-bit Windows.
         var saved = Directory.Exists(RollbackFolder)
-            ? Directory.GetFiles(RollbackFolder, $"*-{s.Previous}-full.nupkg").FirstOrDefault()
+            ? Directory.GetFiles(RollbackFolder, $"*-{s.Previous}-full.nupkg")
+                .Concat(Directory.GetFiles(RollbackFolder, $"*-{s.Previous}-win-*-full.nupkg"))
+                .FirstOrDefault()
             : null;
         if (saved is null)
         {
