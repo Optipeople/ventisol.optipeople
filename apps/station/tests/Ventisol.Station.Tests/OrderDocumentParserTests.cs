@@ -165,6 +165,12 @@ public class OrderDocumentParserTests
         var profiles = add.Accessories.Where(a => a.Group == "Tilsætningsprofil").ToList();
         Assert.Equal(4, profiles.Count);
         Assert.Equal(new HardwareRow("Tilsætningsprofil", "8 mm notl. vand", "Hvid", "1", "1244,0", "Monteret", "nederst"), profiles[0]);
+
+        // On screen they stand on their own, highlighted, and not again in the parts table.
+        var sheet = ElementSheet.For(new Barcode("058800010101", 58800, 1, 1, 1), OrderDocSamples.Parse(58800), add);
+        Assert.Equal(4, sheet.AddOnProfiles.Count);
+        Assert.Equal("8 mm notl. vand", sheet.AddOnProfiles[0].Description);
+        Assert.DoesNotContain(sheet.Parts.Rows, r => r.Description == "Tilsætningsprofil" || r.Description == "8 mm notl. vand");
     }
 
     [SamplesFact]

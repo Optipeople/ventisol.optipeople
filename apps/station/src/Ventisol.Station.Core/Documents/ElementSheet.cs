@@ -16,7 +16,8 @@ public sealed record ElementSheet(
     IReadOnlyList<SheetField> Fields,
     IReadOnlyList<string> Notes,
     SheetCutting Cutting,
-    SheetParts Parts)
+    SheetParts Parts,
+    IReadOnlyList<SheetPartRow> AddOnProfiles)
 {
     static readonly CultureInfo Da = CultureInfo.GetCultureInfo("da-DK");
 
@@ -36,8 +37,16 @@ public sealed record ElementSheet(
             position is null ? [] : [.. position.Fields.Select(FieldOf)],
             position?.Notes ?? [],
             position is null ? SheetCutting.None : CuttingOf(position),
-            position is null ? SheetParts.None : PartsOf(position));
+            position is null ? SheetParts.None : PartsOf(position),
+            position is null ? [] : AddOnProfilesOf(position));
     }
+
+    // Tilsætningsprofiler are easy to forget, so the screen shows them on their own, in warning
+    // colours, instead of as a few lines in the parts table.
+    public static bool IsAddOnProfile(HardwareRow r) => r.Group.StartsWith("Tilsætningsprofil", StringComparison.OrdinalIgnoreCase);
+
+    static List<SheetPartRow> AddOnProfilesOf(OrderPosition p) =>
+        [.. p.Accessories.Where(IsAddOnProfile).Select(r => new SheetPartRow(false, r.Description, r.Quantity, r.Colour, r.Size, r.Mounting, r.Placement))];
 
     // "5", or "5.1" for sub-position 02, as on the label.
     static string PositionOf(Barcode b) => b.SubPosition <= 1 ? b.Position.ToString(Da) : $"{b.Position}.{b.SubPosition - 1}";
@@ -104,7 +113,7 @@ public sealed record ElementSheet(
 
     static SheetParts PartsOf(OrderPosition p)
     {
-        var all = p.Hardware.Concat(p.Accessories).ToList();
+        var all = p.Hardware.Concat(p.Accessories.Where(r => !IsAddOnProfile(r))).ToList();
         var rows = new List<SheetPartRow>();
         string? group = null;
         foreach (var r in all)

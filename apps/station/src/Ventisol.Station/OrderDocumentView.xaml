@@ -334,6 +334,41 @@
 
                 <ScrollViewer x:Name="FactsScroller" Grid.Column="2" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
                     <StackPanel Margin="0,-6,6,0">
+                        <!-- Tilsætningsprofiler first and in warning colours: operators forget to fit them -->
+                        <Border Style="{StaticResource Card}" Background="{StaticResource Warn}" Grid.IsSharedSizeScope="True"
+                                Visibility="{Binding Sheet.AddOnProfiles, Converter={x:Static vm:Present.Instance}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" Foreground="{StaticResource Dark}"
+                                           Margin="0,0,0,8" Text="HUSK TILSÆTNINGSPROFIL" />
+                                <ItemsControl ItemsSource="{Binding Sheet.AddOnProfiles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type doc:SheetPartRow}">
+                                            <Border BorderBrush="{StaticResource Dark}" BorderThickness="0,1,0,0" Padding="0,10">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AQty" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AColour" />
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="ASize" />
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="AMount" />
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="APlace" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Style="{StaticResource Num}" FontSize="24" FontWeight="Bold" MinWidth="44"
+                                                               Foreground="{StaticResource Dark}" Text="{Binding Quantity}" />
+                                                    <TextBlock Grid.Column="1" Style="{StaticResource Cell}" FontSize="24" FontWeight="Bold" TextWrapping="Wrap"
+                                                               Foreground="{StaticResource Dark}" Text="{Binding Description}" />
+                                                    <TextBlock Grid.Column="2" Style="{StaticResource Cell}" FontSize="22" Foreground="{StaticResource Dark}" Text="{Binding Colour}" />
+                                                    <TextBlock Grid.Column="3" Style="{StaticResource Num}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Dark}" Text="{Binding Size}" />
+                                                    <TextBlock Grid.Column="4" Style="{StaticResource Cell}" FontSize="22" Foreground="{StaticResource Dark}" Text="{Binding Mounting}" />
+                                                    <TextBlock Grid.Column="5" Style="{StaticResource Cell}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Dark}" Text="{Binding Placement}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
                         <!-- The PDF's bold notes, such as "Karm og ramme pakkes særskilt" -->
                         <ItemsControl ItemsSource="{Binding Sheet.Notes}">
                             <ItemsControl.ItemTemplate>
