@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { randomUUID } from "node:crypto";
 import { aiConfigured } from "@/app/api/chat/config";
+import { exampleOrderNo } from "@/lib/tools/example-order";
 import { listConversations, loadConversation, UUID_RE } from "@/app/api/chat/store";
 import { ChatFrame } from "@/components/chat/chat-shell";
 import { ChatView } from "@/components/chat/chat-view";
@@ -18,9 +19,10 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
   const requested = samtale && UUID_RE.test(samtale) ? samtale : null;
   const ctx = await requireCapability(requested ? `/chat?samtale=${requested}` : "/chat", "chat.use");
 
-  const [conversations, conversation] = await Promise.all([
+  const [conversations, conversation, orderNo] = await Promise.all([
     listConversations(ctx.claims),
     requested ? loadConversation(ctx.claims, requested) : Promise.resolve(null),
+    exampleOrderNo(ctx.claims),
   ]);
   const conversationId = conversation?.id ?? randomUUID();
 
@@ -37,6 +39,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
         initialMessages={conversation?.messages ?? []}
         configured={aiConfigured()}
         isNew={!conversation}
+        exampleOrderNo={orderNo}
         sidebar={
           <ConversationSidebar
             activeId={conversation?.id ?? null}

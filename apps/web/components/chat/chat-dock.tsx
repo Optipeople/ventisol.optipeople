@@ -280,6 +280,7 @@ export function ChatDock() {
                 initialMessages={chat.messages}
                 configured={chat.configured}
                 isNew={chat.isNew}
+                exampleOrderNo={chat.exampleOrderNo}
                 dock
                 // The view arrives after the panel the first time it opens.
                 onReady={(field) => {

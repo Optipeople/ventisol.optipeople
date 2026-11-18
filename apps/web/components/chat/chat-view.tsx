@@ -31,17 +31,8 @@ import {
 } from "@optipeople/ui/chat";
 import { useChatSidebar } from "./chat-shell";
 import { growthKey, toChatRow, type ChatRow, type MessageMeta } from "./messages";
+import { suggestions } from "@/lib/tools/suggestions";
 import { ToolFailedLine, ToolResultCard, toolLabel } from "./tool-views";
-
-/** The six questions from the deck, offered in an empty conversation. */
-export const SUGGESTIONS = [
-  "Hvor er ordrenummer 1042, og hvornår er den klar til afsendelse?",
-  "Hvor venter ordrerne mest i denne uge?",
-  "Holder kalkulen pr. elementtype?",
-  "Passer næste uges batches ind?",
-  "Hvor mange skal stå ved montagen?",
-  "Hvad skal ledelsen vide i dag?",
-];
 
 /** The longest question the server takes (MAX_TEXT in app/api/chat/handler.ts). */
 const MAX_QUESTION = 4000;
@@ -138,6 +129,7 @@ export function ChatView({
   initialMessages,
   configured,
   isNew,
+  exampleOrderNo,
   sidebar,
   dock = false,
   onAsked,
@@ -149,6 +141,8 @@ export function ChatView({
   configured: boolean;
   /** The conversation does not exist yet: the URL gets its id after the first question. */
   isNew: boolean;
+  /** An order in progress for the first suggestion; null: none. */
+  exampleOrderNo: number | null;
   /** The conversation list, left of the chat. */
   sidebar?: ReactNode;
   /** The small chat on every page: it sends the page along, and leaves the URL and the page alone. */
@@ -255,7 +249,7 @@ export function ChatView({
       )}
       {rows.length === 0 && (
         <SuggestionChips
-          questions={dock ? SUGGESTIONS.slice(0, 3) : SUGGESTIONS}
+          questions={dock ? suggestions(exampleOrderNo).slice(0, 3) : suggestions(exampleOrderNo)}
           onAsk={ask}
           disabled={!configured}
           className={cn(dock && "sm:mb-6")}

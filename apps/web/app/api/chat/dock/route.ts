@@ -10,6 +10,7 @@ import type { UIMessage } from "ai";
 import { getPortalAccess } from "@/lib/auth";
 import { can } from "@/lib/portal/roles";
 import { aiConfigured } from "../config";
+import { exampleOrderNo } from "@/lib/tools/example-order";
 import { loadLatestConversation } from "../store";
 
 /** The panel continues a conversation this fresh. An older one stays on the chat page. */
@@ -22,6 +23,8 @@ export interface DockConversation {
   isNew: boolean;
   /** False: no Anthropic API key on the server. */
   configured: boolean;
+  /** An order in progress for the first suggestion; null: none. */
+  exampleOrderNo: number | null;
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -31,9 +34,12 @@ export async function GET(request: Request): Promise<Response> {
 
   const fresh = new URL(request.url).searchParams.get("ny") === "1";
   const configured = aiConfigured();
-  const latest = fresh ? null : await loadLatestConversation(access.claims, Date.now() - CONTINUE_WITHIN_MS);
+  const [latest, orderNo] = await Promise.all([
+    fresh ? null : loadLatestConversation(access.claims, Date.now() - CONTINUE_WITHIN_MS),
+    exampleOrderNo(access.claims),
+  ]);
   const body: DockConversation = latest
-    ? { id: latest.id, messages: latest.messages, isNew: false, configured }
-    : { id: randomUUID(), messages: [], isNew: true, configured };
+    ? { id: latest.id, messages: latest.messages, isNew: false, configured, exampleOrderNo: orderNo }
+    : { id: randomUUID(), messages: [], isNew: true, configured, exampleOrderNo: orderNo };
   return Response.json(body, { headers: { "cache-control": "no-store" } });
 }
