@@ -1,32 +1,35 @@
 "use client";
 
-// The Ugeplan page's one control: drop the week's 3E database, see what was
-// read, and fetch the workbook. The MDB is read here in the browser
-// (lib/weekplan/mdb.ts, loaded on demand: mdb-reader is large); only the plan
-// is posted to /api/ugeplan, which returns the .xlsx.
+// The Ugeplan page's optional part: drop the week's 3E database, see what was
+// read, and fetch the workbook with 3E's data merged into the portal's. The
+// MDB is read here in the browser (lib/weekplan/mdb.ts, loaded on demand:
+// mdb-reader is large); only the plan is posted to /api/ugeplan?uge=, which
+// returns the .xlsx.
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { Button, FileDropZone, Spinner } from "@optipeople/ui";
 import { Notice } from "@optipeople/ui/blocks";
 import type { WeekPlan } from "@/lib/weekplan/types";
+import { parseWeekParam, weekParam } from "@/lib/weekplan/week";
+import { fetchWorkbook } from "./download";
+import { UnknownPositionsNotice } from "./unknown-notice";
 
 type Phase = "idle" | "reading" | "ready" | "sending";
 
-const FALLBACK_FILE_NAME = "ugeplan.xlsx";
-/** How many orders with unplaced positions the warning lists by name. */
-const MAX_WARNINGS = 20;
 
 const hoursFormat = new Intl.NumberFormat("da-DK", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const amountFormat = new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 });
 const countFormat = new Intl.NumberFormat("da-DK");
 
-export function WeekPlanUpload() {
+export function WeekPlanUpload({ week }: { /** The page's week, "2026-48". */ week: string }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [plan, setPlan] = useState<WeekPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const zoneId = useId();
   const busy = phase === "reading" || phase === "sending";
+  const mismatch = plan !== null && isOtherWeek(plan, week);
 
   async function readFile(file: File) {
     setPhase("reading");
@@ -58,18 +61,11 @@ export function WeekPlanUpload() {
     setError(null);
     setStatus("Laver Excel-filen…");
     try {
-      const res = await fetch("/api/ugeplan", {
+      const name = await fetchWorkbook(`/api/ugeplan?uge=${encodeURIComponent(week)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(plan),
       });
-      if (!res.ok) {
-        const text = (await res.text().catch(() => "")).trim();
-        throw new Error(text || `Portalen svarede med fejl ${res.status}.`);
-      }
-      const blob = await res.blob();
-      const name = fileNameFrom(res.headers.get("content-disposition"));
-      saveBlob(blob, name);
       setStatus(`${name} er hentet.`);
     } catch (e) {
       setStatus("");
@@ -106,12 +102,14 @@ export function WeekPlanUpload() {
         </Notice>
       )}
 
+      {plan && mismatch && <WeekMismatch plan={plan} week={week} />}
+
       {plan && <Preview plan={plan} />}
 
       {plan && (
         <div>
-          <Button onClick={() => void download()} disabled={busy || plan.orders.length === 0}>
-            {phase === "sending" ? "Henter…" : "Hent Excel"}
+          <Button onClick={() => void download()} disabled={busy || mismatch || plan.orders.length === 0}>
+            {phase === "sending" ? "Henter…" : "Hent Excel med 3E-data"}
           </Button>
         </div>
       )}
@@ -121,9 +119,8 @@ export function WeekPlanUpload() {
 
 function Preview({ plan }: { plan: WeekPlan }) {
   const elements = plan.orders.reduce((sum, o) => sum + o.elements, 0);
-  const hours = plan.orders.reduce((sum, o) => sum + o.hours, 0);
+  const hours = plan.orders.reduce((sum, o) => sum + (o.hours ?? 0), 0);
   const amount = plan.orders.reduce((sum, o) => sum + (o.amount ?? 0), 0);
-  const withUnknown = plan.orders.filter((o) => o.unknown.length > 0);
 
   const facts: { label: string; value: string }[] = [
     { label: "Uge", value: weekLabel(plan) },
@@ -149,27 +146,31 @@ function Preview({ plan }: { plan: WeekPlan }) {
 
       {plan.orders.length === 0 && <Notice tone="warning">Filen har ingen ordrer.</Notice>}
 
-      {withUnknown.length > 0 && (
-        <Notice tone="warning" icon>
-          <p>
-            {withUnknown.length === 1
-              ? "1 ordre har positioner, der ikke kunne placeres i en elementtype:"
-              : `${countFormat.format(withUnknown.length)} ordrer har positioner, der ikke kunne placeres i en elementtype:`}
-          </p>
-          <ul className="mt-2 list-disc pl-5">
-            {withUnknown.slice(0, MAX_WARNINGS).map((o) => (
-              <li key={o.orderNo}>
-                Ordre {o.orderNo}
-                {o.customer ? ` (${o.customer})` : ""}: {o.unknown.join("; ")}
-              </li>
-            ))}
-          </ul>
-          {withUnknown.length > MAX_WARNINGS && (
-            <p className="mt-2">Og {countFormat.format(withUnknown.length - MAX_WARNINGS)} ordrer mere.</p>
-          )}
-        </Notice>
-      )}
+      <UnknownPositionsNotice orders={plan.orders} />
     </section>
+  );
+}
+
+/** The 3E file is of another week than the page shows. */
+function isOtherWeek(plan: WeekPlan, week: string): boolean {
+  const page = parseWeekParam(week);
+  if (plan.year === null || plan.week === null || !page) return false;
+  return plan.year !== page.year || plan.week !== page.week;
+}
+
+/** The file is of another week: no workbook for this one, offer the file's week. */
+function WeekMismatch({ plan, week }: { plan: WeekPlan; week: string }) {
+  const page = parseWeekParam(week);
+  if (plan.year === null || plan.week === null || !page) return null;
+  const mdbWeek = weekParam({ year: plan.year, week: plan.week });
+  return (
+    <Notice tone="warning" icon>
+      Filen er for uge {plan.week}, {plan.year}, men siden viser uge {page.week}, {page.year}.{" "}
+      <Link href={`/ugeplan?uge=${mdbWeek}`} className="font-bold underline">
+        Gå til uge {plan.week}, {plan.year}
+      </Link>{" "}
+      og træk filen ind igen.
+    </Notice>
   );
 }
 
@@ -183,32 +184,4 @@ function readError(e: unknown): string {
     return `${e.message} Er det ugens 3E-fil?`;
   }
   return "Filen kunne ikke læses. Er det ugens 3E-fil (.MDB)?";
-}
-
-/** The file name of a Content-Disposition header: filename* first, then filename. */
-function fileNameFrom(header: string | null): string {
-  if (!header) return FALLBACK_FILE_NAME;
-  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
-  if (star?.[1]) {
-    try {
-      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
-    } catch {
-      // A broken encoding: try the plain filename.
-    }
-  }
-  const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i.exec(header);
-  const name = (plain?.[1] ?? plain?.[2])?.trim();
-  return name || FALLBACK_FILE_NAME;
-}
-
-function saveBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Give the browser a moment to start the download before the URL goes.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

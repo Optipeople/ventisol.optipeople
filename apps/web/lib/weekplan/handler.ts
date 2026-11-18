@@ -1,10 +1,11 @@
-// POST /api/ugeplan: the week plan the browser read from the 3E file, in;
-// the Excel file, out. Kept out of app/ so it is tested (vitest collects
+// /api/ugeplan?uge=2026-48: the week's workbook. GET builds it from the 3E
+// production lists the portal has; POST takes the plan the browser read from
+// the 3E file (.MDB) and puts it on top. Kept out of app/ so it is tested (vitest collects
 // lib/** only). Docs: docs/ugeplan.md.
 //
 // Order: 401 without a portal user, 403 without reports.view, 429 over the
 // export rate limit, 413 for a body over MAX_BODY_BYTES, 400 for a body that
-// is no week plan, then the file and one audit row (export.weekplan).
+// is no week plan or no week, then the file and one audit row (export.weekplan).
 
 import { withUser, type Claims, type Db } from "@/lib/db";
 import { attachment, exportLimits } from "@/lib/export/handler";
@@ -13,6 +14,8 @@ import { audit } from "@/lib/portal/audit";
 import { can, type PortalRole } from "@/lib/portal/roles";
 import { allowAttempt, clientIp, TOO_MANY_ATTEMPTS } from "@/lib/rate-limit";
 import { weekPlanSchema, type WeekPlan } from "./types";
+import { mergeWeekPlans, portalWeekPlan } from "./portal";
+import { parseWeekParam } from "./week";
 import { weekPlanFileName, weekPlanWorkbook, type ProductionStatus } from "./workbook";
 
 /** A week is a few hundred orders at most; the plan of one is some 50 KB. */
@@ -90,39 +93,51 @@ export async function handleWeekPlan(request: Request, deps: WeekPlanDeps): Prom
     return text(429, TOO_MANY_ATTEMPTS, { "retry-after": "60" });
   }
 
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) return text(413, "Ugeplanen er for stor.");
-  const body = await readLimited(request, MAX_BODY_BYTES);
-  if (body === null) return text(413, "Ugeplanen er for stor.");
+  // GET: the production lists only. POST: the plan read from the 3E file goes on top.
+  let mdb: WeekPlan | null = null;
+  if (request.method === "POST") {
+    const declared = Number(request.headers.get("content-length") ?? 0);
+    if (declared > MAX_BODY_BYTES) return text(413, "Ugeplanen er for stor.");
+    const body = await readLimited(request, MAX_BODY_BYTES);
+    if (body === null) return text(413, "Ugeplanen er for stor.");
+    try {
+      mdb = weekPlanSchema.parse(JSON.parse(body));
+    } catch {
+      return text(400, "3E-filen kunne ikke læses. Prøv at vælge den igen.");
+    }
+  }
 
-  let plan: WeekPlan;
-  try {
-    plan = weekPlanSchema.parse(JSON.parse(body));
-  } catch {
-    return text(400, "Ugeplanen kunne ikke læses. Prøv at vælge filen igen.");
+  const param = new URL(request.url).searchParams.get("uge");
+  const fromMdb = mdb?.year && mdb.week ? { year: mdb.year, week: mdb.week } : null;
+  const week = param ? parseWeekParam(param) : fromMdb;
+  if (!week) return text(400, "Vælg en uge, fx ?uge=2026-48.");
+  // A file of another week would put that week's orders into this one.
+  if (fromMdb && (fromMdb.year !== week.year || fromMdb.week !== week.week)) {
+    return text(400, `3E-filen er for uge ${fromMdb.week} ${fromMdb.year}, ikke uge ${week.week} ${week.year}. Skift uge, eller vælg den rigtige fil.`);
   }
 
   const now = deps.now?.() ?? Date.now();
   const generated = `Dannet ${formatInstant(new Date(now).toISOString())}`;
-  const fileName = weekPlanFileName(plan);
-  const file = await withUser(claims, async (db) => {
+  const result = await withUser(claims, async (db) => {
+    const plan = mergeWeekPlans(await portalWeekPlan(db, week.year, week.week), mdb);
+    const fileName = weekPlanFileName(plan);
     const status = await productionStatus(db, plan.orders.map((o) => o.orderNo));
     const buffer = await weekPlanWorkbook({ plan, status, generated });
     await audit(db, "export.weekplan", fileName, {
-      week: plan.week,
-      year: plan.year,
-      source: plan.fileName,
+      week: week.week,
+      year: week.year,
+      mdb: mdb?.fileName ?? (mdb ? "3E-fil" : null),
       orders: plan.orders.length,
     });
-    return buffer;
+    return { buffer, fileName };
   });
 
-  return new Response(new Uint8Array(file), {
+  return new Response(new Uint8Array(result.buffer), {
     status: 200,
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "content-disposition": attachment(fileName),
-      "content-length": String(file.byteLength),
+      "content-disposition": attachment(result.fileName),
+      "content-length": String(result.buffer.byteLength),
       "cache-control": "private, no-store",
       "x-content-type-options": "nosniff",
     },

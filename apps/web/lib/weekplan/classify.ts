@@ -75,7 +75,7 @@ export interface FrameType {
 const SCAN_TYPES = new Set(["26", "10", "16", "20", "41"]);
 
 /** Opens inwards: HI, VI, H.I., V.I. */
-const INWARD = /\b[HV]\.?\s?I\b\.?/;
+const INWARD = /\b[HV]\.?\s?I\b\.?/i;
 
 /**
  * The type of one frame holding `parts`, or null when no part is known.
@@ -102,7 +102,8 @@ export function frameType(parts: Part[], facts: PositionFacts): FrameType | null
     case "BH":
       return { type: "SV", base: "SV" };
     case "ID":
-      return /\balu\b/i.test(facts.secondLine)
+      // "alu" on the second line (MDB) or on any leaf (production list: "m/alu.trin", "med alutrin").
+      return /\balu/i.test(facts.secondLine) || openings.some((p) => /\balu/i.test(p.text))
         ? { type: db("FD/ID", "DB FD/ID"), base: "ID" }
         : { type: db("SD", "DB SD"), base: "ID" };
     case "FD":
@@ -186,3 +187,46 @@ export const WELDS_PER_TYPE: Record<ElementType, number> = {
   T20: 2,
   T41: 2,
 };
+
+/**
+ * A field of the 3E production list as a part, from its opening function
+ * ("Åbningsfunktion"): "Topstyret ud" is TS, "Industridør stående" the
+ * standing leaf of a two-leaf industrial door, "Fast karm" a fixed light.
+ * Text is compared without regard to case.
+ */
+export function openingPart(opening: string | null | undefined): Part {
+  const text = (opening ?? "").trim();
+  const t = text.toLowerCase().replace(/\s+/g, " ");
+  const code: PartCode | null = t.includes("fast karm")
+    ? "FK"
+    : t.includes("fast ramme")
+      ? "FR"
+      : t.includes("bundhængt")
+        ? "BH"
+        : t.includes("terrassedør") || t.includes("terrasse dør")
+          ? "TD"
+          : t.includes("facadedør") || t.includes("facade dør")
+            ? "FD"
+            : t.includes("industridør") || t.includes("industri dør")
+              ? "ID"
+              : /^drej/.test(t) || t.includes("drej kip")
+                ? "DK"
+                : t.includes("topstyret")
+                  ? "TS"
+                  : t.includes("sidehængt")
+                    ? "SH"
+                    : null;
+  // A turn and tilt terrace door ("d/k", "drej/kip", "dreje-kip") opens inwards.
+  const turnTilt = code === "TD" && (t.includes("d/k") || t.includes("drej")) && !INWARD.test(text);
+  return { code, text: turnTilt ? `${text} H.I.` : text };
+}
+
+/** The type of a production list position: one frame holding every field. */
+export function documentFrameType(
+  fields: ReadonlyArray<{ opening?: string | null }>,
+  system: string | null
+): FrameType | null {
+  const parts = fields.map((f) => openingPart(f.opening));
+  // Each part carries its own text, so no second line: "alu" and "H.I." are read from the parts.
+  return frameType(parts, { firstLine: "", secondLine: "", system, typeNumber: null });
+}

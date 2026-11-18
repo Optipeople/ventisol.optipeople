@@ -68,8 +68,11 @@ export interface WeekPlanOrder {
   foilApproved: boolean;
   /** Free field 4 ("Bestilt"), the HTM panels. */
   htm: string | null;
-  /** Σ Stück × PosZeit, in hours. */
-  hours: number;
+  /**
+   * Hours: 3E's Σ Stück × PosZeit, or from the portal the calculated time of
+   * the elements. Null when the role may not see calculated times.
+   */
+  hours: number | null;
   /** The series (batch) numbers of the positions, ascending. */
   batches: number[];
   /** The text of the order's freight position: "Fragt / forsendelse", "Afhentning lavt pakket på palle". */
@@ -86,7 +89,11 @@ export interface WeekPlanOrder {
   unknown: string[];
   /** Loose panels and the like: positions that are no element. */
   looseParts: number;
+  /** Where the order came from: the production lists, the 3E file, or both. Set on the server. */
+  source?: OrderSource;
 }
+
+export type OrderSource = "portal" | "3e" | "begge";
 
 export interface WeekPlan {
   /** The production week most orders are planned in. */
@@ -113,7 +120,7 @@ export const weekPlanOrderSchema = z.object({
   remark: text(2000).nullable(),
   foilApproved: z.boolean(),
   htm: text(200).nullable(),
-  hours: z.number().finite().min(0),
+  hours: z.number().finite().min(0).nullable(),
   batches: z.array(z.number().int()).max(100),
   freight: text(500).nullable(),
   types: z.array(typeCount).max(ELEMENT_TYPES.length * FRAME_BASES.length),

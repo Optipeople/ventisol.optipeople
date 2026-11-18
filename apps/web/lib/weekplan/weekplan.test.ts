@@ -1,16 +1,13 @@
 // The week plan: the element classifier on the position texts 3E writes, the
-// MDB tables to the plan, the workbook, and the route logic. The cases are
+// MDB tables to the plan and the workbook. The production lists, the merge
+// and the route logic are in portal.test.ts. The cases are
 // orders from week 48 2026, checked against the office's own sheets.
 
 import { readSheet } from "read-excel-file/node";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Claims } from "@/lib/db";
-import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
-import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
+import { describe, expect, it } from "vitest";
 import { frameFields, frameType, parseParts, positionFrameTypes, productionGroup, type PositionFacts } from "./classify";
-import { handleWeekPlan } from "./handler";
-import { readWeekPlanTables, splitYearWeek, type WeekPlanTables } from "./mdb";
-import type { WeekPlan } from "./types";
+import { readWeekPlanTables, splitYearWeek } from "./mdb";
+import { tables } from "./test-support";
 import { columnLetter, infoLines, productionText, weekPlanFileName, weekPlanWorkbook } from "./workbook";
 
 const facts = (firstLine: string, system: string, secondLine = "", typeNumber: string | null = null): PositionFacts => ({
@@ -78,59 +75,6 @@ describe("classify", () => {
     expect(productionGroup({ type: "T10", base: "T" })).toBe("scan");
   });
 });
-
-/** Order 58781 as 3E holds it: three top hung Danline windows and a terrace door. */
-function tables(): WeekPlanTables {
-  const id = "K1";
-  const pos = (Position: number, Stueck: number, extra: Record<string, unknown>) => ({
-    ID_A_Kopf: id,
-    Position,
-    Stueck,
-    SerieNr: 0,
-    PosZeit: 0,
-    AnzFlg: 0,
-    FSystem: "70 mm DANLINE",
-    Typnummer: null,
-    P_Art: 0,
-    ...extra,
-  });
-  return {
-    A_Kopf: [
-      { ID: id, AuNummer: 58781, A_Summe: 21528, Sachbearb1: "Flemming B" },
-      { ID: "K2", AuNummer: 58790, A_Summe: 6663, Sachbearb1: "Flemming B" },
-    ],
-    A_KopfFreie: [{ ID_A_Kopf: id, Feld2: "ja", Feld3: "ja", Feld4: null, Feld6: "Kogreb knop begge sider" }],
-    A_Adresse: [
-      { ID_A_Kopf: id, Nummer: 0, Firma: "Kongerslev Trælast Aps" },
-      { ID_A_Kopf: id, Nummer: 1, Firma: "Leveringsadresse" },
-    ],
-    A_Planung: [
-      { ID_A_Kopf: id, WocheW: "2648" },
-      { ID_A_Kopf: "K2", WocheW: "2649" },
-    ],
-    A_Vorgang: [
-      { ID_A_Kopf: id, Nummer: "_AufAnlage", Benutzer: "FBV" },
-      { ID_A_Kopf: id, Nummer: "_AufDruck", Benutzer: "mub" },
-      { ID_A_Kopf: "K2", Nummer: "_AngAnlage", Benutzer: "FBV" },
-    ],
-    P_Allgemein: [
-      { ID_A_Kopf: id, Position: 0, Positionstext: "TD \r\nTD HU 105T alu" },
-      { ID_A_Kopf: id, Position: 1, Positionstext: "TS\r\nTopstyret" },
-      { ID_A_Kopf: id, Position: 2, Positionstext: "TD \r\nTD HU 105T alu" },
-      { ID_A_Kopf: id, Position: 3, Positionstext: "Fragt / forsendelse\r\n" },
-    ],
-    P_Technik: [
-      pos(0, 1, { PosZeit: 999 }),
-      pos(1, 4, { SerieNr: 260825, PosZeit: 85.4, AnzFlg: 1 }),
-      pos(2, 1, { SerieNr: 260827, PosZeit: 132.86, AnzFlg: 1, FSystem: "70 mm softline" }),
-      pos(3, 1, { P_Art: 3, Typnummer: "Fragt:" }),
-    ],
-    P_Element: [
-      { ID_A_Kopf: id, Position: 1, Ez: 1, Feldnummer: "00~00" },
-      { ID_A_Kopf: id, Position: 2, Ez: 1, Feldnummer: "00~00" },
-    ],
-  };
-}
 
 describe("readWeekPlanTables", () => {
   it("reads an order the way the office sheets count it", () => {
@@ -215,59 +159,5 @@ describe("workbook", () => {
     expect(productionText({ status: "in_progress", elementsExpected: 5, elementsPacked: 2, packedDay: null })).toBe(
       "I gang, 2 af 5 pakket"
     );
-  });
-});
-
-describe("handleWeekPlan", () => {
-  let db: TestDb;
-  const admin = testClaims("admin");
-  const viewer = testClaims("viewer");
-  const as = (claims: Claims | null, allow = true) => ({
-    getAccess: async () => (claims ? { claims } : null),
-    now: () => NOW,
-    allow: async () => allow,
-  });
-  const post = (body: unknown) =>
-    new Request("http://localhost/api/ugeplan", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-real-ip": "10.0.0.1" },
-      body: typeof body === "string" ? body : JSON.stringify(body),
-    });
-
-  beforeAll(async () => {
-    db = await createTestDb();
-  });
-  beforeEach(async () => {
-    await db.reset();
-    await seedConfig(db);
-    await seedOctober(db, IN_PROGRESS_ORDERS);
-  });
-  afterAll(() => db.close());
-
-  it("returns the workbook with the portal's status and leaves an audit row", async () => {
-    const [known] = await db.withService((tx) =>
-      tx.query<{ order_no: number; status: string }>("select order_no, status from core.orders where status = 'packed' order by order_no limit 1")
-    );
-    const plan: WeekPlan = readWeekPlanTables(tables(), "Uge 48.MDB");
-    plan.orders[0].orderNo = known.order_no;
-
-    const res = await handleWeekPlan(post(plan), as(viewer));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toContain('filename="ugeplan-uge-48-2026.xlsx"');
-    const bks = await readSheet(Buffer.from(await res.arrayBuffer()), "BKS");
-    const row = bks.find((r) => r[1] === known.order_no)!;
-    expect(String(row[bks[7].indexOf("Prod.")])).toMatch(/^Pakket/);
-
-    const log = await db.withService((tx) => tx.query<{ action: string; subject: string }>("select action, subject from app.audit_log"));
-    expect(log).toEqual([{ action: "export.weekplan", subject: "ugeplan-uge-48-2026.xlsx" }]);
-  });
-
-  it("refuses: 401 signed out, 429 over the limit, 400 for no plan, 413 too big", async () => {
-    const plan = readWeekPlanTables(tables(), null);
-    expect((await handleWeekPlan(post(plan), as(null))).status).toBe(401);
-    expect((await handleWeekPlan(post(plan), as(admin, false))).status).toBe(429);
-    expect((await handleWeekPlan(post("not json"), as(admin))).status).toBe(400);
-    expect((await handleWeekPlan(post({ ...plan, orders: [{ orderNo: "x" }] }), as(admin))).status).toBe(400);
-    expect((await handleWeekPlan(post("x".repeat(2_000_001)), as(admin))).status).toBe(413);
   });
 });

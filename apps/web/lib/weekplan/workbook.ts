@@ -282,19 +282,30 @@ function productionSheet(plan: WeekPlan, status: Map<number, ProductionStatus>):
 
 /** What the file was made from, how, and what to check by hand. */
 export function infoLines(plan: WeekPlan, status: Map<number, ProductionStatus>, generated: string): string[] {
+  const bySource = (source: string) => plan.orders.filter((o) => (o.source ?? "3e") === source).map((o) => o.orderNo);
+  const portalOnly = bySource("portal");
+  const mdbOnly = bySource("3e");
   const lines = [
     `Ugeplan ${weekTitle(plan)}`,
-    plan.fileName ? `Fra 3E-filen ${plan.fileName}` : "Fra 3E-filen",
+    plan.fileName ? `Fra produktionslisterne i portalen og 3E-filen ${plan.fileName}` : "Fra produktionslisterne i portalen",
     generated,
     `${plan.orders.length} ordrer`,
     "",
-    "Fra 3E: kunde, ordre, ansvarlig, beløb (ordresum ekskl. moms), timer (3E's tid pr. position), batch nr. (serienumre),",
-    "elementer og svejsninger, elementtyper og fragtlinjen. Folie godkendt er frit felt 2 eller 3 = ja, HTM er frit felt 4,",
-    "bemærkning er frit felt 6.",
-    "Fra portalen: Prod. og Klar til afsendt, ud fra scanningerne.",
+    "Fra produktionslisterne: kunde, ordre, ansvarlig (initialer af sagsbehandlerens navn), elementtyper, elementer og",
+    "svejsninger (en pr. karm og en pr. ramme), timer (portalens kalkulerede tid pr. elementtype) og bemærkningerne på positionerne.",
+    "Fra 3E-filen, når den er trukket ind: beløb (ordresum ekskl. moms), batch nr. (serienumre), fragtlinjen, folie godkendt",
+    "(frit felt 2 eller 3 = ja), HTM (frit felt 4), bemærkning (frit felt 6), 3E's egne timer og 3E's eksakte optælling",
+    "(hver karm i koblede elementer for sig, Scan-typer). Står en ordre begge steder, gælder 3E-filen.",
+    "Fra scanningerne: Prod. og Klar til afsendt.",
     "Udfyldes som før: budget, kapacitet (gule felter), spec. elementer, bue/skrå/tag, poste, sprosser, kobling,",
     "afsendelse, afsendt, påklædning og fragtmand.",
   ];
+  if (!plan.fileName) lines.push("", "Uden 3E-filen er beløb, batch nr., folie og HTM tomme.");
+  if (plan.orders.some((o) => o.hours === null)) {
+    lines.push("", "Timer er tomme: der er ingen kalkulerede tider, eller din rolle må ikke se dem (kun planlægger, ledelse og admin).");
+  }
+  if (plan.fileName && portalOnly.length > 0) lines.push("", `Kun i produktionslisterne, ikke i 3E-filen: ${portalOnly.join(", ")}`);
+  if (plan.fileName && mdbOnly.length > 0) lines.push("", `Kun i 3E-filen, ingen produktionsliste i portalen endnu: ${mdbOnly.join(", ")}`);
   const planned = plan.year && plan.week ? (plan.year - 2000) * 100 + plan.week : null;
   const otherWeek = plan.orders.filter((o) => o.week && planned && o.week !== planned);
   if (otherWeek.length > 0) {
