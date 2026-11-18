@@ -64,7 +64,12 @@ public partial class MainWindow : Window
     public MainWindow(bool kiosk, bool showcase)
     {
         InitializeComponent();
-        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder)) { Log = Log.Write };
+        // No folder set, but OptiCloud is: the PDFs come from OptiCloud's list (a PC that can't reach the share).
+        _documents = new OrderDocuments(new OrderDocumentLocator(_settings.DocumentsFolder))
+        {
+            Log = Log.Write,
+            Cloud = _settings.DocumentsFolder is null && _settings.IsConnected && SettingsStore.LoadPassword() is not null ? new CloudDocumentSource(() => _cloud?.Connection) : null,
+        };
         _documents.Warm();
         _vm = new MainViewModel(_settings.Stations.Select(s => s.Config))
         {

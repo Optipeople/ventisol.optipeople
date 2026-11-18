@@ -77,6 +77,7 @@ public sealed class CloudSync : IDisposable
     string _readError = "", _writeError = "";
     string? _fatal;
     OptiCloudClient? _client;
+    bool _connected;
     TimeSpan? _skewLogged;
     // Cancelled (and replaced) by Wake: ends a retry wait of the reads at once.
     CancellationTokenSource _wake = new();
@@ -131,6 +132,13 @@ public sealed class CloudSync : IDisposable
     public event EventHandler<MachineOrderChange>? MachineOrderChanged;
 
     public CloudStatus Status { get { lock (_gate) return _status; } }
+
+    // The client and account once connected, for others to read OptiCloud with (CloudDocumentSource);
+    // null before that and after the connection has ended.
+    public (OptiCloudClient Client, Guid AccountId)? Connection
+    {
+        get { lock (_gate) return _connected && _client is { } c ? (c, _accountId) : null; }
+    }
 
     public int Pending => _outbox.Pending;
 
@@ -331,6 +339,7 @@ public sealed class CloudSync : IDisposable
             {
                 // None throws: they end quietly when cancelled.
                 inner.Cancel();
+                lock (_gate) _connected = false;
                 await Task.WhenAll(sender, orders, uploads);
             }
         }
@@ -382,7 +391,7 @@ public sealed class CloudSync : IDisposable
         await client.LoginAsync(ct);
         var (account, name) = await AccountAsync(client, _settings, ct);
         await table.EnsureAsync(account, ct);
-        lock (_gate) (_account, _accountId) = (name, account);
+        lock (_gate) (_account, _accountId, _connected) = (name, account, true);
         _log($"OptiCloud: forbundet til {(name.Length > 0 ? name : account.ToString())}");
         ReadOk();
     }

@@ -56,7 +56,7 @@ camelCase them).
 ## Files in a list
 
 Tried on 2026-11-11 in the Ventisol account with two order PDFs (7 and 67 KB) in a throwaway list.
-Nothing in the apps uses it yet.
+The station app uploads the order PDFs (`OrderDocumentUpload`) and reads them back with `Get` (`CloudDocumentSource`, see `order-documents.md`).
 
 - `POST /api/MasterDataBlob/Upload/{tableId}` (multipart, field `file`) stores the file and answers
   `data: { name, contentType, reference }`. `reference` is

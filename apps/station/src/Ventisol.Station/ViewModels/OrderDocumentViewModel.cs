@@ -39,6 +39,9 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
 
     readonly OrderDocuments documents;
 
+    // From OptiCloud, it is OptiCloud that can't be reached, not the folder.
+    string Note(string note) => documents.Folder is null ? note.Replace("mappen kan ikke nås", "OptiCloud kan ikke nås") : note;
+
     public OrderDocumentViewModel(OrderDocuments documents)
     {
         this.documents = documents;
@@ -172,7 +175,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
             { InProgress: true } => $"I gang på {t.StationName}",
             { At: { } done } => $"Sidst på {t.StationName} · scannet ud {done.ToLocalTime():HH:mm}",
             _ => $"Sidst på {t.StationName}",
-        } + (FromCopy ? " · " + (_olderCopy ? OlderCopyNote : CopyNote) : "");
+        } + (FromCopy ? " · " + Note(_olderCopy ? OlderCopyNote : CopyNote) : "");
     }
 
     public void Close()
@@ -239,11 +242,15 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
                     "Ordredokumenter er slået fra");
                 return;
             case OrderDocumentLoadStatus.FolderUnavailable:
-                Message("Mappen med ordredokumenter kan ikke læses", $"{load.Error ?? "Mappen svarer ikke"}. {documents.Folder}", retry: true,
-                    "Dokumentmappen kan ikke nås");
+                if (documents.Folder is null)
+                    Message("Ordredokumenterne kan ikke hentes fra OptiCloud", $"{load.Error ?? "OptiCloud svarer ikke"}.", retry: true,
+                        "OptiCloud kan ikke nås");
+                else
+                    Message("Mappen med ordredokumenter kan ikke læses", $"{load.Error ?? "Mappen svarer ikke"}. {documents.Folder}", retry: true,
+                        "Dokumentmappen kan ikke nås");
                 return;
             case OrderDocumentLoadStatus.NotFound:
-                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf (eller fx BE_{barcode.Order}_*.pdf) i {documents.Folder}.", retry: true,
+                Message($"Ingen produktionsliste for ordre {barcode.Order}", $"Der ligger ingen {barcode.Order}_*.pdf (eller fx BE_{barcode.Order}_*.pdf) i {documents.SourceName}.", retry: true,
                     "Ingen produktionsliste fundet");
                 return;
             case OrderDocumentLoadStatus.Unreadable:

@@ -581,7 +581,7 @@
                                 <DockPanel>
                                     <TextBlock Style="{StaticResource Left}" Width="220" Text="Mappe med ordredokumenter" TextWrapping="Wrap" />
                                     <TextBox Text="{Binding DocumentsFolder, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Mappen, hvor 3E lægger ordrernes PDF'er, f.eks. R:\Indkøb\Shares\Ordre. Tom slår ordredokumenterne fra." />
+                                             ToolTip="Mappen, hvor 3E lægger ordrernes PDF'er, f.eks. R:\Indkøb\Shares\Ordre. Tom: ordredokumenterne hentes fra OptiCloud, som scan-PC'erne lægger dem i (til en PC, der ikke kan nå drevet). Uden OptiCloud er de slået fra." />
                                 </DockPanel>
                             </Border>
                             <StackPanel Orientation="Horizontal" Margin="220,16,0,0" VerticalAlignment="Center">
@@ -609,7 +609,7 @@
                                             <Setter Property="Foreground" Value="{StaticResource Ink3}" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding DocumentsStatus}" Value="None">
-                                                    <Setter Property="Text" Value="Tom: ordredokumenterne er slået fra" />
+                                                    <Setter Property="Text" Value="Tom: ordredokumenterne hentes fra OptiCloud (slået fra uden OptiCloud)" />
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding DocumentsStatus}" Value="Ok">
                                                     <Setter Property="Foreground" Value="{StaticResource OkText}" />

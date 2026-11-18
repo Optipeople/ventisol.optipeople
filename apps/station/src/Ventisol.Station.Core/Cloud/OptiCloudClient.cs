@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Ventisol.Station.Core.Documents;
 
 namespace Ventisol.Station.Core.Cloud;
 
@@ -161,6 +162,58 @@ public sealed class OptiCloudClient : IDisposable, IMachineOrderApi
         }, UploadTimeout, ct);
         if (d.ValueKind != JsonValueKind.Object || d.Str("reference") is not { Length: > 0 } reference) throw new OptiCloudException(OptiCloudException.Unexpected);
         return new CloudFile(d.Str("name") is { Length: > 0 } n ? n : fileName, d.Str("contentType") is { Length: > 0 } c ? c : contentType, reference);
+    }
+
+    // A file stored for a list (the reference from a Blob column), as bytes. At most maxBytes: a
+    // bigger answer is not read whole into memory (OrderDocumentTooLargeException). Needs the bearer token.
+    public async Task<byte[]> DownloadFileAsync(string reference, long maxBytes, CancellationToken ct = default)
+    {
+        await EnsureTokenAsync(ct);
+        var used = _token;
+        var (status, bytes) = await RawBytesAsync(reference, used, maxBytes, ct);
+        if (status == 401)
+        {
+            await RenewAsync(used, ct);
+            (status, bytes) = await RawBytesAsync(reference, _token, maxBytes, ct);
+        }
+        if (status is >= 200 and < 300 && bytes is not null) return bytes;
+        if (status == 404) throw new OptiCloudException("Filen findes ikke i OptiCloud", status, rejected: true);
+        throw StatusError(status);
+    }
+
+    async Task<(int Status, byte[]? Bytes)> RawBytesAsync(string reference, string? token, long maxBytes, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(UploadTimeout);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/MasterDataBlob/Get?path={Uri.EscapeDataString(reference)}");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        try
+        {
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            var status = (int)response.StatusCode;
+            if (status is < 200 or >= 300) return (status, null);
+            if (response.Content.Headers.ContentLength is { } length && length > maxBytes)
+                throw new OrderDocumentTooLargeException(reference, length);
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var memory = new MemoryStream();
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+            {
+                if (memory.Length + read > maxBytes) throw new OrderDocumentTooLargeException(reference, memory.Length + read);
+                memory.Write(buffer, 0, read);
+            }
+            return (status, memory.ToArray());
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new OptiCloudException(OptiCloudException.Unreachable + " (intet svar)");
+        }
+        // A connection lost while the body is read.
+        catch (Exception x) when (x is HttpRequestException or IOException and not OrderDocumentTooLargeException)
+        {
+            throw new OptiCloudException(OptiCloudException.Unreachable);
+        }
     }
 
     // The machine's current order ("" for none). None comes two ways: a machine never given an

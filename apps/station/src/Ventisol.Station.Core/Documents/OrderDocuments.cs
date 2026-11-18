@@ -1,3 +1,5 @@
+using Ventisol.Station.Core.Cloud;
+
 namespace Ventisol.Station.Core.Documents;
 
 public enum OrderDocumentLoadStatus
@@ -93,8 +95,17 @@ public sealed class OrderDocuments
     // Hears of a file not read because it is too big. Any thread.
     public Action<string>? Log { get; init; }
 
-    public bool IsOn => _locator.Folder is not null;
+    public bool IsOn => _locator.Folder is not null || Cloud is not null;
     public string? Folder => _locator.Folder;
+
+    // With no folder set: the PDFs come from the OptiCloud list instead (a PC that can't reach the share).
+    public CloudDocumentSource? Cloud { get; init; }
+
+    // Where the documents come from, for the screen: the folder, or "OptiCloud".
+    public string? SourceName => Folder ?? (Cloud is not null ? "OptiCloud" : null);
+
+    // The copy on this PC of a document from OptiCloud is kept under this made-up folder.
+    const string CloudFolder = "OptiCloud";
     public OrderDocumentLocator Locator => _locator;
 
     // Where the PDFs read from the share are kept on this PC; null keeps them in memory only.
@@ -115,6 +126,7 @@ public sealed class OrderDocuments
 
     public async Task<OrderDocumentLoad> LoadAsync(Barcode barcode, CancellationToken ct = default)
     {
+        if (Folder is null && Cloud is { } cloud) return await LoadFromCloudAsync(cloud, barcode, ct).ConfigureAwait(false);
         var lookup = await _locator.FindAsync(barcode.Order, ct).ConfigureAwait(false);
         switch (lookup.Status)
         {
@@ -165,6 +177,90 @@ public sealed class OrderDocuments
         }
 
         return Loaded(barcode, read, fromCopy: false);
+    }
+
+    // The order's PDF from the OptiCloud list. While OptiCloud can't be reached, a copy answers, as for the share.
+    async Task<OrderDocumentLoad> LoadFromCloudAsync(CloudDocumentSource cloud, Barcode barcode, CancellationToken ct)
+    {
+        CloudDocumentLookup lookup;
+        // A slow OptiCloud (a login, a full read of the list) must not keep the screen waiting: the copy answers.
+        try { lookup = await cloud.FindAsync(barcode.Order, CancellationToken.None).WaitAsync(ReadTimeout, ct).ConfigureAwait(false); }
+        catch (TimeoutException) { lookup = new(CloudDocumentStatus.Unavailable, Error: "OptiCloud svarer ikke"); }
+        switch (lookup.Status)
+        {
+            case CloudDocumentStatus.NotFound: return new(barcode, OrderDocumentLoadStatus.NotFound);
+            case CloudDocumentStatus.Unavailable:
+                return await FromCopyAsync(barcode, null, ct).ConfigureAwait(false)
+                    ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Error: lookup.Error);
+        }
+
+        var doc = lookup.Document!;
+        var path = System.IO.Path.Combine(CloudFolder, doc.FileName);
+        var reading = ReadCloudCached(cloud, doc, path);
+        Read read;
+        try
+        {
+            read = await reading.WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (ex is not TimeoutException) cloud.Forget(barcode.Order);
+            var why = ex switch
+            {
+                TimeoutException => "OptiCloud svarer ikke",
+                OptiCloudException x => x.Message,
+                OrderDocumentTooLargeException => $"Filen er for stor (over {MaxPdfBytes / (1024 * 1024)} MB)",
+                _ => "Filen kan ikke hentes fra OptiCloud",
+            };
+            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+                ?? new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: why);
+        }
+        _ = Task.Run(() => Keep(read));
+        return Loaded(barcode, read, fromCopy: false);
+    }
+
+    // Downloads (or finds in memory) the file in the background; a copy is saved on this PC.
+    Task<Read> ReadCloudCached(CloudDocumentSource cloud, CloudDocument doc, string path)
+    {
+        var key = doc.Key;
+        lock (_gate)
+        {
+            var i = _cache.FindIndex(c => c.Key == key);
+            if (i >= 0)
+            {
+                var hit = _cache[i];
+                _cache.RemoveAt(i);
+                _cache.Add(hit);
+                return hit.Task;
+            }
+            var cache = Cache;
+            var task = Task.Run(async () =>
+            {
+                byte[] bytes;
+                try { bytes = await cloud.ReadAsync(doc).ConfigureAwait(false); }
+                catch (OrderDocumentTooLargeException x)
+                {
+                    Log?.Invoke($"Ordredokumenter: {x.Message} i OptiCloud, hentes ikke");
+                    throw;
+                }
+                var parsed = OrderDocumentParser.Parse(bytes, path);
+                if (cache is not null && parsed.PageCount > 0)
+                {
+                    try { cache.Save(path, bytes); }
+                    catch (Exception) { }
+                }
+                return new Read(parsed, bytes, key, path, IsCopy: false, doc.Order, doc.Date);
+            });
+            _cache.Add((key, task));
+            if (_cache.Count > MaxCached) _cache.RemoveAt(0);
+            _ = task.ContinueWith(t => { lock (_gate) _cache.RemoveAll(c => c.Task == t); },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return task;
+        }
     }
 
     static OrderDocumentLoad Loaded(Barcode barcode, Read read, bool fromCopy)

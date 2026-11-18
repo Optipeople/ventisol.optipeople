@@ -16,7 +16,8 @@ When an operator scans an element in, the station app can show the order's produ
 - An order can be printed again, and an older version may be kept beside the new one as history (with or
   without a prefix). The locator takes the newest date in the name, then the newest write time.
 - The folder is a setting on the setup screen, "Mappe med ordredokumenter" (`StationSettings.DocumentsFolder`).
-  Empty turns the feature off.
+  Empty: the PDFs come from OptiCloud instead (see Reading from OptiCloud), or the feature is off when
+  OptiCloud isn't set up either.
 - A PDF over 50 MB (`OrderDocuments.MaxPdfBytes`) is not read: the screen says
   "Filen er for stor (over 50 MB)", and it is not uploaded (see Uploading).
 - The samples are customer data. They live in the untracked `orderdocs/` folder at the repo root on the
@@ -27,8 +28,8 @@ When an operator scans an element in, the station app can show the order's produ
 The list `VentisolOrderDocuments` ("Ventisol ordredokumenter") in the Ventisol account holds one row
 per PDF, so the web and tablets can show them later. It was made by hand on 2026-11-11 with the 26
 samples; the station app now makes it (and any missing column) and uploads new PDFs to it
-(`OrderDocumentUpload`, run by `CloudSync`). Nothing reads it yet: the station app still shows the
-PDFs from the share.
+(`OrderDocumentUpload`, run by `CloudSync`). A PC with no documents folder set reads the PDFs from it
+(see Reading from OptiCloud); a PC with a folder shows them from the share.
 
 | Column | Type (`dataType`) | What |
 |---|---|---|
@@ -74,6 +75,28 @@ PDFs from the share.
   (`Ordredokumenter: 58721_20261022.pdf er lagt i OptiCloud`). Nothing is shown on the screen.
 - Not handled: a file that changes under the same name keeps its first upload (a reprint normally
   gets a new date and so a new name), and a file deleted from the share stays in the list.
+
+### Reading from OptiCloud
+
+For a PC that can't reach the share (Scan or Viewer mode): leave "Mappe med ordredokumenter" empty and
+set up OptiCloud. `OrderDocuments.Cloud` (`CloudDocumentSource`) then finds and fetches the PDFs.
+
+- It uses the app's own connection (`CloudSync.Connection`), so there is no second login. Before the app
+  is connected, the screen says "Ordredokumenterne kan ikke hentes fra OptiCloud · Ikke forbundet til
+  OptiCloud endnu", with "Prøv igen".
+- A lookup asks `GetRowsPaged` with `keyword=<order>` (50 rows, newest `PrintDate` first) and keeps the
+  rows whose `FileName` gives that order and that have a file. The newest date in the name wins, then
+  the newest row. If the keyword search finds none, the whole list is read (at most every 2 minutes),
+  as what the search matches on is not documented. The list is never made by a reader: no list, no document.
+- A row found is kept for 30 s, a miss for 5 s.
+- The file comes from `GET /api/MasterDataBlob/Get?path=<reference>` with the bearer token, at most
+  50 MB (`MaxPdfBytes`), and is parsed like a file from the share. It is kept in memory by file name and
+  `Sha256`, and saved as a copy on this PC under the made-up folder `OptiCloud`, so while OptiCloud can't
+  be reached the copy answers ("Gemt kopi").
+- Only what the scan PCs have uploaded can be shown: files printed in the last 60 days, a few minutes
+  after 3E wrote them (see Uploading). A scan PC reaches the share and so does not read from OptiCloud.
+- The older-order rule at scan-in (`OrderHints.Exists`) needs the folder; a PC reading from OptiCloud
+  refuses scans of orders below 58000 as with no folder.
 
 How upload, the temp link and deleting behave is in [`opticloud-scans.md`](opticloud-scans.md), "Files in a list".
 
