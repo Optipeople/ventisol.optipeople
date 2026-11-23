@@ -26,7 +26,8 @@ public partial class MainWindow : Window
     // An update waits for this long without a scan, and for a setup screen or layout mode nobody has touched for as long.
     static readonly TimeSpan UpdateQuiet = TimeSpan.FromMinutes(10);
 
-    readonly StationSettings _settings = SettingsStore.Load();
+    // Not readonly: the stations' names follow their machines in OptiPeople (OnStationsRenamed).
+    StationSettings _settings = SettingsStore.Load();
     readonly MainViewModel _vm;
     readonly DemoScanner _demo;
     readonly KeyboardScanSource _keyboard = new();
@@ -179,6 +180,8 @@ public partial class MainWindow : Window
         _vm.Scanned += (_, _) => SendMachineOrders();
         // And the other way: an order stopped or changed in OptiPeople ends the element at its station.
         _cloud.MachineOrderChanged += (_, c) => Dispatcher.BeginInvoke(() => OnMachineOrderChanged(c));
+        // OptiPeople names the stations, so every screen calls them the same.
+        _cloud.StationsRenamed += (_, r) => Dispatcher.BeginInvoke(() => OnStationsRenamed(r));
         ShowCloudStatus();
         _cloud.Start();
         Log.Write($"Started {_vm.Version}, {_settings.Mode}, OptiCloud {(_settings.IsConnected ? "set up" : "not set up")}");
@@ -385,6 +388,22 @@ public partial class MainWindow : Window
             // A keyboard-mode scanner can't be seen until it scans, so it counts as there.
             station.ScannerConnected = serial == KeyboardScanSource.Id || serial is not null && connected.Contains(serial);
         }
+    }
+
+    // The names are shown at once and kept on this PC, which shows them until OptiPeople is read
+    // again. Only the names: anything else in the settings file is read from it as it is now, so a
+    // setup saved meanwhile is not undone.
+    void OnStationsRenamed(IReadOnlyDictionary<int, string> renamed)
+    {
+        _settings = StationNames.Apply(_settings, renamed);
+        foreach (var s in _vm.Stations)
+            if (renamed.TryGetValue(s.Number, out var name)) s.Rename(name);
+        // A station given another machine in a setup saved since keeps the name that came with it.
+        var saved = SettingsStore.Load();
+        var same = renamed.Where(r => saved.Stations.FirstOrDefault(s => s.Number == r.Key)?.MachineId is { } m
+                && _settings.Stations.First(s => s.Number == r.Key).MachineId == m)
+            .ToDictionary(r => r.Key, r => r.Value);
+        if (same.Count > 0 && !SettingsStore.Save(StationNames.Apply(saved, same))) Log.Write("Station names from OptiPeople not saved on this PC");
     }
 
     // ===== Setup =====

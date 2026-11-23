@@ -303,7 +303,8 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Style="{StaticResource Left}" FontFamily="{StaticResource Mono}" Foreground="{StaticResource Ink3}" Text="{Binding Number}" />
-                    <TextBox Grid.Column="1" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBox Grid.Column="1" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding NameFromMachine}"
+                             ToolTip="{Binding NameTip}" />
                     <Border Grid.Column="3" Style="{StaticResource Track}">
                         <UniformGrid Columns="2">
                             <RadioButton Style="{StaticResource Segment}" Content="Montage"

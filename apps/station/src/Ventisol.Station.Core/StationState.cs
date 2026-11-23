@@ -29,7 +29,10 @@ public sealed class StationState(StationConfig station)
 
     readonly List<ActiveElement> _active = [];
 
-    public StationConfig Station { get; } = station;
+    public StationConfig Station { get; private set; } = station;
+
+    // Its machine is called something else in OptiPeople (StationNames). What is in progress stays.
+    public void Rename(string name) => Station = Station with { Name = name };
 
     public int MaxActive => Math.Clamp(Station.MaxActive, 1, StationConfig.MaxActiveLimit);
 

@@ -20,9 +20,18 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     readonly StationState _state = new(config);
     DateTimeOffset _flashUntil;
 
-    public StationConfig Config => config;
+    public StationConfig Config => _state.Station;
     public int Number => config.Number;
-    public string Name => config.Name;
+    public string Name => _state.Station.Name;
+
+    // Its machine's name in OptiPeople changed (StationNames).
+    public void Rename(string name)
+    {
+        if (name == Name) return;
+        _state.Rename(name);
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Config));
+    }
 
     public int MaxActive => _state.MaxActive;
     // Several elements at once: the tile shows Rows, each with its own timer and stop button.

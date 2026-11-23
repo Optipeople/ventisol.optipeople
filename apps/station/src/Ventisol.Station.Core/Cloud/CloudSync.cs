@@ -34,6 +34,9 @@ public sealed class CloudSync : IDisposable
 {
     public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
+    // How often the machines' names are read again from OptiPeople (StationNames).
+    public static readonly TimeSpan NamesInterval = TimeSpan.FromMinutes(5);
+
     // How far back scans are read. Longer than a night, so an element in progress at midnight
     // survives a restart; an In older than this with no Out is forgotten.
     public static readonly TimeSpan Window = TimeSpan.FromHours(36);
@@ -130,6 +133,10 @@ public sealed class CloudSync : IDisposable
     // Scan mode only: a machine's order was stopped or changed in OptiPeople, so the element its
     // station has in progress ends. Comes on any thread.
     public event EventHandler<MachineOrderChange>? MachineOrderChanged;
+
+    // A station's machine is called something else in OptiPeople: the new names, by station number.
+    // Read when connected and every NamesInterval after, in both modes. Comes on any thread.
+    public event EventHandler<IReadOnlyDictionary<int, string>>? StationsRenamed;
 
     public CloudStatus Status { get { lock (_gate) return _status; } }
 
@@ -316,11 +323,12 @@ public sealed class CloudSync : IDisposable
             // The sender and the machine orders use the client too: whatever ends this, they are
             // stopped and awaited before it is disposed.
             using var inner = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            Task sender = Task.CompletedTask, orders = Task.CompletedTask, uploads = Task.CompletedTask;
+            Task sender = Task.CompletedTask, orders = Task.CompletedTask, uploads = Task.CompletedTask, names = Task.CompletedTask;
             try
             {
                 await RetryAsync(() => ConnectAsync(client, table, ct), ct);
                 if (Documents?.Folder is not null) uploads = RunUploadsAsync(client, Documents, inner.Token);
+                if (_settings.Stations.Any(s => s.MachineId is not null)) names = RunNamesAsync(client, inner.Token);
 
                 // A PC switched from Scan to Viewer may still have scans to send.
                 if (_settings.Mode == StationMode.Scan || _outbox.Pending > 0) sender = _outbox.RunAsync(table.AddAsync, inner.Token, _delay);
@@ -340,7 +348,7 @@ public sealed class CloudSync : IDisposable
                 // None throws: they end quietly when cancelled.
                 inner.Cancel();
                 lock (_gate) _connected = false;
-                await Task.WhenAll(sender, orders, uploads);
+                await Task.WhenAll(sender, orders, uploads, names);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -369,6 +377,43 @@ public sealed class CloudSync : IDisposable
         try { await new OrderDocumentUpload(client, documents, account, _log, delay: _delay, statePath: _uploadState).RunAsync(ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception x) { _log($"OptiCloud: ordredokumenterne stoppede: {x}"); }
+    }
+
+    // Its own loop: a failed read keeps the names this PC has, and is tried again next time.
+    async Task RunNamesAsync(OptiCloudClient client, CancellationToken ct)
+    {
+        Guid account;
+        lock (_gate) account = _accountId;
+        var stations = _settings.Stations;
+        string? failed = null;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var machines = await client.GetMachinesAsync(account, ct);
+                var renamed = StationNames.Renamed(stations, machines.Select(m => (m.Id, m.Name)));
+                failed = null;
+                if (renamed.Count > 0)
+                {
+                    stations = StationNames.Apply(_settings with { Stations = stations }, renamed).Stations;
+                    _log($"OptiCloud: stationsnavne fra OptiPeople: {string.Join(", ", renamed.Select(r => $"{r.Key} = {r.Value}"))}");
+                    if (!_disposed)
+                    {
+                        try { StationsRenamed?.Invoke(this, renamed); }
+                        catch (Exception x) { _log($"OptiCloud: stationsnavnene kunne ikke bruges: {x.Message}"); }
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception x)
+            {
+                // Said once, not every five minutes while it lasts.
+                if (failed != x.Message) _log($"OptiCloud: maskinernes navne kunne ikke læses, stationerne beholder deres navne ({x.Message})");
+                failed = x.Message;
+            }
+            try { await _delay(NamesInterval, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+        }
     }
 
     void Changed(MachineOrderChange change)

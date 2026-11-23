@@ -511,6 +511,11 @@ public sealed partial class SetupViewModel : ObservableObject
         ConnectionText = "";
     }
 
+    // The machine's name in OptiPeople, which a station with that machine is called (StationNames).
+    // Null before the machines are read, or when it has no name.
+    internal string? MachineName(Guid id) =>
+        _machineNames.TryGetValue(id, out var name) && name != id.ToString() ? name : null;
+
     // Machines from the account, by name, plus any a station already points at that isn't among them.
     void RebuildMachines()
     {
@@ -638,6 +643,18 @@ public sealed partial class SetupStationViewModel : ObservableObject
 
     partial void OnNameChanged(string value) => _owner.Changed();
     partial void OnScannerChanged(ScannerOption? value) => _owner.ScannerChosen(this);
+
+    // OptiPeople names the station: picking a machine, or reading the machines, gives it that name.
+    partial void OnMachineChanged(MachineOption? value)
+    {
+        if (value?.Id is { } id && _owner.MachineName(id) is { } name && name != Name) Name = name;
+        OnPropertyChanged(nameof(NameFromMachine));
+        OnPropertyChanged(nameof(NameTip));
+    }
+
+    // The name is the machine's, so it is changed in OptiPeople, not here.
+    public bool NameFromMachine => Machine?.Id is { } id && _owner.MachineName(id) is not null;
+    public string? NameTip => NameFromMachine ? "Navnet kommer fra maskinen i OptiPeople og rettes der" : null;
 
     [RelayCommand]
     void Identify() => _owner.Identify(this);

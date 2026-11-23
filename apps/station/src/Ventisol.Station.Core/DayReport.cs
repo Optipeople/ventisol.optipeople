@@ -80,7 +80,7 @@ public static class DayReport
 
         return all.Select(s =>
         {
-            var mine = finished.Where(r => r.Station == s.Station).ToList();
+            var mine = finished.Where(r => r.Station.Number == s.Station.Number).ToList();
             var busy = Union(mine.Select(r => (Later(r.Start, first), r.End))
                 .Concat(s.Active.Select(a => (Later(a.Since, first), now))));
             TimeSpan? average = mine.Count > 0 ? mine.Aggregate(TimeSpan.Zero, (t, r) => t + r.Duration) / mine.Count : null;
