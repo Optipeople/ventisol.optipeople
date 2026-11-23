@@ -89,6 +89,10 @@ public sealed class CloudSync : IDisposable
     // The local day the journal was last pruned on. Under _gate.
     DateTimeOffset? _pruned;
     CloudStatus _status;
+    // Which machine each station scans to, learned from the scans read (StationNames.Links), under
+    // _gate. Cancelling _linked makes the names loop look again at once when a new link is learned.
+    Dictionary<int, Guid> _links = [];
+    CancellationTokenSource _linked = new();
 
     // monotonic: a test's, else clock (also a test's), else the Stopwatch.
     public CloudSync(StationSettings settings, string? password, string dataFolder, Action<string> log, Func<DateTimeOffset>? clock = null,
@@ -328,7 +332,8 @@ public sealed class CloudSync : IDisposable
             {
                 await RetryAsync(() => ConnectAsync(client, table, ct), ct);
                 if (Documents?.Folder is not null) uploads = RunUploadsAsync(client, Documents, inner.Token);
-                if (_settings.Stations.Any(s => s.MachineId is not null)) names = RunNamesAsync(client, inner.Token);
+                // A viewer learns its stations' machines from the scans, so it always looks.
+                if (_settings.Mode == StationMode.Viewer || _settings.Stations.Any(s => s.MachineId is not null)) names = RunNamesAsync(client, inner.Token);
 
                 // A PC switched from Scan to Viewer may still have scans to send.
                 if (_settings.Mode == StationMode.Scan || _outbox.Pending > 0) sender = _outbox.RunAsync(table.AddAsync, inner.Token, _delay);
@@ -388,10 +393,14 @@ public sealed class CloudSync : IDisposable
         string? failed = null;
         while (!ct.IsCancellationRequested)
         {
+            // Taken together: a link learned from here on wakes the wait below at once.
+            Dictionary<int, Guid> links;
+            CancellationTokenSource linked;
+            lock (_gate) (links, linked) = (_links, _linked);
             try
             {
                 var machines = await client.GetMachinesAsync(account, ct);
-                var renamed = StationNames.Renamed(stations, machines.Select(m => (m.Id, m.Name)));
+                var renamed = StationNames.Renamed(StationNames.Linked(stations, links), machines.Select(m => (m.Id, m.Name)));
                 failed = null;
                 if (renamed.Count > 0)
                 {
@@ -411,9 +420,32 @@ public sealed class CloudSync : IDisposable
                 if (failed != x.Message) _log($"OptiCloud: maskinernes navne kunne ikke læses, stationerne beholder deres navne ({x.Message})");
                 failed = x.Message;
             }
-            try { await _delay(NamesInterval, ct); }
+            // Until it is time, or a scan has shown a station's machine.
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(ct, linked.Token);
+            try { await _delay(NamesInterval, wait.Token); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (OperationCanceledException) { }
         }
+    }
+
+    // Only the stations without a machine of their own need it; a link that changed wakes the names loop.
+    void Learn(IEnumerable<ScanEvent> events)
+    {
+        var unset = _settings.Stations.Where(s => s.MachineId is null).Select(s => s.Number).ToHashSet();
+        if (unset.Count == 0) return;
+        var learned = StationNames.Links(events.Where(e => unset.Contains(e.StationNo)));
+        CancellationTokenSource? wake = null;
+        lock (_gate)
+        {
+            var merged = new Dictionary<int, Guid>(_links);
+            foreach (var (n, m) in learned) merged[n] = m;
+            if (merged.Count == _links.Count && merged.All(l => _links.TryGetValue(l.Key, out var was) && was == l.Value)) return;
+            _links = merged;
+            wake = _linked;
+            _linked = new();
+        }
+        // Not disposed: the names loop may still be linking to it.
+        wake.Cancel();
     }
 
     void Changed(MachineOrderChange change)
@@ -536,6 +568,7 @@ public sealed class CloudSync : IDisposable
     void Raise(IEnumerable<ScanEvent> events, DateTimeOffset since, bool fromCloud = false, bool refresh = false)
     {
         List<ScanEvent> list = [.. events.Where(e => e.At >= since).DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction)];
+        Learn(list);
         if (!_disposed) Loaded?.Invoke(this, new LoadedScans(list, since, fromCloud, refresh));
     }
 

@@ -176,6 +176,27 @@ public sealed class CloudSyncTests : IDisposable
     }
 
     [Fact(Timeout = 10000)]
+    public async Task A_viewer_without_machines_names_its_stations_after_the_machines_their_scans_go_to()
+    {
+        var machine = Guid.NewGuid();
+        var api = new FakeOptiCloud();
+        api.Machines.Add((machine, "Montage 10"));
+        api.AddRow(In(A, 1, Now.AddMinutes(-30)) with { MachineId = machine });
+        using var sync = Sync(api, StationMode.Viewer);
+        var renamed = new List<IReadOnlyDictionary<int, string>>();
+        sync.StationsRenamed += (_, r) => { lock (renamed) renamed.Add(r); };
+
+        sync.Start();
+
+        await Until(() => { lock (renamed) return renamed.Count > 0; });
+        lock (renamed) Assert.Equal(new Dictionary<int, string> { [1] = "Montage 10" }, renamed[0]);
+        // Said once: the names it has given are the names it has.
+        var reads = api.Count("GetByAccountId");
+        await Until(() => api.Count("GetByAccountId") > reads + 2);
+        lock (renamed) Assert.Single(renamed);
+    }
+
+    [Fact(Timeout = 10000)]
     public async Task A_viewer_polls_and_tells_when_something_changed()
     {
         var api = new FakeOptiCloud();

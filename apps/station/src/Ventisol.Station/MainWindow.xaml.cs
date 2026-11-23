@@ -400,8 +400,9 @@ public partial class MainWindow : Window
             if (renamed.TryGetValue(s.Number, out var name)) s.Rename(name);
         // A station given another machine in a setup saved since keeps the name that came with it.
         var saved = SettingsStore.Load();
-        var same = renamed.Where(r => saved.Stations.FirstOrDefault(s => s.Number == r.Key)?.MachineId is { } m
-                && _settings.Stations.First(s => s.Number == r.Key).MachineId == m)
+        // A viewer's station without a machine has its name from the machine its scans go to.
+        var same = renamed.Where(r => saved.Stations.FirstOrDefault(s => s.Number == r.Key) is { } was
+                && was.MachineId == _settings.Stations.First(s => s.Number == r.Key).MachineId)
             .ToDictionary(r => r.Key, r => r.Value);
         if (same.Count > 0 && !SettingsStore.Save(StationNames.Apply(saved, same))) Log.Write("Station names from OptiPeople not saved on this PC");
     }

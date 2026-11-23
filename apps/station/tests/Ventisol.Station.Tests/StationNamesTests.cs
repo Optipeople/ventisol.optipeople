@@ -1,4 +1,5 @@
 using Ventisol.Station.Core;
+using Ventisol.Station.Core.Cloud;
 
 namespace Ventisol.Station.Tests;
 
@@ -43,6 +44,25 @@ public class StationNamesTests
         Assert.Equal(Stations.Where(s => s.Number != 3), applied.Stations.Where(s => s.Number != 3));
         Assert.Equal(6, applied.MarkAfterHours);
         Assert.Same(settings, StationNames.Apply(settings, new Dictionary<int, string>()));
+    }
+
+    [Fact]
+    public void A_station_without_a_machine_learns_it_from_its_newest_scan()
+    {
+        var now = DateTimeOffset.Now;
+        var links = StationNames.Links(
+        [
+            TestScans.In("058556050103", 2, now.AddMinutes(-10)) with { MachineId = Gone },
+            TestScans.In("058556050104", 2, now.AddMinutes(-1)) with { MachineId = Ten },
+            TestScans.In("058556050105", 4, now),
+        ]);
+        Assert.Equal(new Dictionary<int, Guid> { [2] = Ten }, links);
+
+        // Station 1 has its own machine, so a link for it changes nothing.
+        var linked = StationNames.Linked(Stations, new Dictionary<int, Guid> { [1] = Packing, [2] = Ten }).ToList();
+        Assert.Equal(Ten, linked[0].MachineId);
+        Assert.Equal(Ten, linked[1].MachineId);
+        Assert.Equal(new Dictionary<int, string> { [2] = "Montage 10" }, StationNames.Renamed(linked.Skip(1), [(Ten, "Montage 10")]));
     }
 
     [Fact]

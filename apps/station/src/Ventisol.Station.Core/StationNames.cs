@@ -1,3 +1,5 @@
+using Ventisol.Station.Core.Cloud;
+
 namespace Ventisol.Station.Core;
 
 // A station's name comes from its machine in OptiPeople, so every screen calls it the same.
@@ -18,6 +20,19 @@ public static class StationNames
                 renamed[s.Number] = name;
         return renamed;
     }
+
+    // Which machine each station scans to, by station number, from the scans: the newest scan with a
+    // machine wins. A viewer is often set up without machines; the scan PC's scans say what they are.
+    public static Dictionary<int, Guid> Links(IEnumerable<ScanEvent> scans)
+    {
+        var links = new Dictionary<int, Guid>();
+        foreach (var e in scans.Where(e => e.MachineId is not null).OrderBy(e => e.At)) links[e.StationNo] = e.MachineId!.Value;
+        return links;
+    }
+
+    // The stations with a machine from the links where they have none set up themselves.
+    public static IEnumerable<StationSetup> Linked(IEnumerable<StationSetup> stations, IReadOnlyDictionary<int, Guid> links) =>
+        stations.Select(s => s.MachineId is null && links.TryGetValue(s.Number, out var m) ? s with { MachineId = m } : s);
 
     // The settings with those names, everything else as it was.
     public static StationSettings Apply(StationSettings settings, IReadOnlyDictionary<int, string> renamed) =>
