@@ -413,10 +413,14 @@ public partial class MainWindow : Window
         {
             HasPin = App.Pin.IsSet,
             Persist = SaveSetup,
+            KioskAvailable = Updates.Autostart.OwnsEntry(),
+            KioskAtOpen = _kiosk,
+            PersistKiosk = Updates.Autostart.SetKiosk,
         };
         // Stations, mode and the OptiCloud login are read at start, so start again with the new ones.
         // Only once they are on the disk: a save that failed leaves the setup open, and says so.
-        vm.Saved += (_, _) => Restart();
+        // Kiosk mode too: a window can't become a kiosk, or a kiosk a window, while it is up.
+        vm.Saved += (_, _) => Restart(vm.KioskChanged);
         Setup.Open(vm);
     }
 
@@ -434,12 +438,12 @@ public partial class MainWindow : Window
         };
     }
 
-    void Restart()
+    void Restart(bool kioskChanged = false)
     {
         // The new one uses the same outbox folder, so this one lets go of it first.
         _cloud.Dispose();
         _scans.Dispose();
-        App.Restart();
+        App.Restart(kioskChanged);
     }
 
     void OnTick()

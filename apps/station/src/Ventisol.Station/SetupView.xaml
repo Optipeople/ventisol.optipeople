@@ -425,6 +425,43 @@
                             </RadioButton>
                         </UniformGrid>
 
+                        <!-- ===== Kiosk ===== -->
+                        <!-- Kept in the autostart entry, so only the installed app can switch it. -->
+                        <TextBlock Style="{StaticResource Section}" Text="KIOSK-TILSTAND" Margin="0,36,0,12" />
+                        <UniformGrid Columns="2" Width="880" HorizontalAlignment="Left" IsEnabled="{Binding KioskAvailable}">
+                            <UniformGrid.Style>
+                                <Style TargetType="UniformGrid">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Opacity" Value="0.5" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </UniformGrid.Style>
+                            <RadioButton Style="{StaticResource Choice}" GroupName="kiosk" Margin="0,0,6,0" IsChecked="{Binding Kiosk}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="20" Text="&#xE740;"
+                                               Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Left}" FontWeight="Bold" Text="Kiosk" />
+                                        <TextBlock Style="{StaticResource Small}" Text="Hele skærmen, kan ikke lukkes ved et uheld" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </RadioButton>
+                            <RadioButton Style="{StaticResource Choice}" GroupName="kiosk" Margin="6,0,0,0" IsChecked="{Binding IsWindowMode}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="20" Text="&#xE737;"
+                                               Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Left}" FontWeight="Bold" Text="Vindue" />
+                                        <TextBlock Style="{StaticResource Small}" Text="Et almindeligt vindue, der kan lukkes" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </RadioButton>
+                        </UniformGrid>
+                        <TextBlock Style="{StaticResource Small}" Width="880" HorizontalAlignment="Left" Margin="0,12,0,0" TextWrapping="Wrap"
+                                   Text="{Binding KioskNote}" />
+
                         <!-- ===== OptiCloud ===== -->
                         <TextBlock Style="{StaticResource Section}" Text="OPTICLOUD" />
                         <StackPanel Width="880" HorizontalAlignment="Left">

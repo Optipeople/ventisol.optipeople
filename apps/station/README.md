@@ -136,7 +136,9 @@ installer says "This app can't run on your PC" there). Each updates only from it
 the Windows user in `%LOCALAPPDATA%\VentisolStation` and adds the app to that user's startup
 (`HKCU\...\Run`, `--kiosk`). While that entry says `--kiosk`, every start of the installed app is
 a kiosk: the first after the install, a restart, the start after an update. `--window` opens it as
-a window for once; take `--kiosk` out of the entry to make it a window for good.
+a window for once. Opsætning's "Kiosk-tilstand" (Kiosk / Vindue) switches it for good: Gem writes
+the entry with or without `--kiosk` and restarts the app in the new mode. Only the installed app
+that owns the entry can switch it; in a dev build the choice is greyed out.
 Uninstalling removes it again. Let the station PC log in a local
 Windows user automatically (netplwiz, or Sysinternals Autologon), so a power cut ends with the app
 on the screen, not at a login prompt. That is set up by hand per PC, not by the installer.

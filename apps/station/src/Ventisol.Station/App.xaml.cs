@@ -268,9 +268,12 @@ public partial class App : Application
     // For a restart someone asked for, or one that is part of the work (new settings). It says nothing
     // about the version, so this start is neither a good one nor a failed one: three saves in the
     // setup within a minute of an update must not roll the update back.
-    public static void Restart()
+    // kioskChanged: the setup screen just switched kiosk mode in the autostart entry, so the new app
+    // starts without --kiosk or --window and takes the mode from the entry (Autostart.IsKiosk).
+    public static void Restart(bool kioskChanged = false)
     {
         StartupGuard.NotCounted();
+        _dropModeArgs = kioskChanged;
         Relaunch();
     }
 
@@ -332,14 +335,20 @@ public partial class App : Application
         catch (Exception ex) { Log.Write($"Restart not noted: {ex.Message}"); }
     }
 
+    static bool _dropModeArgs;
+
     // The new app gets the same arguments (a kiosk stays a kiosk) and this process' id, so it can
-    // wait for this one and stop it if it hangs on the way out.
+    // wait for this one and stop it if it hangs on the way out. After a kiosk switch in the setup,
+    // without --kiosk and --window, which would hold the old mode.
     // False when it could not be started.
     static bool StartAgain()
     {
         try
         {
-            return System.Diagnostics.Process.Start(Environment.ProcessPath!, SingleInstance.ArgsForRestart(Environment.GetCommandLineArgs().Skip(1))) is not null;
+            var args = Environment.GetCommandLineArgs().Skip(1);
+            if (_dropModeArgs) args = args.Where(a => !a.Equals("--kiosk", StringComparison.OrdinalIgnoreCase)
+                                                      && !a.Equals("--window", StringComparison.OrdinalIgnoreCase));
+            return System.Diagnostics.Process.Start(Environment.ProcessPath!, SingleInstance.ArgsForRestart(args)) is not null;
         }
         catch (Exception ex)
         {

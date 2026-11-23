@@ -159,6 +159,35 @@ public sealed partial class SetupViewModel : ObservableObject
 
     partial void OnForgetSavedChanged(bool value) => UpdateProblems();
 
+    // ----- Kiosk
+
+    // Whether kiosk mode can be switched here: only in the installed app that Windows starts at
+    // login, since the choice is kept in that autostart entry. Elsewhere the choice is shown, greyed.
+    public bool KioskAvailable { get; init; }
+
+    // Kiosk mode as the screen opened with it; Kiosk is the choice made since.
+    public bool KioskAtOpen
+    {
+        get => _kioskAtOpen;
+        init { _kioskAtOpen = value; Kiosk = value; }
+    }
+    readonly bool _kioskAtOpen;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsWindowMode))]
+    public partial bool Kiosk { get; set; }
+
+    public bool IsWindowMode { get => !Kiosk; set { if (value) Kiosk = false; } }
+
+    public bool KioskChanged => KioskAvailable && Kiosk != _kioskAtOpen;
+
+    // Writes the kiosk choice on "Gem", after the settings. False when it could not be written.
+    public Func<bool, bool>? PersistKiosk { get; init; }
+
+    public string KioskNote => KioskAvailable
+        ? "Kiosk fylder hele skærmen og kan kun lukkes fra ikonet i proceslinjen. Skiftet sker, når du trykker Gem."
+        : "Kan kun skiftes i den installerede app, som Windows starter ved login.";
+
     // ----- PIN-kode
 
     // True when a setup PIN is set now.
@@ -313,6 +342,17 @@ public sealed partial class SetupViewModel : ObservableObject
             // Stay open with everything as typed, so it can be tried again.
             SaveError = "Kunne ikke gemme. Prøv igen.";
             return;
+        }
+        if (KioskChanged && PersistKiosk is { } persistKiosk)
+        {
+            bool kioskWritten;
+            try { kioskWritten = persistKiosk(Kiosk); }
+            catch { kioskWritten = false; }
+            if (!kioskWritten)
+            {
+                SaveError = "Kunne ikke skifte kiosk-tilstand. Prøv igen.";
+                return;
+            }
         }
         Close();
         Saved?.Invoke(settings, newPassword);

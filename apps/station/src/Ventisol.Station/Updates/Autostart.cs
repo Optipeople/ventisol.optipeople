@@ -5,8 +5,8 @@ namespace Ventisol.Station.Updates;
 // Starts the app in kiosk mode when this Windows user logs in. Set by the installer, removed by the uninstaller.
 // Per user (HKCU), so it needs no admin rights and follows the auto-login user on the station PC.
 // The same entry makes every other start of the installed app a kiosk too (IsKiosk): the first one
-// after the install, a restart, the start after an update. Take --kiosk out of the entry, or the entry
-// away, and the app is a plain window again.
+// after the install, a restart, the start after an update. Take --kiosk out of the entry (the setup
+// screen's Kiosk choice does that, SetKiosk), or the entry away, and the app is a plain window again.
 static class Autostart
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -28,7 +28,31 @@ static class Autostart
 
     // True when this very exe is the one Windows starts as a kiosk at login. A developer's build is
     // another exe, so it stays a window whatever is installed on the PC.
-    public static bool IsKiosk()
+    public static bool IsKiosk() =>
+        OwnCommand() is { } command && command.Contains(KioskArg, StringComparison.OrdinalIgnoreCase);
+
+    // True when Windows starts this very exe at login: then kiosk mode is this app's to turn on and
+    // off (SetKiosk). A developer's build never owns the entry, so it can't take the PC's autostart.
+    public static bool OwnsEntry() => OwnCommand() is not null;
+
+    // The setup screen's kiosk choice: the entry keeps starting this exe at login, with or without
+    // --kiosk. The next start follows it. False when the entry is not this exe's, or can't be written.
+    public static bool SetKiosk(bool on)
+    {
+        try
+        {
+            if (!OwnsEntry()) return false;
+            using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+            var exe = Environment.ProcessPath!;
+            key.SetValue(Name, on ? $"\"{exe}\" {KioskArg}" : $"\"{exe}\"");
+            Log.Write($"Autostart set: {exe} {(on ? KioskArg : "(window)")}");
+            return true;
+        }
+        catch (Exception ex) { Log.Write($"Kiosk mode not changed: {ex.Message}"); return false; }
+    }
+
+    // The entry's command, when it starts this very exe; else null.
+    static string? OwnCommand()
     {
         try
         {
@@ -36,9 +60,9 @@ static class Autostart
             return key?.GetValue(Name) is string command
                    && Environment.ProcessPath is { Length: > 0 } exe
                    && command.Contains($"\"{exe}\"", StringComparison.OrdinalIgnoreCase)
-                   && command.Contains(KioskArg, StringComparison.OrdinalIgnoreCase);
+                ? command : null;
         }
-        catch { return false; }
+        catch { return null; }
     }
 
     public static void Disable()
