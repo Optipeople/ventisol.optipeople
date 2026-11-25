@@ -8,10 +8,11 @@ public enum StationMode { Scan, Viewer }
 // ScannerSerial the scanner id of the cradle that belongs to it: the USB port it is plugged into
 // ("usb:" + location path, see UsbPort), or "keyboard". COM port numbers move, the USB port doesn't.
 // Either is null until it has been set up. MaxActive is "Max i gang" (see StationConfig), 1 to
-// StationConfig.MaxActiveLimit.
-public sealed record StationSetup(int Number, string Name, StationKind Kind, Guid? MachineId = null, string? ScannerSerial = null, int MaxActive = 1)
+// StationConfig.MaxActiveLimit. WorkMode is its Arbejdsform (see StationWorkMode).
+public sealed record StationSetup(int Number, string Name, StationKind Kind, Guid? MachineId = null, string? ScannerSerial = null, int MaxActive = 1,
+    StationWorkMode WorkMode = StationWorkMode.Enkel)
 {
-    public StationConfig Config => new(Number, Name, Kind, MaxActive);
+    public StationConfig Config => new(Number, Name, Kind, MaxActive, WorkMode);
 }
 
 // Everything the setup screen sets, kept on this PC. The password is stored encrypted

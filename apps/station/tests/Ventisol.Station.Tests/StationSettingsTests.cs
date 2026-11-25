@@ -189,4 +189,124 @@ public class StationSettingsTests
     [InlineData(500, StationSettings.MaxMarkAfterHours)]
     public void Marker_efter_is_kept_to_1_to_48_hours(int given, int kept) =>
         Assert.Equal(kept, StationSettingsJson.Normalize(StationSettings.Default with { MarkAfterHours = given }).MarkAfterHours);
+
+    // ----- Arbejdsform
+
+    static StationSettings WithModes(params (int Number, StationWorkMode Mode, int MaxActive)[] changes) => Configured() with
+    {
+        Stations = [.. Configured().Stations.Select(t => changes.FirstOrDefault(c => c.Number == t.Number) is { Number: > 0 } c
+            ? t with { WorkMode = c.Mode, MaxActive = c.MaxActive } : t)],
+    };
+
+    [Fact]
+    public void An_older_file_without_arbejdsform_reads_as_enkel()
+    {
+        var back = StationSettingsJson.Deserialize("""
+            { "version": 1, "mode": "Scan", "apiBaseUrl": "https://api.optipeople.dk",
+              "stations": [ { "number": 1, "name": "Station 10", "kind": "Assembly", "maxActive": 3 } ] }
+            """)!;
+
+        Assert.All(back.Stations, t => Assert.Equal(StationWorkMode.Enkel, t.WorkMode));
+        Assert.Equal(StationWorkMode.Enkel, back.Stations[0].Config.WorkMode);
+        Assert.Equal(StationWorkMode.Enkel, StationSettings.Default.Stations[0].WorkMode);
+    }
+
+    [Theory]
+    [InlineData("Montage")]
+    [InlineData("2")]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void An_unknown_arbejdsform_reads_as_enkel_and_the_rest_of_the_file_is_kept(string text)
+    {
+        var logged = new List<string>();
+        var back = StationSettingsJson.Deserialize($$"""
+            { "version": 1, "mode": "Viewer", "username": "ventisol",
+              "stations": [ { "number": 3, "name": "Svejs", "kind": "Packing", "maxActive": 4, "workMode": "{{text}}" },
+                            { "number": 4, "name": "Station 40", "kind": "Assembly", "workMode": "Session" } ] }
+            """, logged.Add)!;
+
+        Assert.NotNull(back);
+        Assert.Equal(StationMode.Viewer, back.Mode);
+        Assert.Equal(StationWorkMode.Enkel, back.Stations[2].WorkMode);
+        Assert.Equal(4, back.Stations[2].MaxActive);
+        Assert.Equal("Svejs", back.Stations[2].Name);
+        Assert.Equal(StationWorkMode.Session, back.Stations[3].WorkMode);
+        if (string.IsNullOrWhiteSpace(text)) Assert.Empty(logged);
+        else Assert.Contains(text, Assert.Single(logged));
+    }
+
+    [Fact]
+    public void A_null_arbejdsform_reads_as_enkel() =>
+        Assert.Equal(StationWorkMode.Enkel, StationSettingsJson.Deserialize("""
+            { "version": 1, "mode": "Scan", "stations": [ { "number": 1, "name": "A", "kind": "Assembly", "workMode": null } ] }
+            """)!.Stations[0].WorkMode);
+
+    [Theory]
+    [InlineData("session", StationWorkMode.Session)]
+    [InlineData(" PAKNING ", StationWorkMode.Pakning)]
+    [InlineData("Enkel", StationWorkMode.Enkel)]
+    public void Arbejdsform_text_is_read_in_any_case(string text, StationWorkMode mode) =>
+        Assert.Equal(mode, StationSettingsJson.ParseWorkMode(text));
+
+    [Fact]
+    public void Arbejdsform_survives_a_round_trip_pakning_too()
+    {
+        var s = WithModes((2, StationWorkMode.Session, 4), (7, StationWorkMode.Pakning, 1));
+        var json = StationSettingsJson.Serialize(s);
+        var back = StationSettingsJson.Deserialize(json)!;
+
+        Assert.Contains("\"workMode\": \"Session\"", json);
+        Assert.Contains("\"workMode\": \"Pakning\"", json);
+        Assert.Equal(s.Stations, back.Stations);
+        Assert.Equal(StationWorkMode.Session, back.Stations[1].Config.WorkMode);
+        Assert.Equal(StationWorkMode.Pakning, back.Stations[6].WorkMode);
+        Assert.Equal(StationWorkMode.Enkel, back.Stations[0].WorkMode);
+    }
+
+    [Fact]
+    public void Normalize_keeps_pakning_and_makes_an_undefined_value_enkel()
+    {
+        var s = WithModes((1, StationWorkMode.Pakning, 1), (2, (StationWorkMode)42, 1));
+        var n = StationSettingsJson.Normalize(s);
+
+        Assert.Equal(StationWorkMode.Pakning, n.Stations[0].WorkMode);
+        Assert.Equal(StationWorkMode.Enkel, n.Stations[1].WorkMode);
+    }
+
+    [Fact]
+    public void The_drop_down_offers_enkel_and_session_with_their_labels()
+    {
+        Assert.Equal([StationWorkMode.Enkel, StationWorkMode.Session], SetupRules.OfferedWorkModes);
+        Assert.Equal("Enkel (scan ind / scan ud)", SetupRules.WorkModeLabel(StationWorkMode.Enkel));
+        Assert.Equal("Session (Start / Pause / Hold)", SetupRules.WorkModeLabel(StationWorkMode.Session));
+        Assert.Equal("Pakning (tjekliste og paller)", SetupRules.WorkModeLabel(StationWorkMode.Pakning));
+    }
+
+    [Fact]
+    public void Session_with_max_1_gets_a_hint_that_does_not_stop_a_save()
+    {
+        var s = WithModes((1, StationWorkMode.Session, 1), (2, StationWorkMode.Session, 3), (3, StationWorkMode.Enkel, 1));
+
+        var hints = SetupRules.Hints(s);
+        Assert.Equal("Session med Maks 1: ét element ad gangen", Assert.Single(hints, h => h.Key == 1).Value);
+        Assert.Single(hints);
+        Assert.Empty(SetupRules.Problems(s));
+    }
+
+    [Fact]
+    public void Changing_arbejdsform_warns_of_the_elements_on_pause()
+    {
+        var before = WithModes((3, StationWorkMode.Session, 4), (4, StationWorkMode.Session, 4), (5, StationWorkMode.Session, 4));
+        var after = WithModes((3, StationWorkMode.Enkel, 4), (4, StationWorkMode.Enkel, 4), (5, StationWorkMode.Session, 4));
+        after = after with { Stations = [.. after.Stations.Select(t => t.Number == 3 ? t with { Name = "Station 30" } : t)] };
+        var paused = new Dictionary<int, int> { [3] = 3, [4] = 1, [5] = 2, [6] = 2 };
+
+        var w = SetupRules.ModeChanges(before, after, paused);
+
+        Assert.Equal([3, 4], w.Keys.Order());
+        Assert.Equal("Station 30 har 3 elementer på pause. De afsluttes, når du gemmer.", w[3]);
+        Assert.Equal("Station 40 har 1 element på pause. Det afsluttes, når du gemmer.", w[4]);
+        Assert.Empty(SetupRules.ModeChanges(before, after, new Dictionary<int, int>()));
+        Assert.Empty(SetupRules.Problems(after));
+    }
 }

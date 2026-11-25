@@ -25,7 +25,7 @@ static class SettingsStore
         if (AtomicFile.TryRead(SettingsFile, Log.Write) is not { } text) return StationSettings.Default;
         try
         {
-            if (StationSettingsJson.Deserialize(text) is { } settings) return settings;
+            if (StationSettingsJson.Deserialize(text, Log.Write) is { } settings) return settings;
             Log.Write("settings.json holds no settings: starting from the defaults, with OptiCloud not set up");
         }
         catch (Exception e) { Log.Write($"settings.json could not be read: starting from the defaults, with OptiCloud not set up: {e.Message}"); }

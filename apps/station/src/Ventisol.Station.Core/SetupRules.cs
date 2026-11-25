@@ -58,4 +58,53 @@ public static class SetupRules
                 : t)],
         };
     }
+
+    // ----- Arbejdsform
+
+    // The Arbejdsformer the drop-down offers. Pakning comes with the packing checklist; until then a
+    // station that has it (a newer app's file) keeps it and shows it, but it can't be picked.
+    public static IReadOnlyList<StationWorkMode> OfferedWorkModes { get; } = [StationWorkMode.Enkel, StationWorkMode.Session];
+
+    public static string WorkModeLabel(StationWorkMode mode) => mode switch
+    {
+        StationWorkMode.Session => "Session (Start / Pause / Hold)",
+        StationWorkMode.Pakning => "Pakning (tjekliste og paller)",
+        _ => "Enkel (scan ind / scan ud)",
+    };
+
+    public const string SessionOneAtATime = "Session med Maks 1: ét element ad gangen";
+
+    // A note on a station's Arbejdsform that doesn't stop a save, or null.
+    public static string? WorkModeHint(StationSetup t) =>
+        t is { WorkMode: StationWorkMode.Session, MaxActive: 1 } ? SessionOneAtATime : null;
+
+    // The hints of every station, by station number. None stops a save.
+    public static IReadOnlyDictionary<int, string> Hints(StationSettings s) =>
+        s.Stations.Select(t => (t.Number, Hint: WorkModeHint(t))).Where(h => h.Hint is not null)
+            .GroupBy(h => h.Number).ToDictionary(g => g.Key, g => g.First().Hint!);
+
+    // What a changed Arbejdsform does to the elements on pause at a station: Gem ends them as a HOLD
+    // would. Null when the Arbejdsform is the same or none are on pause. Doesn't stop a save.
+    public static string? ModeChange(StationSetup before, StationSetup after, int paused)
+    {
+        if (before.WorkMode == after.WorkMode || paused <= 0) return null;
+        var name = string.IsNullOrWhiteSpace(after.Name) ? $"Station {after.Number}" : after.Name.Trim();
+        return paused == 1
+            ? $"{name} har 1 element på pause. Det afsluttes, når du gemmer."
+            : $"{name} har {paused} elementer på pause. De afsluttes, når du gemmer.";
+    }
+
+    // The warnings of every station whose Arbejdsform changes, by station number. pausedPerStation is
+    // the number of elements on pause per station number (a station not listed has none).
+    public static IReadOnlyDictionary<int, string> ModeChanges(StationSettings before, StationSettings after,
+        IReadOnlyDictionary<int, int> pausedPerStation)
+    {
+        var old = before.Stations.GroupBy(t => t.Number).ToDictionary(g => g.Key, g => g.First());
+        var warnings = new Dictionary<int, string>();
+        foreach (var t in after.Stations)
+            if (old.TryGetValue(t.Number, out var was) && !warnings.ContainsKey(t.Number)
+                && ModeChange(was, t, pausedPerStation.GetValueOrDefault(t.Number)) is { } w)
+                warnings[t.Number] = w;
+        return warnings;
+    }
 }

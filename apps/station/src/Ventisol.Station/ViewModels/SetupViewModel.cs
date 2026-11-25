@@ -15,6 +15,14 @@ public sealed record MachineOption(Guid? Id, string Name)
     public override string ToString() => Name;
 }
 
+// One choice in a station's Arbejdsform drop-down: the list shows Label, the closed box the short name
+// (the row has no room for the label).
+public sealed record WorkModeOption(StationWorkMode Mode)
+{
+    public string Label => SetupRules.WorkModeLabel(Mode);
+    public override string ToString() => Mode.ToString();
+}
+
 public sealed record ScannerOption(string? Id, string Label)
 {
     public override string ToString() => Label;
@@ -230,6 +238,10 @@ public sealed partial class SetupViewModel : ObservableObject
 
     // "Max i gang" per station: how many elements may be in progress there at once.
     public IReadOnlyList<int> MaxActiveOptions { get; } = [.. Enumerable.Range(1, StationConfig.MaxActiveLimit)];
+
+    // How many elements are on pause at each station now, by station number, for the warning when
+    // its Arbejdsform changes (SetupRules.ModeChange). Nothing is on pause before Session works.
+    public IReadOnlyDictionary<int, int> PausedPerStation { get; init; } = new Dictionary<int, int>();
 
     // "Marker efter (timer)", for every station: an element in progress longer is marked on its tile.
     static readonly int[] DefaultMarkAfterOptions = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 48];
@@ -610,7 +622,14 @@ public sealed partial class SetupStationViewModel : ObservableObject
         InitialMachineId = s.MachineId;
         InitialScanner = s.ScannerSerial;
         MaxActive = s.MaxActive;
+        _saved = s;
+        // Pakning isn't offered yet, but a station that has it (a newer app's file) keeps and shows it.
+        WorkModeOptions = [.. SetupRules.OfferedWorkModes.Append(s.WorkMode).Distinct().Select(m => new WorkModeOption(m))];
+        WorkMode = WorkModeOptions.First(o => o.Mode == s.WorkMode);
     }
+
+    // The station as it was when the screen opened, to tell a changed Arbejdsform.
+    readonly StationSetup _saved;
 
     public int Number { get; }
     internal Guid? InitialMachineId { get; }
@@ -631,7 +650,23 @@ public sealed partial class SetupStationViewModel : ObservableObject
     public bool IsPacking { get => Kind == StationKind.Packing; set { if (value) Kind = StationKind.Packing; } }
 
     // "Max i gang": 1 is one at a time, a new element stops the one in progress.
-    [ObservableProperty] public partial int MaxActive { get; set; } = 1;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WorkModeNote), nameof(IsWorkModeWarning))]
+    public partial int MaxActive { get; set; } = 1;
+
+    // Arbejdsform: Enkel (scan in / scan out) or Session (Start / Pause / Hold).
+    public IReadOnlyList<WorkModeOption> WorkModeOptions { get; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WorkModeNote), nameof(IsWorkModeWarning))]
+    public partial WorkModeOption? WorkMode { get; set; }
+
+    string? WorkModeWarning => SetupRules.ModeChange(_saved, ToSetup(), _owner.PausedPerStation.GetValueOrDefault(Number));
+
+    // A line under the row about the Arbejdsform: the warning that Gem ends the elements on pause,
+    // else a hint (Session with Max i gang 1). Neither stops a save.
+    public string? WorkModeNote => WorkModeWarning ?? SetupRules.WorkModeHint(ToSetup());
+    public bool IsWorkModeWarning => WorkModeWarning is not null;
 
     [ObservableProperty] public partial MachineOption? Machine { get; set; }
     [ObservableProperty] public partial ScannerOption? Scanner { get; set; }
@@ -641,7 +676,7 @@ public sealed partial class SetupStationViewModel : ObservableObject
     // A line under the row: what to do while identifying, or what it found.
     [ObservableProperty] public partial string? Note { get; internal set; }
 
-    partial void OnNameChanged(string value) => _owner.Changed();
+    partial void OnNameChanged(string value) { _owner.Changed(); OnPropertyChanged(nameof(WorkModeNote)); }
     partial void OnScannerChanged(ScannerOption? value) => _owner.ScannerChosen(this);
 
     // OptiPeople names the station: picking a machine, or reading the machines, gives it that name.
@@ -660,5 +695,6 @@ public sealed partial class SetupStationViewModel : ObservableObject
     void Identify() => _owner.Identify(this);
 
     public StationSetup ToSetup() =>
-        new(Number, Name.Trim(), Kind, Machine is null ? InitialMachineId : Machine.Id, Scanner is null ? InitialScanner : Scanner.Id, MaxActive);
+        new(Number, Name.Trim(), Kind, Machine is null ? InitialMachineId : Machine.Id, Scanner is null ? InitialScanner : Scanner.Id, MaxActive,
+            WorkMode?.Mode ?? _saved.WorkMode);
 }

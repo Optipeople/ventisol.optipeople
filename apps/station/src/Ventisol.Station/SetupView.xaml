@@ -291,6 +291,8 @@
                         <ColumnDefinition Width="16" />
                         <ColumnDefinition Width="96" />
                         <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="132" />
+                        <ColumnDefinition Width="16" />
                         <ColumnDefinition Width="6*" />
                         <ColumnDefinition Width="16" />
                         <ColumnDefinition Width="6*" />
@@ -298,6 +300,7 @@
                         <ColumnDefinition Width="142" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
@@ -315,21 +318,48 @@
                     </Border>
                     <ComboBox Grid.Column="5" ItemsSource="{Binding Owner.MaxActiveOptions}" SelectedItem="{Binding MaxActive}"
                               ToolTip="Max i gang: hvor mange elementer der må være i gang på stationen på én gang. 1: et nyt element stopper det, der er i gang." />
-                    <ComboBox Grid.Column="7" ItemsSource="{Binding Owner.Machines}" SelectedItem="{Binding Machine}" />
-                    <ComboBox Grid.Column="9" ItemsSource="{Binding Owner.Scanners}" SelectedItem="{Binding Scanner}" />
-                    <Button x:Name="IdentifyButton" Grid.Column="11" Style="{StaticResource BarButton}" Padding="0" Content="Identificér"
+                    <ComboBox Grid.Column="7" ItemsSource="{Binding WorkModeOptions}" SelectedItem="{Binding WorkMode}"
+                              ToolTip="Arbejdsform: Enkel er scan ind / scan ud. Session arbejder med kortene Start, Pause og Hold.">
+                        <ComboBox.ItemContainerStyle>
+                            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                                <Setter Property="ContentTemplate">
+                                    <Setter.Value>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Label}" />
+                                        </DataTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                    <ComboBox Grid.Column="9" ItemsSource="{Binding Owner.Machines}" SelectedItem="{Binding Machine}" />
+                    <ComboBox Grid.Column="11" ItemsSource="{Binding Owner.Scanners}" SelectedItem="{Binding Scanner}" />
+                    <Button x:Name="IdentifyButton" Grid.Column="13" Style="{StaticResource BarButton}" Padding="0" Content="Identificér"
                             Command="{Binding IdentifyCommand}" Click="OnIdentify"
                             ToolTip="Scan en vilkårlig stregkode med stationens scanner" />
 
-                    <StackPanel x:Name="NoteLine" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="11" Orientation="Horizontal" Margin="0,10,0,2">
+                    <StackPanel x:Name="NoteLine" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="13" Orientation="Horizontal" Margin="0,10,0,2">
                         <Ellipse x:Name="NoteDot" Style="{StaticResource StatusDot}" Fill="{StaticResource Ok}" />
                         <TextBlock x:Name="NoteText" Style="{StaticResource Small}" Foreground="{StaticResource OkText}" Text="{Binding Note}" />
+                    </StackPanel>
+
+                    <!-- Arbejdsform: a hint (Session with Max i gang 1), or the warning that Gem ends the elements on pause -->
+                    <StackPanel x:Name="ModeLine" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="13" Orientation="Horizontal" Margin="0,10,0,2">
+                        <Ellipse x:Name="ModeDot" Style="{StaticResource StatusDot}" Fill="{StaticResource Ink3}" />
+                        <TextBlock x:Name="ModeText" Style="{StaticResource Small}" Text="{Binding WorkModeNote}" />
                     </StackPanel>
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding Note}" Value="{x:Null}">
                     <Setter TargetName="NoteLine" Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding WorkModeNote}" Value="{x:Null}">
+                    <Setter TargetName="ModeLine" Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsWorkModeWarning}" Value="True">
+                    <Setter TargetName="ModeDot" Property="Fill" Value="{StaticResource Warn}" />
+                    <Setter TargetName="ModeText" Property="Foreground" Value="{StaticResource Ink}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsIdentifying}" Value="True">
                     <Setter TargetName="IdentifyButton" Property="Content" Value="Stop" />
@@ -603,6 +633,8 @@
                                     <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="96" />
                                     <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="132" />
+                                    <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="6*" />
                                     <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="6*" />
@@ -613,8 +645,9 @@
                                 <TextBlock Grid.Column="1" Style="{StaticResource Head}" Text="Navn" />
                                 <TextBlock Grid.Column="3" Style="{StaticResource Head}" Text="Type" />
                                 <TextBlock Grid.Column="5" Style="{StaticResource Head}" Text="Max i gang" />
-                                <TextBlock Grid.Column="7" Style="{StaticResource Head}" Text="Maskine i OptiCloud" />
-                                <TextBlock Grid.Column="9" Style="{StaticResource Head}" Text="Scanner" />
+                                <TextBlock Grid.Column="7" Style="{StaticResource Head}" Text="Arbejdsform" />
+                                <TextBlock Grid.Column="9" Style="{StaticResource Head}" Text="Maskine i OptiCloud" />
+                                <TextBlock Grid.Column="11" Style="{StaticResource Head}" Text="Scanner" />
                             </Grid>
                         </Border>
                         <ItemsControl ItemsSource="{Binding Stations}" Focusable="False" />
