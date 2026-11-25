@@ -532,6 +532,35 @@ public sealed class MachineOrdersTests : IDisposable
         Assert.Equal("058556050103", pending[0]);
     }
 
+    // docs/plan-shift-end.md §6.6: a stop at shift end leaves nothing in progress, so the machine is
+    // cleared after the settle, as after any Out.
+    [Fact]
+    public async Task A_stop_at_shift_end_clears_the_machine_after_settle()
+    {
+        var setups = new[] { new StationSetup(1, "Station 10", StationKind.Assembly, M1) };
+        var state = new StationState(StationConfig.Defaults[0]);
+        state.Scan(Code(A), T0);
+        var orders = new MachineOrders();
+        var api = new FakeApi();
+        var worker = Worker(orders, api);
+        orders.Want(MachineOrders.DesiredFrom(setups, [state]), _now);
+        _now += Settle;
+        await Drain(worker);
+
+        // Written an hour after the shift end, back-dated to it.
+        var stopped = state.StopAll(T0.AddHours(6), ScanEventKind.ShiftEnd);
+        Assert.Single(stopped);
+        var desired = MachineOrders.DesiredFrom(setups, [state]);
+        Assert.Equal("", desired[M1].Number);
+        orders.Want(desired, _now);
+        _now += Settle - TimeSpan.FromSeconds(1);
+        Assert.Equal(0, await Drain(worker));
+        _now += TimeSpan.FromSeconds(1);
+        await Drain(worker);
+
+        Assert.Equal([(M1, A), (M1, "")], api.Sets);
+    }
+
     [Fact]
     public void Desired_is_the_element_in_progress_per_mapped_machine()
     {
