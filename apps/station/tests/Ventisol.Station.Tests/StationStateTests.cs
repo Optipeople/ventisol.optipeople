@@ -135,4 +135,49 @@ public class StationStateTests
         Assert.Equal(ScanKind.Switched, s.Scan(Code("058556050101"), T0.AddMinutes(2)).Kind);
         Assert.Single(s.Active);
     }
+
+    // --- Stop at shift end (docs/plan-shift-end.md §6.3)
+
+    [Fact]
+    public void Stop_all_ends_every_element_at_one_time_oldest_first_with_its_event()
+    {
+        var s = new StationState(StationConfig.Defaults[2] with { MaxActive = 3 });
+        s.Scan(Code("058556050101"), T0);
+        s.Scan(Code("058556050102"), T0.AddMinutes(30));
+
+        var outs = s.StopAll(T0.AddHours(1), ScanEventKind.ShiftEnd);
+
+        Assert.False(s.IsBusy);
+        Assert.Equal(["058556050101", "058556050102"], outs.Select(o => o.Barcode.Raw));
+        Assert.Equal([TimeSpan.FromHours(1), TimeSpan.FromMinutes(30)], outs.Select(o => o.Duration!.Value));
+        Assert.All(outs, o => Assert.Equal((ScanKind.Out, T0.AddHours(1), ScanEventKind.ShiftEnd), (o.Kind, o.At, o.Event)));
+        Assert.All(outs, o => Assert.NotNull(o.ScanId));
+        Assert.Empty(s.StopAll(T0.AddHours(2), ScanEventKind.ShiftEnd));
+    }
+
+    [Fact]
+    public void Stop_all_for_another_event_leaves_the_row_id_to_the_row()
+    {
+        var s = new StationState(StationConfig.Defaults[0]);
+        s.Scan(Code("058556050101"), T0);
+
+        var o = Assert.Single(s.StopAll(T0.AddMinutes(5), ScanEventKind.Hold));
+
+        Assert.Null(o.ScanId);
+        Assert.Equal(ScanEventKind.Hold, o.Event);
+    }
+
+    [Fact]
+    public void An_in_id_is_noted_on_the_element_and_is_not_part_of_its_equality()
+    {
+        var s = new StationState(StationConfig.Defaults[0]);
+        s.Scan(Code("058556050101"), T0);
+        var id = Guid.NewGuid();
+
+        Assert.True(s.NoteInScanId("058556050101", id));
+        Assert.False(s.NoteInScanId("058556050102", id));
+        Assert.Equal(id, Assert.Single(s.Active).InScanId);
+        Assert.Equal(new ActiveElement(Code("058556050101"), T0), s.Active[0]);
+        Assert.Equal(new ActiveElement(Code("058556050101"), T0).GetHashCode(), s.Active[0].GetHashCode());
+    }
 }

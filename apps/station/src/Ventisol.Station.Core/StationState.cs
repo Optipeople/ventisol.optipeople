@@ -18,12 +18,23 @@ public sealed record ScanResult(ScanKind Kind, StationConfig Station, Barcode Ba
 
     // In: how many elements are in progress at the station now, this one included.
     public int ActiveCount { get; init; }
+
+    // The row's ScanId when it is fixed here: a ShiftEnd Out's id, derived from its In's
+    // (ShiftEndRule.StopId). Null: the row gets a new one.
+    public Guid? ScanId { get; init; }
 }
 
-// One element in progress at a station, and since when.
-public sealed record ActiveElement(Barcode Barcode, DateTimeOffset Since)
+// One element in progress at a station, and since when. InScanId: the ScanId of its In row, for the
+// derived id of a stop at shift end; null until known (an element from an old journal line, or not
+// yet noted after a scan). It is not part of what the element is: the same element since the same
+// time is equal whether its id is known or not.
+public sealed record ActiveElement(Barcode Barcode, DateTimeOffset Since, Guid? InScanId = null)
 {
     public TimeSpan Elapsed(DateTimeOffset now) => now - Since;
+
+    public bool Equals(ActiveElement? other) => other is not null && Barcode == other.Barcode && Since == other.Since;
+
+    public override int GetHashCode() => HashCode.Combine(Barcode, Since);
 }
 
 // What a station is working on: the elements in progress there, oldest first. The first scan of an
@@ -98,6 +109,29 @@ public sealed class StationState(StationConfig station)
     }
 
     public void Reset() => _active.Clear();
+
+    // The In row of an element in progress here was recorded with this ScanId. False when it is not in progress.
+    public bool NoteInScanId(string raw, Guid scanId)
+    {
+        var i = _active.FindIndex(a => a.Barcode.Raw == raw);
+        if (i < 0) return false;
+        _active[i] = _active[i] with { InScanId = scanId };
+        return true;
+    }
+
+    // Every element in progress ends at at (an Out each, oldest first), with ev as its Event: the
+    // stop at shift end (docs/plan-shift-end.md §4.2), all at the same time. An element scanned in
+    // after at counts nothing. A ShiftEnd Out gets its derived ScanId (ShiftEndRule.StopId).
+    public IReadOnlyList<ScanResult> StopAll(DateTimeOffset at, ScanEventKind ev)
+    {
+        var results = _active.Select(a => new ScanResult(ScanKind.Out, Station, a.Barcode, at, at > a.Since ? at - a.Since : TimeSpan.Zero)
+        {
+            Event = ev,
+            ScanId = ev == ScanEventKind.ShiftEnd ? ShiftEndRule.StopId(a, Station.Number) : null,
+        }).ToList();
+        _active.Clear();
+        return results;
+    }
 
     // In order of Since; one with the same Since goes after, so the last is the one scanned last.
     void Add(ActiveElement a)

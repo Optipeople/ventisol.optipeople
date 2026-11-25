@@ -1,9 +1,14 @@
 namespace Ventisol.Station.Core;
 
-// One element done at one station: scanned in, then out.
-public sealed record WorkRecord(StationConfig Station, Barcode Barcode, DateTimeOffset Start, DateTimeOffset End)
+// One element done at one station: scanned in, then out. EndEvent: the Event of the row that ended
+// it (Scan for an ordinary Out). One stopped at shift end (ShiftEnd) is done like any other.
+public sealed record WorkRecord(StationConfig Station, Barcode Barcode, DateTimeOffset Start, DateTimeOffset End,
+    ScanEventKind EndEvent = ScanEventKind.Scan)
 {
     public TimeSpan Duration => End - Start;
+
+    // Stopped at shift end, not scanned out (docs/plan-shift-end.md).
+    public bool AutoStopped => EndEvent == ScanEventKind.ShiftEnd;
 }
 
 // An order as the scans show it: where it is being worked on now, else the station it was last scanned out at.

@@ -20,8 +20,8 @@
     "Times compare as instants (same millisecond), not as strings.",
     "",
     "Planned, not built yet (docs/plan-scan-commands.md and docs/plan-shift-end.md, opticloud-scans.md",
-    "Events). A case with \"needs\": \"events\" uses them; both suites skip it until the step that builds",
-    "the rule lifts the tag (plan-scan-commands.md step 6 and 11, plan-shift-end.md step 5 and 9).",
+    "Events). A case with \"needs\": \"events\" (Session) or \"shift-end\" uses them; a suite skips it until",
+    "it builds the rule (plan-scan-commands.md step 6 and 11; plan-shift-end.md step 5 and 9 run \"shift-end\").",
     "  event, optional on an event: the row's Event (Scan | Pause | Resume | Hold | CheckedOut | Undo |",
     "       ShiftEnd); missing means Scan. direction may then also be Mark (no time, never pairs).",
     "  A chain: passes of one element at one station joined where an Out with Pause is followed by an",
@@ -383,7 +383,7 @@
     },
     {
       "name": "shift end: a ShiftEnd Out pairs like any Out and marks the record auto-stopped",
-      "needs": "events",
+      "needs": "shift-end",
       "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0022-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T11:20:00Z", "durationSec": null },
@@ -397,7 +397,7 @@
     },
     {
       "name": "shift end: a late Out within 12 h of the ShiftEnd ends the record instead",
-      "needs": "events",
+      "needs": "shift-end",
       "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0023-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T11:20:00Z", "durationSec": null },
@@ -412,7 +412,7 @@
     },
     {
       "name": "shift end: a late Out more than 12 h after the ShiftEnd is skipped",
-      "needs": "events",
+      "needs": "shift-end",
       "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0024-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-20T11:20:00Z", "durationSec": null },
@@ -427,7 +427,7 @@
     },
     {
       "name": "shift end: a Mark (ShiftEnd) closes a pause, the record auto-stopped at its Pause Out",
-      "needs": "events",
+      "needs": "shift-end",
       "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0025-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
@@ -442,7 +442,7 @@
     },
     {
       "name": "shift end: the next In after a ShiftEnd starts a new record, not a late Out",
-      "needs": "events",
+      "needs": "shift-end",
       "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
       "events": [
         { "id": "00000000-0000-0000-0026-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-20T11:20:00Z", "durationSec": null },

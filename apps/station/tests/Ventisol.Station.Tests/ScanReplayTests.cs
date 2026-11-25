@@ -197,4 +197,104 @@ public class ScanReplayTests
         Assert.Empty(r.InProgress);
         Assert.Equal([TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(5)], r.Done.Select(d => d.Duration));
     }
+
+    // --- Stop at shift end (docs/plan-shift-end.md §4.5, §4.6, §6.4)
+
+    static ScanEvent ShiftEndOut(string barcode, int station, DateTimeOffset at, int seconds) =>
+        Scan(barcode, station, ScanDirection.Out, at, seconds) with { Event = ScanEventKind.ShiftEnd };
+
+    [Fact]
+    public void A_shift_end_out_ends_the_record_auto_stopped_and_the_station_shows_its_stop()
+    {
+        var r = Replay(In(A, 3, T0), In(B, 3, T0.AddMinutes(20)), ShiftEndOut(A, 3, T0.AddHours(2), 7200), ShiftEndOut(B, 3, T0.AddHours(2), 6000),
+            In(C, 1, T0), Out(C, 1, T0.AddMinutes(30)));
+
+        Assert.Empty(r.InProgress);
+        Assert.Equal([false, true, true], r.Done.Select(d => d.AutoStopped));
+        Assert.Equal(ScanEventKind.ShiftEnd, r.Done[1].EndEvent);
+        var stop = Assert.Single(r.AutoStopped);
+        Assert.Equal(3, stop.Key);
+        Assert.Equal(T0.AddHours(2), stop.Value.At);
+        Assert.Equal([B, A], stop.Value.Elements.Select(b => b.Raw).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void After_a_restart_a_stopped_element_is_not_in_progress_and_an_open_one_keeps_its_in_id()
+    {
+        var a = In(A, 1, T0);
+        var b = In(B, 2, T0.AddMinutes(5));
+
+        var r = Replay(a, ShiftEndOut(A, 1, T0.AddHours(2), 7200), b);
+
+        Assert.False(r.InProgress.ContainsKey(1));
+        Assert.Equal(b.ScanId, Assert.Single(r.InProgress[2]).InScanId);
+        Assert.True(Assert.Single(r.Done).AutoStopped);
+    }
+
+    [Fact]
+    public void A_late_out_within_12_hours_of_the_stop_ends_the_record_instead()
+    {
+        var r = Replay(In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), Out(A, 1, T0.AddHours(3)) with { DurationSec = 10800 });
+
+        var record = Assert.Single(r.Done);
+        Assert.Equal((T0, T0.AddHours(3), ScanEventKind.Scan), (record.Start, record.End, record.EndEvent));
+        Assert.Empty(r.AutoStopped);
+
+        // Exactly 12 hours still wins.
+        Assert.Equal(T0.AddHours(14), Assert.Single(Replay(In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), Out(A, 1, T0.AddHours(14))).Done).End);
+    }
+
+    [Fact]
+    public void A_late_out_more_than_12_hours_after_the_stop_is_skipped()
+    {
+        var late = Scan(A, 1, ScanDirection.Out, T0.AddHours(15), 54000);
+
+        var r = Replay(In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), late);
+
+        var record = Assert.Single(r.Done);
+        Assert.Equal((T0.AddHours(2), ScanEventKind.ShiftEnd), (record.End, record.EndEvent));
+
+        // With today after the stop: the stop is not today's, and the late Out makes nothing.
+        Assert.Empty(ScanReplay.Replay([In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), late], StationConfig.Defaults, T0.AddHours(10)).Done);
+    }
+
+    [Fact]
+    public void A_late_out_moves_a_stop_from_before_today_into_today()
+    {
+        var r = ScanReplay.Replay([In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), Out(A, 1, T0.AddHours(5))], StationConfig.Defaults, T0.AddHours(4));
+
+        var record = Assert.Single(r.Done);
+        Assert.Equal((T0, T0.AddHours(5)), (record.Start, record.End));
+    }
+
+    [Fact]
+    public void After_a_stop_the_next_morning_scan_is_an_in_and_starts_a_new_pass()
+    {
+        var morning = T0.AddHours(24);
+        var r = Replay(In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), In(A, 1, morning));
+
+        Assert.Equal(new ActiveElement(Code(A), morning), Assert.Single(r.InProgress[1]));
+        Assert.True(Assert.Single(r.Done).AutoStopped);
+        // Yesterday's stop is still known within the window, for the "Startet igen" text.
+        Assert.Equal(T0.AddHours(2), r.AutoStopped[1].At);
+
+        // And its Out pairs with that In, not with the stop.
+        var done = Replay(In(A, 1, T0), ShiftEndOut(A, 1, T0.AddHours(2), 7200), In(A, 1, morning), Out(A, 1, morning.AddMinutes(30)));
+        Assert.Equal([(T0, T0.AddHours(2)), (morning, morning.AddMinutes(30))], done.Done.Select(d => (d.Start, d.End)));
+    }
+
+    [Fact]
+    public void A_shift_end_mark_closes_a_pause_and_marks_its_record()
+    {
+        var mark = Scan(A, 3, ScanDirection.Mark, T0.AddHours(6)) with { Event = ScanEventKind.ShiftEnd };
+
+        var r = Replay(In(A, 3, T0), Out(A, 3, T0.AddMinutes(30)) with { Event = ScanEventKind.Pause }, mark);
+
+        var record = Assert.Single(r.Done);
+        Assert.Equal((T0.AddMinutes(30), ScanEventKind.ShiftEnd), (record.End, record.EndEvent));
+        Assert.Equal(T0.AddHours(6), r.AutoStopped[3].At);
+        // A late Out does not follow a closed pause: it is timed from its own DurationSec as before.
+        Assert.Equal(2, Replay(In(A, 3, T0), Out(A, 3, T0.AddMinutes(30)) with { Event = ScanEventKind.Pause }, mark,
+            Scan(A, 3, ScanDirection.Out, T0.AddHours(7), 60)).Done.Count);
+    }
 }

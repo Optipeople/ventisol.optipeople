@@ -13,9 +13,12 @@ public class ScanRulesVectorsTests
 
     static IEnumerable<JsonElement> AllCases => File.Value.GetProperty("cases").EnumerateArray();
 
-    // A case tagged "needs" waits for a rule not built yet (Event, Mark, pause, shift end; see the
-    // file's _doc). It is left out here until the step that builds it removes the tag from this list.
-    static readonly string[] Built = [];
+    // A case tagged "needs" waits for a rule not built yet (see the file's _doc): "events" for Session
+    // (Event, Mark, pause chains), "shift-end" for the stop at shift end. It is left out here until
+    // the step that builds it adds the tag to this list.
+    static readonly string[] Built = ["shift-end"];
+
+    static readonly string[] Known = ["events", "shift-end"];
 
     static string? Needs(JsonElement c) => c.TryGetProperty("needs", out var n) ? n.GetString() : null;
 
@@ -29,7 +32,7 @@ public class ScanRulesVectorsTests
     [Fact]
     public void Cases_waiting_for_a_rule_are_tagged_with_a_known_need()
     {
-        Assert.All(AllCases.Where(c => Needs(c) is not null), c => Assert.Equal("events", Needs(c)));
+        Assert.All(AllCases.Where(c => Needs(c) is not null), c => Assert.Contains(Needs(c), Known));
         Assert.Equal(AllCases.Count(), AllCases.Select(c => c.GetProperty("name").GetString()).Distinct().Count());
     }
 
@@ -51,11 +54,22 @@ public class ScanRulesVectorsTests
             : [];
         var r = ScanReplay.Replay(events, [], today, maxOpen);
 
-        Assert.Equal(
-            expected.GetProperty("done").EnumerateArray().Select(d => (d.GetProperty("barcode").GetString()!, d.GetProperty("stationNo").GetInt32(), Time(d, "start"), Time(d, "end")))
-                .OrderBy(d => d.Item4).ThenBy(d => d.Item2).ThenBy(d => d.Item1, StringComparer.Ordinal),
-            r.Done.Select(d => (d.Barcode.Raw, d.Station.Number, d.Start, d.End))
-                .OrderBy(d => d.End).ThenBy(d => d.Number).ThenBy(d => d.Raw, StringComparer.Ordinal));
+        // endEvent: missing means Scan. activeSec, when given, is the record's time (no chains yet).
+        var expectedDone = expected.GetProperty("done").EnumerateArray()
+            .Select(d => (d.GetProperty("barcode").GetString()!, d.GetProperty("stationNo").GetInt32(), Time(d, "start"), Time(d, "end"),
+                d.TryGetProperty("endEvent", out var ev) ? Enum.Parse<ScanEventKind>(ev.GetString()!) : ScanEventKind.Scan))
+            .OrderBy(d => d.Item4).ThenBy(d => d.Item2).ThenBy(d => d.Item1, StringComparer.Ordinal).ToList();
+        var actualDone = r.Done.Select(d => (d.Barcode.Raw, d.Station.Number, d.Start, d.End, d.EndEvent))
+            .OrderBy(d => d.End).ThenBy(d => d.Number).ThenBy(d => d.Raw, StringComparer.Ordinal).ToList();
+        Assert.Equal(expectedDone, actualDone);
+        foreach (var (d, i) in expected.GetProperty("done").EnumerateArray()
+            .OrderBy(d => Time(d, "end")).ThenBy(d => d.GetProperty("stationNo").GetInt32()).ThenBy(d => d.GetProperty("barcode").GetString(), StringComparer.Ordinal)
+            .Select((d, i) => (d, i)))
+            if (d.TryGetProperty("activeSec", out var active))
+                Assert.Equal(active.GetInt32(), (int)actualDone[i].Item4.Subtract(actualDone[i].Item3).TotalSeconds);
+
+        // Paused elements are a Session rule: no case run here may expect one.
+        if (expected.TryGetProperty("paused", out var paused)) Assert.Empty(paused.EnumerateArray());
 
         Assert.Equal(
             expected.GetProperty("inProgress").EnumerateArray().Select(p => (p.GetProperty("stationNo").GetInt32(), p.GetProperty("barcode").GetString()!, Time(p, "since")))
@@ -82,6 +96,7 @@ public class ScanRulesVectorsTests
             Enum.Parse<ScanDirection>(e.GetProperty("direction").GetString()!),
             Time(e, "time"),
             duration.ValueKind == JsonValueKind.Null ? null : duration.GetInt32(),
-            "VECTOR");
+            "VECTOR",
+            e.TryGetProperty("event", out var ev) ? Enum.Parse<ScanEventKind>(ev.GetString()!) : ScanEventKind.Scan);
     }
 }

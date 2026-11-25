@@ -47,13 +47,13 @@ public sealed record ScanEvent(
         new HashSet<string>(["Event"], StringComparer.OrdinalIgnoreCase);
 
     // What a station's scan becomes. Null for a rejected scan: those are only shown, never stored.
-    // A Mark carries no time, so no DurationSec.
+    // A Mark carries no time, so no DurationSec. A ScanId fixed on the result (a ShiftEnd stop) is kept.
     public static ScanEvent? From(ScanResult r, Guid? machineId, string? device = null) => r.Kind switch
     {
-        ScanKind.In => new(Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.In, r.At, null, device ?? Environment.MachineName, r.Event),
-        ScanKind.Out => new(Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.Out, r.At,
+        ScanKind.In => new(r.ScanId ?? Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.In, r.At, null, device ?? Environment.MachineName, r.Event),
+        ScanKind.Out => new(r.ScanId ?? Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.Out, r.At,
             r.Duration is { } d ? (int)Math.Round(d.TotalSeconds) : null, device ?? Environment.MachineName, r.Event),
-        ScanKind.Mark => new(Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.Mark, r.At, null, device ?? Environment.MachineName, r.Event),
+        ScanKind.Mark => new(r.ScanId ?? Guid.NewGuid(), r.Barcode, r.Station.Number, r.Station.Name, r.Station.Kind, machineId, ScanDirection.Mark, r.At, null, device ?? Environment.MachineName, r.Event),
         _ => null,
     };
 

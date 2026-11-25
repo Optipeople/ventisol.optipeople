@@ -201,4 +201,16 @@ public class DayReportTests
         gap.Restore(Code("058558010103"), T0.AddMinutes(60));
         Assert.Equal(0.75, DayReport.Stations(done, [gap, new StationState(S10)], T0.AddMinutes(80), T0.AddHours(-8))[0].Utilization, 3);
     }
+
+    // A record stopped at shift end is done like any (docs/plan-shift-end.md §6.4).
+    [Fact]
+    public void A_record_stopped_at_shift_end_counts_as_done()
+    {
+        var done = new[] { Done(S10, "058556050103", 0, 10) with { EndEvent = ScanEventKind.ShiftEnd }, Done(S10, "058556050102", 10, 30) };
+        var now = T0.AddMinutes(30);
+
+        Assert.Equal(2, DayReport.Stations(done, [new StationState(S10)], now, T0.AddHours(-8))[0].Done);
+        Assert.Equal(2, DayReport.Totals(done, [new StationState(S10)], now).Elements);
+        Assert.Equal(TimeSpan.FromMinutes(30), Assert.Single(DayReport.Orders(done, [], now)).Total);
+    }
 }
