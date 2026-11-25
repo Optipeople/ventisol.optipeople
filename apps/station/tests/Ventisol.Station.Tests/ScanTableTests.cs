@@ -243,6 +243,25 @@ public class ScanTableTests
         Assert.Equal(("Event", (int)ColumnType.String), api.Scans.Columns[^1]);
     }
 
+    // OptiCloud refusing the Event column must not stop the sync: the table is still found.
+    [Fact(Timeout = 10000)]
+    public async Task A_refused_event_column_does_not_stop_the_connect()
+    {
+        var api = new FakeOptiCloud();
+        api.Tables.Add(new FakeOptiCloud.Table(Guid.NewGuid(), "VentisolScans"));
+        api.Tables[0].Columns.AddRange(ScanEvent.Columns.Where(c => c.Name != "Event").Select(c => (c.Name, (int)c.Type)));
+        api.Override = (_, path, _) => path.Contains("AddColumn")
+            ? new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+            : null;
+        using var client = api.Client();
+        var logged = new List<string>();
+
+        var id = await new ScanTable(client, logged.Add).EnsureAsync(FakeOptiCloud.Account);
+
+        Assert.Equal(api.Tables[0].Id, id);
+        Assert.Contains(logged, l => l.Contains("Event") && l.Contains("fortsætter uden"));
+    }
+
     [Fact(Timeout = 10000)]
     public async Task Rows_with_an_event_and_mark_rows_read_back()
     {

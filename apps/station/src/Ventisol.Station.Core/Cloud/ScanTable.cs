@@ -52,8 +52,17 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
             var have = (await client.GetColumnsAsync(table.Id, ct)).Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var c in ScanEvent.Columns.Where(c => !have.Contains(c.Name)))
             {
-                await client.AddColumnAsync(table.Id, c, ct);
-                log?.Invoke($"OptiCloud: kolonnen {c.Name} er tilføjet til {Name}");
+                try
+                {
+                    await client.AddColumnAsync(table.Id, c, ct);
+                    log?.Invoke($"OptiCloud: kolonnen {c.Name} er tilføjet til {Name}");
+                }
+                // An optional column OptiCloud won't add (no right to, or refused): carry on without
+                // it and try again on the next connect.
+                catch (OptiCloudException x) when (ScanEvent.OptionalColumns.Contains(c.Name))
+                {
+                    log?.Invoke($"OptiCloud: kolonnen {c.Name} kunne ikke tilføjes til {Name} ({x.Message}); fortsætter uden");
+                }
             }
 
             lock (_gate) if (_accountId == accountId) _tableId = table.Id;

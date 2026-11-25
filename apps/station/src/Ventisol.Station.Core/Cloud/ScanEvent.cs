@@ -41,6 +41,11 @@ public sealed record ScanEvent(
         new("Event", "Hændelse", ColumnType.String),
     ];
 
+    // Columns a table from before them may lack without harm for now: only rows that are not an
+    // ordinary scan carry Event, and nothing writes those yet. Not getting one must not stop the sync.
+    public static IReadOnlySet<string> OptionalColumns { get; } =
+        new HashSet<string>(["Event"], StringComparer.OrdinalIgnoreCase);
+
     // What a station's scan becomes. Null for a rejected scan: those are only shown, never stored.
     // A Mark carries no time, so no DurationSec.
     public static ScanEvent? From(ScanResult r, Guid? machineId, string? device = null) => r.Kind switch
