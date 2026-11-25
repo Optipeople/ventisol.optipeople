@@ -4,7 +4,7 @@ All software for the Ventisol MES project lives in this monorepo. The hardware i
 
 **The OptiCloud platform is the single source of truth.** Every scan, order and time ends up there, through the OptiPeople API. The station app builds no backend or database of its own. Whether the web portal adds its own Supabase read model on top is undecided (see `web-portal-plan.md` §3.1); OptiCloud stays the system of record either way.
 
-Updated 2026-10-23.
+Updated 2026-11-25.
 
 ## What we build
 
@@ -22,6 +22,9 @@ Updated 2026-10-23.
 | 10 | SchirmerFix | Done, signed off by Bente | Done |
 | 11 | CI/CD and auto-update | GitHub Actions | Built; needs the update repo and secrets |
 | 12 | Technical docs | OptiCore | Ongoing |
+| 13 | Command cards Start, Pause, Hold | Station app + portal, [`plan-scan-commands.md`](plan-scan-commands.md) | Planned (2026-11-25) |
+| 14 | Packing checklist | Station app + portal, [`plan-packing-checklist.md`](plan-packing-checklist.md) | Planned (2026-11-25) |
+| 15 | Pallet labels | Station app + portal, [`plan-pallet-labels.md`](plan-pallet-labels.md) | Planned (2026-11-25) |
 
 ### 1. Station app (native Windows)
 
@@ -92,6 +95,38 @@ See "Advice: CI/CD and auto-update" below.
 ### 12. Technical docs
 
 Short technical descriptions in OptiCore, written as we build.
+
+### 13 to 15. Feedback from the floor, 2026-11-25
+
+Three features from a visit at Ventisol. Each has a plan of its own, ready to build. Nothing is built yet.
+
+| # | Feature | What Ventisol asked for | Plan |
+|---|---|---|---|
+| 13 | Command cards | Scan **Start**, **Pause** and **Hold** cards, so breaks and broken glass don't count as work, and so an operator can scan Start, then every window he works on, then Hold | [`plan-scan-commands.md`](plan-scan-commands.md) |
+| 14 | Packing checklist | Scan an order at packing and see every piece in it. Each piece scanned lights up and is checked out of production. The order's time ends at the last one | [`plan-packing-checklist.md`](plan-packing-checklist.md) |
+| 15 | Pallet labels | Scan the windows on a pallet, then a **Print** card. A sheet prints with a pallet id and every window on it, so you can tell which part of an order is on which pallet | [`plan-pallet-labels.md`](plan-pallet-labels.md) |
+
+**Shared ground, owned by #13:**
+
+- **Command barcodes** are Code 128 with letters, `VS-<WORD>`. Element labels are digits only, so they can't be mistaken for each other. One classifier, `ScanCodes.Classify`, sorts every scan into element, command, pallet or unknown. The command words and their owners are listed in `plan-scan-commands.md` §3.
+- **Arbejdsform**, a setting per station: `Enkel` (today: scan in, scan out), `Session` (#13), `Pakning` (#14), `Palle` (#15). A station that keeps `Enkel` works exactly as today.
+- **Rows** stay in `VentisolScans`, with one new column, `Event`, and one new `Direction`, `Mark`, for a row that carries no time. Old rows and old app versions keep working. Pallets get a table of their own, `VentisolPalletEvents` (#15).
+
+**Build order:**
+
+1. #13 steps 2 to 4: barcode classification, the Arbejdsform setting, the `Event` column. The other two build on these.
+2. Then #13 (Session), #14 and #15 can be built side by side. They touch the same view model (`MainViewModel.Scan` routes by Arbejdsform), so not by three sessions at once.
+3. #14's pallet scan at packing (its §8) comes after #15.
+4. #15 needs a printer and probably an 8th scanner on site. Order them early.
+
+**To settle with Ventisol before building** (each plan has its full list):
+
+- Which stations use `Session`, and does Hold need reasons (glass broken, part missing) or is one Hold card enough?
+- Should a session pause by itself at the end of a shift?
+- Packing: does the first scan of an order also check that window out? Can an order leave short, and who closes it?
+- Pallets: where are they built, and is an 8th scanner there all right? Which printer: an A4 sheet in a sleeve, or a label printer? Does our sheet replace the 3E pallet label?
+
+**To ask the OptiCloud backend owner:** adding a column and a `Direction` value to a large `VentisolScans`; whether `GetRowsPaged` can filter on `OrderNo` (packing needs an order's whole history); whether a second table for pallets is fine; whether a machine stop with a reason can be registered for Pause and Hold.
 
 ## Barcodes
 
