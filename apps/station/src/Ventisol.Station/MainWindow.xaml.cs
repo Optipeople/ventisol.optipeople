@@ -272,8 +272,9 @@ public partial class MainWindow : Window
             var schedule = ScheduleFor(s.Number);
             if (s.LastAutoStop is { } last && schedule is not null && schedule.Spans(last.At, now, zone).Any(p => p.Start > last.At && p.Start <= now))
                 s.StoppedLineGone(now);
-            // A viewer cannot see the scan PC's taps and refused scans: no countdown, the stop comes with its rows.
-            if (_settings.Mode != StationMode.Scan) continue;
+            // A viewer, or a scan PC without this station's scanner, cannot see its taps and refused
+            // scans: no countdown, the stop comes with its rows (from the PC that has the scanner).
+            if (_settings.Mode != StationMode.Scan || _demoShift is null && !ShiftSchedules.ScansHere(_settings, s.Number)) continue;
 
             var check = _shiftEnd.Check(s.State, schedule, _recorded, ShiftEndGrace, now, zone);
             switch (check.Verdict)

@@ -23,6 +23,18 @@ public static class ShiftSchedules
         return settings.StandardShift is { } s ? ShiftSchedule.Standard(s.Start, s.End) : null;
     }
 
+    // This PC hears the station's scans: a scanner is set up for it here (a cradle or the keyboard),
+    // or none is set up for any station and it is the first one (a keyboard scanner scans there, as
+    // the window routes it). Only such a station is judged and stopped by this PC: one whose scanner
+    // is on another PC has taps and refused scans this PC never sees (plan §4.3).
+    public static bool ScansHere(StationSettings settings, int station)
+    {
+        if (settings.Mode != StationMode.Scan) return false;
+        if (settings.Stations.FirstOrDefault(s => s.Number == station) is not { } setup) return false;
+        if (!string.IsNullOrWhiteSpace(setup.ScannerSerial)) return true;
+        return settings.Stations.All(s => string.IsNullOrWhiteSpace(s.ScannerSerial)) && settings.Stations[0].Number == station;
+    }
+
     // "Vent efter vagtslut", kept to 15 to 90 minutes as Opsætning offers it.
     public static TimeSpan Grace(StationSettings settings) => TimeSpan.FromMinutes(Math.Clamp(settings.ShiftEndGraceMinutes,
         StationSettings.MinShiftEndGraceMinutes, StationSettings.MaxShiftEndGraceMinutes));

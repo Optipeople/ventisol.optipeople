@@ -119,17 +119,20 @@ public sealed class StationState(StationConfig station)
         return true;
     }
 
-    // Every element in progress ends at at (an Out each, oldest first), with ev as its Event: the
-    // stop at shift end (docs/plan-shift-end.md §4.2), all at the same time. An element scanned in
-    // after at counts nothing. A ShiftEnd Out gets its derived ScanId (ShiftEndRule.StopId).
+    // Every element in progress since at or before at ends at at (an Out each, oldest first), with ev
+    // as its Event: the stop at shift end (docs/plan-shift-end.md §4.2), all at the same time. An
+    // element scanned in after at is not stopped and stays in progress: an Out before its In is no
+    // pass (a catch-up stopping yesterday's element after this morning's In). A ShiftEnd Out gets its
+    // derived ScanId (ShiftEndRule.StopId).
     public IReadOnlyList<ScanResult> StopAll(DateTimeOffset at, ScanEventKind ev)
     {
-        var results = _active.Select(a => new ScanResult(ScanKind.Out, Station, a.Barcode, at, at > a.Since ? at - a.Since : TimeSpan.Zero)
+        var stopped = _active.Where(a => a.Since <= at).ToList();
+        var results = stopped.Select(a => new ScanResult(ScanKind.Out, Station, a.Barcode, at, at - a.Since)
         {
             Event = ev,
             ScanId = ev == ScanEventKind.ShiftEnd ? ShiftEndRule.StopId(a, Station.Number) : null,
         }).ToList();
-        _active.Clear();
+        _active.RemoveAll(stopped.Contains);
         return results;
     }
 

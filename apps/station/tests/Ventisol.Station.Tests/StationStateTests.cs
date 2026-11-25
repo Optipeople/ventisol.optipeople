@@ -156,6 +156,21 @@ public class StationStateTests
     }
 
     [Fact]
+    public void Stop_all_keeps_an_element_scanned_in_after_the_stop_time()
+    {
+        var s = new StationState(StationConfig.Defaults[2] with { MaxActive = 2 });
+        s.Scan(Code("058556050101"), T0);
+        s.Scan(Code("058556050102"), T0.AddHours(20));
+
+        var o = Assert.Single(s.StopAll(T0.AddHours(6), ScanEventKind.ShiftEnd));
+
+        Assert.Equal(("058556050101", TimeSpan.FromHours(6)), (o.Barcode.Raw, o.Duration!.Value));
+        Assert.Equal(["058556050102"], s.Active.Select(a => a.Barcode.Raw));
+        // An element scanned in exactly at the stop time is stopped, with no time.
+        Assert.Equal(TimeSpan.Zero, Assert.Single(s.StopAll(T0.AddHours(20), ScanEventKind.ShiftEnd)).Duration);
+    }
+
+    [Fact]
     public void Stop_all_for_another_event_leaves_the_row_id_to_the_row()
     {
         var s = new StationState(StationConfig.Defaults[0]);

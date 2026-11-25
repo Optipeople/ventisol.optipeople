@@ -59,6 +59,33 @@ public class ShiftEndWatchTests
         Assert.Equal(TimeSpan.FromMinutes(15), ShiftSchedules.Grace(settings with { ShiftEndGraceMinutes = 1 }));
     }
 
+    [Fact]
+    public void Only_a_station_whose_scanner_is_on_this_pc_is_judged_here()
+    {
+        var settings = StationSettings.Default with
+        {
+            Mode = StationMode.Scan,
+            Stations =
+            [
+                new StationSetup(1, "Station 10", StationKind.Assembly, ScannerSerial: "usb:PCIROOT(0)#USB(1)"),
+                new StationSetup(2, "Station 20", StationKind.Assembly, ScannerSerial: "keyboard"),
+                new StationSetup(3, "Station 30", StationKind.Assembly),
+            ],
+        };
+
+        Assert.True(ShiftSchedules.ScansHere(settings, 1));
+        Assert.True(ShiftSchedules.ScansHere(settings, 2));
+        // Its scanner is on another PC (or not set up): this PC never sees its taps and refused scans.
+        Assert.False(ShiftSchedules.ScansHere(settings, 3));
+        Assert.False(ShiftSchedules.ScansHere(settings, 9));
+        Assert.False(ShiftSchedules.ScansHere(settings with { Mode = StationMode.Viewer }, 1));
+
+        // No scanner set up anywhere: a keyboard scanner scans at the first station, so that one is.
+        var none = settings with { Stations = [.. settings.Stations.Select(s => s with { ScannerSerial = null })] };
+        Assert.True(ShiftSchedules.ScansHere(none, 1));
+        Assert.False(ShiftSchedules.ScansHere(none, 2));
+    }
+
     // --- The tile's words
 
     [Fact]
@@ -165,6 +192,33 @@ public class ShiftEndWatchTests
         var replay = ScanReplay.Replay([inA, inB, .. rows], [Station]);
         Assert.Empty(replay.InProgress);
         Assert.Equal(E, replay.AutoStopped[1].At);
+    }
+
+    [Fact]
+    public void The_catch_up_stops_only_elements_scanned_in_before_the_stop_time()
+    {
+        // Max i gang 2. A in progress since Monday 10:00, the PC off overnight; on Tuesday at 06:01
+        // B is scanned in before the rebuild. The catch-up stops A at Monday 14:00 and keeps B.
+        var station = Station with { MaxActive = 2 };
+        var inA = In(A, 1, Local(10));
+        var inB = In(B, 1, Local(6, 1, day: 24));
+        var watch = new ShiftEndWatch(cloudSetUp: true, started: Local(6, day: 24));
+        watch.Loaded(new LoadedScans([inA, inB], Local(6), FromCloud: true));
+        var state = new StationState(station);
+        state.Restore(ScanReplay.Replay([inA, inB], [station]).InProgress[1]);
+
+        var check = watch.Check(state, Day, [], Grace, Local(6, 2, day: 24), Dk);
+        Assert.Equal(ShiftEndVerdict.Write, check.Verdict);
+        Assert.Equal(E, check.Due!.StopAt);
+
+        var written = Assert.Single(state.StopAll(check.Due.StopAt, ScanEventKind.ShiftEnd));
+        Assert.Equal((A, E, TimeSpan.FromHours(4)), (written.Barcode.Raw, written.At, written.Duration!.Value));
+        Assert.Equal([B], state.Active.Select(a => a.Barcode.Raw));
+
+        // The machine keeps B's order, and the next check finds nothing more to stop.
+        var setups = new[] { new StationSetup(1, "Station 10", StationKind.Assembly, Guid.NewGuid()) };
+        Assert.Equal(B, MachineOrders.DesiredFrom(setups, [state]).Values.Single().Number);
+        Assert.Equal(ShiftEndVerdict.Nothing, watch.Check(state, Day, [ScanEvent.From(written, null, "TEST-PC")!], Grace, Local(6, 3, day: 24), Dk).Verdict);
     }
 
     [Fact]
