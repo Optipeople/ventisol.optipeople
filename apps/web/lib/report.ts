@@ -182,12 +182,16 @@ export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): Wo
   const stopped = new Map<string, WorkInterval>();
   // A pass ended by a Pause Out, until its next row there.
   const paused = new Map<string, WorkInterval>();
+  // Elements and stations whose last pass a real Out ended, until their next In.
+  const scannedOut = new Set<string>();
   const result: WorkInterval[] = [];
 
   const done = (key: string, iv: WorkInterval, out: Scan) => {
     result.push(iv);
     if (iv.autoStopped) stopped.set(key, iv);
     else stopped.delete(key);
+    if (iv.autoStopped) scannedOut.delete(key);
+    else scannedOut.add(key);
     if (out.event === "Pause") paused.set(key, iv);
   };
 
@@ -202,6 +206,7 @@ export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): Wo
     if (scan.direction === "In") {
       open.set(key, scan);
       stopped.delete(key);
+      scannedOut.delete(key);
       continue;
     }
     const autoStopped = scan.event === "ShiftEnd";
@@ -219,6 +224,10 @@ export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): Wo
       }
       continue;
     }
+    // A ShiftEnd after the element was already scanned out (a real Out that
+    // came in late from another PC, before the stop time): it is done, and the
+    // stop must not count its time again from its DurationSec.
+    if (autoStopped && scannedOut.has(key)) continue;
     if (scan.durationSec != null) {
       done(key, interval(scan, scan.time - scan.durationSec * 1000, scan.time, { startEstimated: true, autoStopped }), scan);
     }

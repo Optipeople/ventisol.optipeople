@@ -91,6 +91,10 @@ public static class ScanReplay
                 }
                 continue;
             }
+            // A stop at shift end after the element was already scanned out (a real Out that came in
+            // late from another PC's outbox, before the stop time): the element is done; the stop
+            // must not count its time again from its DurationSec.
+            else if (e.Event == ScanEventKind.ShiftEnd && last.ContainsKey(key)) continue;
             else if (e.DurationSec is { } seconds) start = e.At - TimeSpan.FromSeconds(Math.Max(0, seconds));
             else continue;
 

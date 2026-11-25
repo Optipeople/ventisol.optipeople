@@ -216,6 +216,10 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
       }
       continue;
     }
+    // A ShiftEnd after the element was already scanned out (a real Out that
+    // came in late from another PC, before the stop time): the element is done,
+    // and the stop must not count its time again from its DurationSec.
+    if (scan.event === "ShiftEnd" && closed.has(key)) continue;
     if (scan.durationSec != null) {
       done(
         key,
