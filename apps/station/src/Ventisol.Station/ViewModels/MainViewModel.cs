@@ -10,6 +10,8 @@ public sealed partial class MainViewModel : ObservableObject
 {
     DateTimeOffset _reportRefreshed, _widgetsRefreshed;
     DateTime _day = DateTime.Today;
+    // Apply has run once: what it reads after that is new to the screen.
+    bool _applied;
 
     public MainViewModel(IEnumerable<StationConfig> stations)
     {
@@ -59,6 +61,10 @@ public sealed partial class MainViewModel : ObservableObject
     // Raised for every scan that reaches a station, read or not.
     public event EventHandler? Scanned;
 
+    // Raised for every scan that reaches a station (read, refused, unreadable or a repeat): activity
+    // there, which moves a stop at shift end on (docs/plan-shift-end.md §4.1). The station's number.
+    public event EventHandler<(int Station, DateTimeOffset At)>? Activity;
+
     readonly RepeatScans _repeats = new();
 
     // Whether an order is known to exist (an order PDF), to read a label that fits both barcode layouts.
@@ -83,6 +89,7 @@ public sealed partial class MainViewModel : ObservableObject
         var station = Stations.FirstOrDefault(s => s.Number == scannerNumber);
         if (station is null) return;
         LastScanAt = now;
+        Activity?.Invoke(this, (station.Number, now));
 
         // A new scan: the strict reading, so a retail code on a box is not taken for an element.
         // An element in progress at this station (any of them) is read whatever its order, so it can
@@ -106,10 +113,10 @@ public sealed partial class MainViewModel : ObservableObject
                 // Record the stopped order in history
                 History.Add(new WorkRecord(result.Station, previous, now - switchDuration, now));
                 // Record both Out for previous and In for new order
-                Recorded?.Invoke(this, new ScanResult(ScanKind.Out, result.Station, previous, now, switchDuration));
-                Recorded?.Invoke(this, new ScanResult(ScanKind.In, result.Station, barcode, now));
+                Record(station, new ScanResult(ScanKind.Out, result.Station, previous, now, switchDuration));
+                Record(station, new ScanResult(ScanKind.In, result.Station, barcode, now));
             }
-            if (result.Kind is ScanKind.In or ScanKind.Out) Recorded?.Invoke(this, result);
+            if (result.Kind is ScanKind.In or ScanKind.Out) Record(station, result);
         }
         else
         {
@@ -127,8 +134,40 @@ public sealed partial class MainViewModel : ObservableObject
         var s = Stations.FirstOrDefault(x => x.Number == station);
         if (s?.Stop(barcode, reason, now) is not { } result) return false;
         if (result.Duration is { } d) History.Add(new WorkRecord(result.Station, result.Barcode, now - d, now));
-        Recorded?.Invoke(this, result);
+        Record(s, result);
         return true;
+    }
+
+    // Every element in progress at station stops at at, the stop at shift end (docs/plan-shift-end.md
+    // §4.2): an Out each with Event ShiftEnd and its derived ScanId, raised as Recorded in In order,
+    // then kept as done. Not a scan: no Scanned, LastScanAt unchanged. The rows, none when nothing was
+    // in progress (the window logs them, with the shift end they follow).
+    public IReadOnlyList<ScanResult> ShiftEnd(int station, DateTimeOffset at, DateTimeOffset now)
+    {
+        if (Stations.FirstOrDefault(x => x.Number == station) is not { } s) return [];
+        var results = s.ShiftEnd(at, now);
+        foreach (var r in results) Recorded?.Invoke(this, r);
+        foreach (var r in results) History.Add(new WorkRecord(r.Station, r.Barcode, at - (r.Duration ?? TimeSpan.Zero), at, ScanEventKind.ShiftEnd));
+        _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
+        return results;
+    }
+
+    // An In gets its ScanId here, so the station knows it (StationState.NoteInScanId): a stop at
+    // shift end derives its own from it.
+    void Record(StationViewModel station, ScanResult r)
+    {
+        if (r is { Kind: ScanKind.In, ScanId: null })
+        {
+            r = r with { ScanId = Guid.NewGuid() };
+            station.State.NoteInScanId(r.Barcode.Raw, r.ScanId!.Value);
+        }
+        Recorded?.Invoke(this, r);
+    }
+
+    // The latest stop at shift end per station, as the rows have it. flash: new stops flash (a viewer).
+    public void ApplyAutoStopped(IReadOnlyDictionary<int, AutoStop> stops, DateTimeOffset now, bool flash)
+    {
+        foreach (var s in Stations) s.ApplyAutoStop(stops.GetValueOrDefault(s.Number), now, flash);
     }
 
     // The last element finished at a station today, if any.
@@ -144,6 +183,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             s.Restore(today.InProgress.GetValueOrDefault(s.Number) ?? [], now);
         }
+        // A viewer sees a stop at shift end when its row arrives; the first read only shows the idle line.
+        ApplyAutoStopped(today.AutoStopped, now, flash: IsViewer && _applied);
+        _applied = true;
         _widgetsRefreshed = _reportRefreshed = DateTimeOffset.MinValue;
     }
 

@@ -1,3 +1,4 @@
+using Ventisol.Station.Core;
 using Ventisol.Station.ViewModels;
 
 namespace Ventisol.Station;
@@ -58,6 +59,16 @@ sealed class DemoScanner(MainViewModel vm)
         vm.Stations[2].ScannerConnected = false;
         vm.Scan(2, "058557030101", now);
         vm.Scan(6, "058558030102", now);
+    }
+
+    // For Alt+V in a dev build: a shift that ends at now, as a demo of the stop at shift end. It began
+    // an hour before, so an element scanned in before Alt+V counts down from the shift end, and one
+    // scanned in after it is overtime.
+    public static ShiftSchedule ShiftEndingNow(DateTimeOffset now)
+    {
+        var end = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local).DateTime;
+        var start = end.AddHours(-1);
+        return new ShiftSchedule([new ShiftBlock(start.DayOfWeek, TimeOnly.FromDateTime(start), TimeOnly.FromDateTime(end))], []);
     }
 
     // One that is not in progress at the station, as long as there is one among the codes made up.

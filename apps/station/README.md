@@ -64,6 +64,29 @@ Next, working down: COM port scanner reader (`IScanSource`), setup screen, then 
   (`localhost`, `127.0.0.1`), for FakeOptiCloud. A PC with an older `http://` address saved does
   not connect: the menu says `Fejl: API-adressen skal begynde med https://`, and its scans wait
   on the PC until the address is put right.
+- "VAGTSLUT" (`docs/plan-shift-end.md`): "Stop ved vagtslut" (Til by default), "Vent efter vagtslut"
+  (15 to 90 minutes, default 60) and "Standardvagt", one start and end time for Monday to Friday
+  (end before start is a night shift; empty is none). Each station row says where its shifts come
+  from. For now every station uses the standard shift: the machines' shifts in OptiPeople are not
+  read yet. A station with no shifts is never stopped.
+
+### The tile at shift end
+
+On a scan PC, when the shift has ended and an element is still in progress, the tile gets an amber
+band over it: `Vagten sluttede 14:00` (or `Overarbejde` once anything has happened at the station
+since) and `Stopper om 42 min, hvis intet sker`, with a big `Arbejder videre` button. Any scan at the
+station (also a refused or unreadable one), a stop on the tile and a tap on `Arbejder videre` start the
+countdown over; the taps and refused scans are kept in `shift-end.json` in the data folder, so a restart
+keeps them. When the countdown runs out, every element at the station gets an Out back-dated to the
+shift end, or to the last activity in overtime, with `Event = ShiftEnd` and an id derived from its In
+(a second write, from a restart or another PC, is refused as a duplicate). The tile flashes `Stoppet
+ved vagtskifte 14:00`, then shows that line under the idle text until the next scan or shift start,
+and the machine's order in OptiPeople is cleared as after any Out. Scanning the element again starts it
+anew (`Startet igen`). After the PC was off over a shift end, the stops are written at the start, once
+the screen has been rebuilt from OptiCloud (from the journal alone after 5 minutes without it), and
+never when OptiCloud already holds a scan of the element after its In. A viewer shows no countdown, only
+the stop and the line once the rows come. Demo in a dev build: Alt+V ends every station's shift now,
+with 1 minute to wait.
 
 ## Which barcodes count as an element
 

@@ -1,13 +1,14 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Ventisol.Station.Core;
+using Ventisol.Station.Core.Cloud;
 
 namespace Ventisol.Station.ViewModels;
 
-public enum FlashKind { None, In, Out, Switched, Rejected }
+public enum FlashKind { None, In, Out, Switched, Rejected, ShiftEnd }
 
-// Why an element ended without a scan: stopped in OptiPeople, or with the stop button on its tile.
-public enum StopReason { OptiPeople, Manual }
+// Why an element ended without a scan: stopped in OptiPeople, with the stop button on its tile, or at shift end.
+public enum StopReason { OptiPeople, Manual, ShiftEnd }
 
 // One tile on the screen: a station, what it works on, for how long, and whether its scanner is there.
 // A scan answers on the tile itself, where the operator is already looking. At a station with
@@ -76,7 +77,30 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     [ObservableProperty] public partial string FlashDetail { get; private set; } = "";
 
     public bool IsFlashOk => Flash is FlashKind.In or FlashKind.Out or FlashKind.Switched;
-    public bool IsFlashWarn => Flash is FlashKind.Rejected;
+    public bool IsFlashWarn => Flash is FlashKind.Rejected or FlashKind.ShiftEnd;
+
+    // ----- Shift end (docs/plan-shift-end.md §2, §6.5)
+
+    // Grace or Overtime: the amber band with the countdown and "Arbejder videre" (scan station only).
+    // Stopped: the idle line "Stoppet ved vagtskifte 14:00", until the next scan here or the next shift start.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowsShiftEndBand), nameof(ShowsStoppedLine))]
+    public partial ShiftEndState ShiftEndState { get; private set; }
+    [ObservableProperty] public partial string ShiftEndTitle { get; private set; } = "";
+    [ObservableProperty] public partial string ShiftEndText { get; private set; } = "";
+    [ObservableProperty] public partial string StoppedText { get; private set; } = "";
+
+    public bool ShowsShiftEndBand => ShiftEndState is ShiftEndState.Grace or ShiftEndState.Overtime;
+    public bool ShowsStoppedLine => ShiftEndState == ShiftEndState.Stopped;
+
+    // The countdown's stop, while one is coming (scan station only).
+    ShiftEndDue? _due;
+    // The latest stop at shift end here (this PC's, or read from the rows), for the idle line and "Startet igen".
+    AutoStop? _autoStop;
+    // The stop whose idle line has gone (a scan here, or the next shift start).
+    DateTimeOffset? _lineGoneFor;
+
+    public AutoStop? LastAutoStop => _autoStop;
 
     // The element scanned in last (at a station with 1, the one in progress).
     public Barcode? Current => _state.Current;
@@ -90,8 +114,13 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     {
         var result = _state.Scan(barcode, now);
         var element = Element(barcode);
+        StoppedLineGone(now);
         switch (result.Kind)
         {
+            case ScanKind.In when StoppedAtShiftEnd(barcode, now) is { } stoppedAt:
+                Show(now);
+                ShowFlash(FlashKind.In, ShiftEndTexts.Restarted, ShiftEndTexts.RestartedDetail(stoppedAt, now), now);
+                break;
             case ScanKind.In:
                 Show(now);
                 ShowFlash(FlashKind.In, IsMulti ? $"Startet – {_state.Active.Count} i gang" : "Scannet ind", element, now);
@@ -124,9 +153,79 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
         var barcode = running.Barcode;
         var result = _state.Scan(barcode, now);
         Show(now);
-        ShowFlash(FlashKind.Out, reason == StopReason.Manual ? "Stoppet manuelt" : "Stoppet i OptiPeople",
+        var title = reason switch
+        {
+            StopReason.Manual => "Stoppet manuelt",
+            StopReason.ShiftEnd => ShiftEndTexts.Stopped(now),
+            _ => "Stoppet i OptiPeople",
+        };
+        ShowFlash(reason == StopReason.ShiftEnd ? FlashKind.ShiftEnd : FlashKind.Out, title,
             $"{Element(barcode)} · {Format.Duration(result.Duration ?? TimeSpan.Zero)}", now);
         return result;
+    }
+
+    // Every element in progress here stops at at, a shift end's stop (an Out each, oldest first, each
+    // with its derived ScanId). The flash says so, then the idle line until the next scan or shift start.
+    public IReadOnlyList<ScanResult> ShiftEnd(DateTimeOffset at, DateTimeOffset now)
+    {
+        var results = _state.StopAll(at, ScanEventKind.ShiftEnd);
+        if (results.Count == 0) return results;
+        _due = null;
+        _autoStop = new AutoStop(at, [.. results.Select(r => r.Barcode)]);
+        Show(now);
+        ShowFlash(FlashKind.ShiftEnd, ShiftEndTexts.Stopped(at), Elements(_autoStop.Elements), now);
+        ShowShiftEnd(now);
+        return results;
+    }
+
+    // The countdown, from the window's check (scan station only); null when no stop is coming.
+    public void ShiftEndComing(ShiftEndDue? due, DateTimeOffset now)
+    {
+        _due = due;
+        ShowShiftEnd(now);
+    }
+
+    // The latest stop at shift end here as the rows have it (ReplayResult.AutoStopped), on start and on
+    // a viewer at each read. flash: the stop is new to this screen (a viewer seeing the row arrive).
+    // A stop this screen already knows keeps its idle line as it is.
+    public void ApplyAutoStop(AutoStop? stop, DateTimeOffset now, bool flash)
+    {
+        if (stop is null || _autoStop is { } known && stop.At <= known.At) return;
+        _autoStop = stop;
+        if (flash && stop.Elements.Count > 0) ShowFlash(FlashKind.ShiftEnd, ShiftEndTexts.Stopped(stop.At), Elements(stop.Elements), now);
+        ShowShiftEnd(now);
+    }
+
+    // The idle line goes: a scan here (or, on a viewer, a row after the stop), or the next shift start.
+    public void StoppedLineGone(DateTimeOffset now)
+    {
+        if (_autoStop is not { } stop || _lineGoneFor == stop.At) return;
+        _lineGoneFor = stop.At;
+        ShowShiftEnd(now);
+    }
+
+    // "Ordre 58556 · Pos. 5 · stk. 3", and how many more.
+    static string Elements(IReadOnlyList<Barcode> elements) =>
+        Element(elements[0]) + (elements.Count > 1 ? $" og {elements.Count - 1} til" : "");
+
+    // When the element was stopped at a shift end here, if that was the station's last stop and within the window.
+    DateTimeOffset? StoppedAtShiftEnd(Barcode barcode, DateTimeOffset now) =>
+        _autoStop is { } stop && now - stop.At <= CloudSync.Window && stop.Elements.Any(b => b.Raw == barcode.Raw) ? stop.At : null;
+
+    void ShowShiftEnd(DateTimeOffset now)
+    {
+        var state = ShiftEndTexts.StateOf(_due, now);
+        if (_due is { } due && state != ShiftEndState.None)
+        {
+            ShiftEndTitle = ShiftEndTexts.Title(state, due);
+            ShiftEndText = ShiftEndTexts.Countdown(due.DueAt, now);
+        }
+        else if (!IsBusy && _autoStop is { } stop && _lineGoneFor != stop.At && now - stop.At <= CloudSync.Window)
+        {
+            StoppedText = ShiftEndTexts.Stopped(stop.At);
+            state = ShiftEndState.Stopped;
+        }
+        ShiftEndState = state;
     }
 
     // What OptiCloud says this station is working on, after a restart or on a viewer. No flash:
@@ -138,17 +237,27 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
             if (_state.IsBusy) { _state.Reset(); Show(now); }
             return;
         }
-        if (_state.Active.SequenceEqual(active.OrderBy(a => a.Since).TakeLast(MaxActive))) return;
+        // The same elements: only their In's ScanIds may be new, kept for the stop at shift end.
+        if (_state.Active.SequenceEqual(active.OrderBy(a => a.Since).TakeLast(MaxActive)))
+        {
+            foreach (var a in active)
+                if (a.InScanId is { } id && _state.Find(a.Barcode.Raw) is { InScanId: null }) _state.NoteInScanId(a.Barcode.Raw, id);
+            return;
+        }
         _state.Restore(active);
         Show(now);
     }
 
-    public void Unreadable(string raw, DateTimeOffset now) =>
+    public void Unreadable(string raw, DateTimeOffset now)
+    {
+        StoppedLineGone(now);
         ShowFlash(FlashKind.Rejected, "Ukendt stregkode", $"{raw} er ikke en elementlabel", now);
+    }
 
     public void Tick(DateTimeOffset now)
     {
         if (IsBusy) ElapsedText = Format.Duration(_state.Elapsed(now));
+        if (_due is not null || ShiftEndState != ShiftEndState.None) ShowShiftEnd(now);
         foreach (var r in Rows) r.Tick(now, MarkAfter);
         if (Flash != FlashKind.None && now >= _flashUntil) Flash = FlashKind.None;
     }
@@ -157,7 +266,7 @@ public sealed partial class StationViewModel(StationConfig config) : ObservableO
     {
         FlashTitle = title;
         FlashDetail = detail;
-        _flashUntil = now + (kind == FlashKind.Rejected ? FlashRejected : FlashOk);
+        _flashUntil = now + (kind is FlashKind.Rejected or FlashKind.ShiftEnd ? FlashRejected : FlashOk);
         // A second scan while one shows: drop to None first, so the tile flashes again.
         if (Flash != FlashKind.None) Flash = FlashKind.None;
         Flash = kind;

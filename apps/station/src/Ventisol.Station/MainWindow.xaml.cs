@@ -41,6 +41,17 @@ public partial class MainWindow : Window
     // on the shop floor never sends a made-up scan.
     readonly bool _demoInput;
 
+    // The stop at shift end (docs/plan-shift-end.md §4.3, §6.5): checked every 30 seconds, and at once
+    // after a load (the catch-up at start), a tap on "Arbejder videre" and the demo's Alt+V.
+    static readonly TimeSpan ShiftEndEvery = TimeSpan.FromSeconds(30);
+    static readonly string ShiftEndFile = System.IO.Path.Combine(AppPaths.Data, "shift-end.json");
+    readonly ShiftEndWatch _shiftEnd;
+    DateTimeOffset _shiftEndChecked = DateTimeOffset.MinValue;
+    // Per station, the stop time the log last told of.
+    readonly Dictionary<int, DateTimeOffset> _shiftEndLogged = [];
+    // Demo (Alt+V, a dev build): a shift that ended when it was pressed, at every station, with 1 minute's grace.
+    ShiftSchedule? _demoShift;
+
     static readonly string DataFolder = AppPaths.Data;
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
     readonly bool _kiosk;
@@ -178,6 +189,10 @@ public partial class MainWindow : Window
         };
         // After every scan (a switch included) each machine follows its station's state.
         _vm.Scanned += (_, _) => SendMachineOrders();
+        // Any scan at a station is activity there, also one refused or unreadable: kept on this PC, so
+        // a restart in the grace period keeps it.
+        _shiftEnd = new ShiftEndWatch(_settings.IsConnected, DateTimeOffset.Now, LoadShiftEndActivity());
+        _vm.Activity += (_, a) => NoteActivity(a.Station, a.At);
         // And the other way: an order stopped or changed in OptiPeople ends the element at its station.
         _cloud.MachineOrderChanged += (_, c) => Dispatcher.BeginInvoke(() => OnMachineOrderChanged(c));
         // OptiPeople names the stations, so every screen calls them the same.
@@ -212,14 +227,123 @@ public partial class MainWindow : Window
     {
         if (_showcase) return;
         var now = DateTimeOffset.Now;
-        var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since));
+        var events = loaded.Events.Concat(_recorded.Where(e => e.At >= loaded.Since)).ToList();
         var today = ScanReplay.Replay(events, _vm.Stations.Select(s => s.Config), CloudSync.Midnight(now));
+        _shiftEnd.Loaded(loaded);
         // A refresh can bring a station's last element done; a document widget on an idle station shows it.
-        if (loaded.Refresh) { _vm.ApplyDone(today); FollowDocument(); return; }
+        if (loaded.Refresh)
+        {
+            _vm.ApplyDone(today);
+            _vm.ApplyAutoStopped(today.AutoStopped, now, flash: false);
+            FollowDocument();
+            return;
+        }
         _vm.Apply(today, now);
+        // The idle line goes with the next row at the station after the stop (a scan, here or elsewhere).
+        foreach (var s in _vm.Stations)
+            if (s.LastAutoStop is { } stop && events.Any(e => e.StationNo == s.Number && e.Event != ScanEventKind.ShiftEnd && e.At > stop.At))
+                s.StoppedLineGone(now);
         SendMachineOrders(loaded.FromCloud);
         foreach (var a in _vm.Stations.SelectMany(s => s.State.Active)) PrefetchDocument(a.Barcode);
         FollowDocument();
+        // The catch-up after the PC was off over a shift end, once the screen is as OptiCloud has it.
+        CheckShiftEnd(now);
+    }
+
+    // ===== Stop at shift end =====
+
+    // Where a station's shifts come from. The machine's shifts in OptiPeople are not read yet
+    // (plan §3.1, §6.1): when MachineShifts is in, its lookup by machine id goes in as machineShifts
+    // here and wins over the standard shift.
+    ShiftSchedule? ScheduleFor(int station) => _demoShift ?? ShiftSchedules.For(_settings, station, machineShifts: null);
+
+    TimeSpan ShiftEndGrace => _demoShift is not null ? TimeSpan.FromMinutes(1) : ShiftSchedules.Grace(_settings);
+
+    // Per station: on a scan station the countdown, and the stop when it is due (plan §4.2, §4.3);
+    // on any screen the idle line goes at the next shift start.
+    void CheckShiftEnd(DateTimeOffset now)
+    {
+        if (_showcase) return;
+        _shiftEndChecked = now;
+        var zone = TimeZoneInfo.Local;
+        var stopped = false;
+        foreach (var s in _vm.Stations)
+        {
+            var schedule = ScheduleFor(s.Number);
+            if (s.LastAutoStop is { } last && schedule is not null && schedule.Spans(last.At, now, zone).Any(p => p.Start > last.At && p.Start <= now))
+                s.StoppedLineGone(now);
+            // A viewer cannot see the scan PC's taps and refused scans: no countdown, the stop comes with its rows.
+            if (_settings.Mode != StationMode.Scan) continue;
+
+            var check = _shiftEnd.Check(s.State, schedule, _recorded, ShiftEndGrace, now, zone);
+            switch (check.Verdict)
+            {
+                case ShiftEndVerdict.Write:
+                    stopped |= WriteShiftEnd(s, check.Due!, now);
+                    break;
+                case ShiftEndVerdict.EndedElsewhere:
+                    // Another PC ended (or started again) an element here: nothing is written, the station follows the rows.
+                    Log.Write($"{s.Name}: stop ved vagtskifte ikke skrevet, OptiCloud har allerede en scanning efter elementets start");
+                    var rows = ScanReplay.Replay(_shiftEnd.Rows.Concat(_recorded), _vm.Stations.Select(x => x.Config));
+                    s.Restore(rows.InProgress.GetValueOrDefault(s.Number) ?? [], now);
+                    s.ShiftEndComing(null, now);
+                    stopped = true;
+                    break;
+                case ShiftEndVerdict.Counting or ShiftEndVerdict.Waiting:
+                    // Said once per stop time: when the countdown starts, and each time activity moves it on.
+                    if (_shiftEndLogged.GetValueOrDefault(s.Number) != check.Due!.StopAt)
+                    {
+                        _shiftEndLogged[s.Number] = check.Due.StopAt;
+                        Log.Write($"{s.Name}: vagten sluttede {ShiftEndTexts.Clock(check.Due.ShiftEnd)}, stopper {ShiftEndTexts.Clock(check.Due.DueAt)} hvis intet sker (stop ved {ShiftEndTexts.Clock(check.Due.StopAt)})");
+                    }
+                    s.ShiftEndComing(check.Due, now);
+                    break;
+                default:
+                    s.ShiftEndComing(null, now);
+                    break;
+            }
+        }
+        if (!stopped) return;
+        SendMachineOrders();
+        FollowDocument();
+    }
+
+    // Every element at the station stops at the due time, recorded like a scan (journal, outbox,
+    // VentisolScans) with its back-dated time and derived ScanId.
+    bool WriteShiftEnd(StationViewModel s, ShiftEndDue due, DateTimeOffset now)
+    {
+        var rows = _vm.ShiftEnd(s.Number, due.StopAt, now);
+        var end = due.StopAt == due.ShiftEnd ? "" : $" (vagten sluttede {ShiftEndTexts.Clock(due.ShiftEnd)})";
+        foreach (var r in rows)
+            Log.Write($"{s.Name}: ordre {r.Barcode.Order} ({r.Barcode.Raw}) stoppet ved vagtskifte {ShiftEndTexts.Clock(due.StopAt)}{end}");
+        return rows.Count > 0;
+    }
+
+    // Activity only this PC knows, noted and kept in shift-end.json.
+    void NoteActivity(int station, DateTimeOffset at)
+    {
+        if (_settings.Mode != StationMode.Scan || _showcase) return;
+        _shiftEnd.Local.Note(station, at);
+        _shiftEnd.Local.Prune(at);
+        AtomicFile.TryWrite(ShiftEndFile, _shiftEnd.Local.ToJson(), Log.Write);
+    }
+
+    static ShiftEndActivity LoadShiftEndActivity()
+    {
+        var activity = ShiftEndActivity.FromJson(AtomicFile.TryRead(ShiftEndFile, Log.Write));
+        activity.Prune(DateTimeOffset.Now);
+        return activity;
+    }
+
+    // "Arbejder videre" on the band: activity at the station, so the countdown starts over. No row.
+    void OnTileWorkOn(object sender, RoutedEventArgs e)
+    {
+        if (_editing || Setup.IsOpen || _settings.Mode != StationMode.Scan) return;
+        if (sender is not FrameworkElement { DataContext: StationViewModel s }) return;
+        var now = DateTimeOffset.Now;
+        NoteActivity(s.Number, now);
+        Log.Write($"{s.Name}: arbejder videre efter vagtslut");
+        CheckShiftEnd(now);
     }
 
     // Each mapped machine in OptiPeople gets the element in progress at its station, else none.
@@ -470,6 +594,8 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.Now;
         _vm.Tick(now);
+        // Also when the PC's clock was put back.
+        if (now - _shiftEndChecked >= ShiftEndEvery || now < _shiftEndChecked) CheckShiftEnd(now);
         // A viewer's data grows stale with time alone.
         if (_settings.Mode == StationMode.Viewer) ShowCloudStatus();
         if (_stopping is { } stop && !stop.Station.Has(stop.Barcode.Raw)) CloseStop();
@@ -1161,7 +1287,7 @@ public partial class MainWindow : Window
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
     // Demo: 1 to 7 scans with that scanner, Shift scans a different element, Ctrl takes the scanner
-    // away and back. Left and Right change page. Esc closes the menu or layout mode first;
+    // away and back; in a dev build Alt+V ends every station's shift now. Left and Right change page. Esc closes the menu or layout mode first;
     // outside kiosk mode it then closes the app, and F11 fills the screen.
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
@@ -1196,6 +1322,17 @@ public partial class MainWindow : Window
         }
         if (Setup.IsOpen) return;
         if (!_kiosk && e.Key == Key.F11) { ToggleMaximized(); return; }
+#if DEBUG
+        // Demo of the stop at shift end: every station's shift ends now, with 1 minute's grace.
+        if (e.Key == Key.System && e.SystemKey == Key.V)
+        {
+            _demoShift = DemoScanner.ShiftEndingNow(DateTimeOffset.Now);
+            Log.Write("Demo: vagtslut nu på alle stationer, 1 min. ventetid");
+            CheckShiftEnd(DateTimeOffset.Now);
+            e.Handled = true;
+            return;
+        }
+#endif
         if (e.Key is Key.Left or Key.Right) { ShowReport(e.Key == Key.Right); return; }
 
         var n = e.Key switch

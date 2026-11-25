@@ -128,7 +128,35 @@
         <!-- A station, built like the dashboard's machine panel: name, state, clock, then the number that matters. -->
         <DataTemplate DataType="{x:Type vm:StationViewModel}">
             <Grid Margin="10">
-                <Border x:Name="Panel" CornerRadius="8" Background="{StaticResource Panel}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+
+                <!-- After the shift's end, while elements still run: the countdown to their stop, and
+                     "Arbejder videre" (activity, a big touch target like the stop button). Scan station only. -->
+                <Border Grid.Row="0" CornerRadius="8" Background="{StaticResource Warn}" Margin="0,0,0,8" Padding="16,8,8,8"
+                        Visibility="{Binding ShowsShiftEndBand, Converter={x:Static vm:Present.Instance}}">
+                    <Viewbox StretchDirection="DownOnly" HorizontalAlignment="Stretch">
+                        <Grid Width="420">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource TextBase}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Left"
+                                           Foreground="{StaticResource Dark}" Text="{Binding ShiftEndTitle}" />
+                                <TextBlock Style="{StaticResource TextBase}" FontSize="16" HorizontalAlignment="Left"
+                                           Foreground="{StaticResource Dark}" Text="{Binding ShiftEndText}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Height="56" MinWidth="150" Margin="12,0,0,0" Style="{StaticResource BarButton}"
+                                    Background="{StaticResource Dark}" Foreground="{StaticResource Ink}" Click="OnTileWorkOn"
+                                    Content="Arbejder videre" ToolTip="Start nedtællingen forfra" />
+                        </Grid>
+                    </Viewbox>
+                </Border>
+
+                <Border x:Name="Panel" Grid.Row="1" CornerRadius="8" Background="{StaticResource Panel}">
                     <Grid>
                     <!-- Laid out at one size and only ever scaled down, so a small block still fits -->
                     <Viewbox x:Name="Single" Margin="24,20" StretchDirection="DownOnly">
@@ -163,6 +191,10 @@
                                 <TextBlock x:Name="Hint" Style="{StaticResource TextBase}" FontSize="22" VerticalAlignment="Center"
                                            Foreground="{StaticResource Quiet}"
                                            Text="{Binding DataContext.IdleText, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                <!-- Stopped at shift end: under the idle text until the next scan or shift start -->
+                                <TextBlock Style="{StaticResource TextBase}" FontSize="20" VerticalAlignment="Bottom" Margin="0,0,0,8"
+                                           Foreground="{StaticResource Warn}" Text="{Binding StoppedText}"
+                                           Visibility="{Binding ShowsStoppedLine, Converter={x:Static vm:Present.Instance}}" />
                             </Grid>
                         </Border>
                     </StackPanel>
@@ -246,8 +278,13 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                                 <Viewbox x:Name="MultiHint" StretchDirection="DownOnly" VerticalAlignment="Center">
-                                    <TextBlock x:Name="MultiHintText" Style="{StaticResource TextBase}" FontSize="22" Foreground="{StaticResource Quiet}"
-                                               Text="{Binding DataContext.IdleText, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                    <StackPanel>
+                                        <TextBlock x:Name="MultiHintText" Style="{StaticResource TextBase}" FontSize="22" Foreground="{StaticResource Quiet}"
+                                                   Text="{Binding DataContext.IdleText, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                        <TextBlock Style="{StaticResource TextBase}" FontSize="20" Margin="0,10,0,0" Foreground="{StaticResource Warn}"
+                                                   Text="{Binding StoppedText}"
+                                                   Visibility="{Binding ShowsStoppedLine, Converter={x:Static vm:Present.Instance}}" />
+                                    </StackPanel>
                                 </Viewbox>
                             </Grid>
                         </Border>
@@ -256,7 +293,7 @@
                 </Border>
 
                 <!-- Opens the element's document; the way in for the demo, where a tap on the tile scans -->
-                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Width="56" Height="56"
+                <Button Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Width="56" Height="56"
                         Cursor="Hand" Focusable="False" ToolTip="Produktionsliste" Click="OnTileDocument"
                         Visibility="{Binding DocumentsOn, Converter={x:Static vm:Present.Instance}}">
                     <Button.Template>
@@ -275,7 +312,7 @@
                 </Button>
 
                 <!-- Stops the element in progress by hand, after a confirm; only on a scan station -->
-                <Button HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,6,0,0" Width="56" Height="56"
+                <Button Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6,6,0,0" Width="56" Height="56"
                         Cursor="Hand" Focusable="False" ToolTip="Stop ordren" Click="OnTileStop"
                         Visibility="{Binding ShowsStop, Converter={x:Static vm:Present.Instance}}">
                     <Button.Template>
@@ -295,7 +332,7 @@
                 </Button>
 
                 <!-- The answer to a scan: a solid status tile over the panel, dark text on colour -->
-                <Border x:Name="FlashOk" CornerRadius="8" Background="{StaticResource Ok}" Opacity="0" IsHitTestVisible="False">
+                <Border x:Name="FlashOk" Grid.RowSpan="2" CornerRadius="8" Background="{StaticResource Ok}" Opacity="0" IsHitTestVisible="False">
                     <Viewbox x:Name="FlashOkBody" Margin="24,20" StretchDirection="DownOnly" RenderTransformOrigin="0.5,0.5">
                     <Viewbox.RenderTransform><ScaleTransform /></Viewbox.RenderTransform>
                     <StackPanel Width="340">
@@ -308,7 +345,7 @@
                     </StackPanel>
                     </Viewbox>
                 </Border>
-                <Border x:Name="FlashWarn" CornerRadius="8" Background="{StaticResource Warn}" Opacity="0" IsHitTestVisible="False">
+                <Border x:Name="FlashWarn" Grid.RowSpan="2" CornerRadius="8" Background="{StaticResource Warn}" Opacity="0" IsHitTestVisible="False">
                     <Viewbox x:Name="FlashWarnBody" Margin="24,20" StretchDirection="DownOnly" RenderTransformOrigin="0.5,0.5">
                     <Viewbox.RenderTransform><ScaleTransform /></Viewbox.RenderTransform>
                     <StackPanel Width="340">
