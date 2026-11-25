@@ -69,6 +69,8 @@ export interface StationRaw {
   elementsThrough: number | null;
   reworkPasses: number | null;
   missingScanOutCount: number | null;
+  /** rpt.station_day only. */
+  autoStoppedCount?: number | null;
   openCount: number | null;
   timePerPieceSeconds: number | null;
   timePerPieceWorkingSeconds: number | null;
@@ -130,6 +132,7 @@ export function toStationRow(raw: StationRaw, ctx: ReportContext): StationRow {
     reworkPasses: raw.hasFacts ? (raw.reworkPasses ?? 0) : null,
     openCount: raw.hasFacts ? (raw.openCount ?? 0) : null,
     missingScanOutCount: raw.hasFacts ? (raw.missingScanOutCount ?? 0) : null,
+    autoStoppedCount: raw.hasFacts && raw.autoStoppedCount !== undefined ? (raw.autoStoppedCount ?? 0) : null,
     timePerPiece: raw.hasFacts
       ? duration(raw.timePerPieceSeconds, raw.timePerPieceWorkingSeconds, ctx.useWorking)
       : NO_DURATION,
@@ -281,7 +284,7 @@ export async function getStationPerformance(
   });
 }
 
-interface TimelineRaw extends Omit<TimelineInterval, "duration" | "split" | "waitBefore"> {
+interface TimelineRaw extends Omit<TimelineInterval, "duration" | "split" | "waitBefore" | "autoStopped"> {
   durationSeconds: number | null;
   durationWorkingSeconds: number | null;
   allocatedSeconds: number | null;
@@ -364,6 +367,8 @@ export async function getStationDetail(
         ...rest
       }) => ({
         ...rest,
+        endEvent: rest.endEvent ?? null,
+        autoStopped: rest.endEvent === "shift_end",
         duration: duration(durationSeconds, durationWorkingSeconds, ctx.useWorking),
         split: duration(allocatedSeconds, allocatedWorkingSeconds, ctx.useWorking),
         waitBefore: duration(waitBeforeSeconds, waitBeforeWorkingSeconds, ctx.useWorking),

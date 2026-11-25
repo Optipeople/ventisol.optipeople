@@ -516,6 +516,7 @@ function deriveOne(
       localDay: dayKey(iv.end ?? iv.start),
       inScanId: iv.inScanId,
       outScanId: iv.outScanId,
+      endEvent: iv.status === "done" ? iv.endEvent : null,
     };
   });
 
@@ -529,8 +530,12 @@ function deriveOne(
  */
 export function deriveOrders(scans: Scan[], infos: OrderInfo[], ctx: DeriveContext): DerivedOrder[] {
   const params = resolveParams(ctx.params);
-  const unique = dedupeScans(scans);
-  const intervals = pairHistory(unique, {
+  // A Mark carries no time: it only changes how a pass ended (pairHistory).
+  // It is no scan of the element for first and last scan, lead time or path.
+  const deduped = dedupeScans(scans);
+  const marks = deduped.filter((s) => s.direction === "Mark");
+  const unique = deduped.filter((s) => s.direction !== "Mark");
+  const intervals = pairHistory([...unique, ...marks], {
     now: ctx.now,
     staleOpenSeconds: params.staleOpenSeconds,
     maxOpen: ctx.maxOpen,

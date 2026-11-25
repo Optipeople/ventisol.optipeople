@@ -503,7 +503,8 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
   }),
 
   missing_scan_outs: def<Paged<MissingScanOut>>()({
-    description: "Elementer scannet ind på en station og aldrig scannet ud, nyeste først.",
+    description:
+      "Elementer scannet ind på en station og aldrig scannet ud, nyeste først. kind missing: mangler ud-scanning, tæller ikke med i nogen tid. kind auto_stopped: stationen stoppede elementet ved vagtskifte (endAt er vagtens slut, ikke en scanning); tiden tæller med frem til stoppet.",
     inputSchema: z.object({ from: day("Første dag").optional(), to: day("Sidste dag").optional(), page, pageSize }),
     views: (p) => [
       table(
@@ -512,12 +513,14 @@ export const REPORT_TOOL_DEFS: Record<ReportQueryName, ReportToolDef<z.ZodObject
           { key: "order", label: "Ordre" },
           { key: "station", label: "Station" },
           { key: "at", label: "Scannet ind" },
+          { key: "kind", label: "Type" },
           { key: "reason", label: "Årsag" },
         ],
         p.rows.map((r) => ({
           order: String(r.orderNo),
           station: r.stationName,
           at: formatDayTime(r.startAt),
+          kind: r.kind === "auto_stopped" ? "Auto-stop" : "Mangler ud-scanning",
           reason: r.reasonLabel,
         })),
         p.total

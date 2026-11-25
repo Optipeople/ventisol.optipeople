@@ -275,6 +275,25 @@ describe("parallel work at a station", () => {
     expect(result.href).toBe(`/stationer/1?day=${DAY}&clock=wall`);
   });
 
+  it("station_timeline and missing_scan_outs report a pass stopped at shift end", async () => {
+    await db.withService((tx) =>
+      tx.query("update core.station_intervals set end_event = 'shift_end' where order_no = 50009 and station_no = 1")
+    );
+    const result = await runChatTool(ctx(admin), "station_timeline", { stationNo: 1, from: DAY, clock: "wall" });
+    const t = result.data as { rows: { orderNo: number; autoStopped: boolean; end: string | null }[] };
+    expect(t.rows.map((r) => [r.orderNo, r.autoStopped])).toEqual([
+      [50001, false],
+      [50009, true],
+    ]);
+    const table = result.views.find((v) => v.kind === "table");
+    if (table?.kind !== "table") throw new Error("expected a table view");
+    expect(String(table.rows[1].end)).toMatch(/\(vagtskifte\)$/);
+
+    const missing = await runChatTool(ctx(viewer), "missing_scan_outs", {});
+    const rows = (missing.data as { rows: { orderNo: number; kind: string; reasonLabel: string }[] }).rows;
+    expect(rows.find((r) => r.orderNo === 50009)).toMatchObject({ kind: "auto_stopped", reasonLabel: "Stoppet ved vagtskifte 07:40" });
+  });
+
   it("a station with one at a time is not parallel, and a range is cut at a week", async () => {
     const result = await runChatTool(ctx(viewer), "station_timeline", { stationNo: 7, from: "2026-10-01", to: "2026-10-31" });
     const t = result.data as Timeline & { period: { from: string; to: string }; daysOmitted: number };

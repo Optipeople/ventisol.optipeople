@@ -25,7 +25,7 @@ import {
   type StationDayFactsRow,
   type StationIntervalRow,
 } from "@/lib/derive";
-import type { Scan } from "@/lib/scans";
+import { eventField, type Scan } from "@/lib/scans";
 import { addDays, dayEnd, dayStart } from "@/lib/time";
 import type { ReadModelConfig } from "./config";
 import { orderInfoFromDocument, type SeenElement } from "./orderinfo";
@@ -91,10 +91,11 @@ interface RawScanRow {
   station: string | null;
   station_no: number | null;
   station_kind: string | null;
-  direction: "In" | "Out";
+  direction: "In" | "Out" | "Mark";
   scan_time: Date;
   duration_sec: number | null;
   device: string | null;
+  event: string | null;
 }
 
 /** The whole scan history of these orders. Rows that are no scan (no barcode, direction or time) are left out. */
@@ -102,7 +103,7 @@ export async function loadScans(db: Db, orderNos: number[]): Promise<Scan[]> {
   if (orderNos.length === 0) return [];
   const rows = await db.query<RawScanRow>(
     `select scan_id, barcode, order_no, position, sub_position, piece, station, station_no,
-            station_kind, direction, scan_time, duration_sec, device
+            station_kind, direction, scan_time, duration_sec, device, event
        from raw.scans
       where order_no = any($1::int[])
         and barcode is not null and direction is not null and scan_time is not null
@@ -124,6 +125,7 @@ export async function loadScans(db: Db, orderNos: number[]): Promise<Scan[]> {
     time: r.scan_time.getTime(),
     durationSec: r.duration_sec != null && r.duration_sec >= 0 ? r.duration_sec : null,
     device: r.device,
+    ...eventField(r.event),
   }));
 }
 
@@ -390,6 +392,7 @@ interface IntervalDbRow {
   local_day: string;
   in_scan_id: string | null;
   out_scan_id: string | null;
+  end_event: StationIntervalRow["endEvent"];
 }
 
 function toIntervalRow(r: IntervalDbRow): StationIntervalRow {
@@ -417,6 +420,7 @@ function toIntervalRow(r: IntervalDbRow): StationIntervalRow {
     localDay: r.local_day,
     inScanId: r.in_scan_id,
     outScanId: r.out_scan_id,
+    endEvent: r.end_event,
   };
 }
 
@@ -462,7 +466,7 @@ export async function replaceStationDays(
             status, missing_reason, start_at, end_at, start_estimated, duration_seconds,
             duration_working_seconds, allocated_seconds, allocated_working_seconds,
             wait_before_seconds, wait_before_working_seconds,
-            element_type_id, local_day, in_scan_id, out_scan_id
+            element_type_id, local_day, in_scan_id, out_scan_id, end_event
        from core.station_intervals
       where station_no = any($1::int[])
         and start_at < $3::timestamptz

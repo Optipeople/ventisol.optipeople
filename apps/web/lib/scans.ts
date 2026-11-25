@@ -3,7 +3,44 @@
 
 export const SCAN_TABLE_NAME = "VentisolScans";
 
-export type Direction = "In" | "Out";
+/**
+ * In and Out pair. Mark carries no time and never pairs: it closes a pause
+ * (docs/opticloud-scans.md, Events). Old rows have only In and Out.
+ */
+export type Direction = "In" | "Out" | "Mark";
+
+/**
+ * Why a row was written (the Event column, docs/plan-scan-commands.md §6.1).
+ * An empty or unknown value reads as Scan, as in the station app.
+ */
+export type ScanEventKind = "Scan" | "Pause" | "Resume" | "Hold" | "CheckedOut" | "Undo" | "ShiftEnd";
+
+const EVENT_KINDS: readonly ScanEventKind[] = ["Scan", "Pause", "Resume", "Hold", "CheckedOut", "Undo", "ShiftEnd"];
+
+/** The Event column to a kind: case-insensitive, empty or unknown is Scan. */
+export function parseScanEvent(v: unknown): ScanEventKind {
+  const s = v == null ? "" : String(v).trim().toLowerCase();
+  return EVENT_KINDS.find((k) => k.toLowerCase() === s) ?? "Scan";
+}
+
+/**
+ * How a pass ended, as core.station_intervals.end_event stores it: the Event
+ * of the row that closed it in snake case, null for an ordinary scan.
+ */
+export type EndEvent = "pause" | "resume" | "hold" | "checked_out" | "undo" | "shift_end";
+
+const END_EVENTS: Record<Exclude<ScanEventKind, "Scan">, EndEvent> = {
+  Pause: "pause",
+  Resume: "resume",
+  Hold: "hold",
+  CheckedOut: "checked_out",
+  Undo: "undo",
+  ShiftEnd: "shift_end",
+};
+
+export function toEndEvent(event: ScanEventKind | undefined): EndEvent | null {
+  return event == null || event === "Scan" ? null : END_EVENTS[event];
+}
 
 export interface Scan {
   /** ScanId (uuid from the station app); falls back to the row id. */
@@ -23,6 +60,8 @@ export interface Scan {
   /** On Out: seconds since the matching In, as the station app measured it. */
   durationSec: number | null;
   device: string | null;
+  /** The Event column. Left out means Scan. */
+  event?: ScanEventKind;
 }
 
 /** One row as GetRowsPaged returns it. */
@@ -118,7 +157,7 @@ export function parseScanRow(row: MasterDataRow): Scan | null {
   const time = parseScanTime(getValue(v, "ScanTime"));
   if (!barcode || !station || time == null) return null;
   const direction: Direction | null =
-    directionRaw === "in" ? "In" : directionRaw === "out" ? "Out" : null;
+    directionRaw === "in" ? "In" : directionRaw === "out" ? "Out" : directionRaw === "mark" ? "Mark" : null;
   if (!direction) return null;
 
   const fromCode = parseBarcode(barcode);
@@ -140,5 +179,12 @@ export function parseScanRow(row: MasterDataRow): Scan | null {
     time,
     durationSec: duration != null && duration >= 0 ? duration : null,
     device: asString(getValue(v, "Device")),
+    ...eventField(getValue(v, "Event")),
   };
+}
+
+/** `{ event }` unless it is Scan, so an ordinary row looks as it did before the column. */
+export function eventField(v: unknown): { event?: ScanEventKind } {
+  const event = parseScanEvent(v);
+  return event === "Scan" ? {} : { event };
 }

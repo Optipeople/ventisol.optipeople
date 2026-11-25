@@ -160,6 +160,12 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
             <>
               <SectionTitle title="Mangler ud-scanning" aside={formatCount(missing.total, "passage", "passager")} />
               <MissingScanOutsTable rows={missing.rows} day={day} />
+              {missing.rows.some((r) => r.kind === "auto_stopped") && (
+                <Note>
+                  Auto-stop: stationen stoppede elementet ved vagtskifte, fordi det ikke blev scannet ud. Tiden tæller
+                  med frem til stoppet. Mangler ud-scanning tæller ikke med i nogen tid.
+                </Note>
+              )}
               {missing.total > missing.rows.length && (
                 <Note>
                   Viser de {missing.rows.length} nyeste af {missing.total}.

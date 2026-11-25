@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseBarcode, type Direction, type Scan } from "@/lib/scans";
+import { eventField, parseBarcode, type Direction, type Scan } from "@/lib/scans";
 import { at, pass, scan } from "@/lib/test-helpers";
 import { DEFAULT_CALENDAR } from "./calendar";
 import { pairHistory } from "./pairing";
@@ -19,6 +19,8 @@ interface VectorEvent {
   station: string;
   stationKind: string;
   direction: Direction;
+  /** The row's Event; missing means Scan. */
+  event?: string;
   time: string;
   durationSec: number | null;
 }
@@ -34,7 +36,8 @@ interface VectorCase {
   needs?: string;
   events: VectorEvent[];
   expected: {
-    done: { barcode: string; stationNo: number; start: string; end: string }[];
+    /** endEvent ShiftEnd: auto-stopped. activeSec: compared when given. */
+    done: { barcode: string; stationNo: number; start: string; end: string; activeSec?: number; endEvent?: string }[];
     inProgress: { stationNo: number; barcode: string; since: string }[];
   };
 }
@@ -43,15 +46,15 @@ const file = fileURLToPath(new URL("../../../../docs/scan-rules-vectors.json", i
 const { cases } = JSON.parse(readFileSync(file, "utf8")) as { cases: VectorCase[] };
 const ms = (iso: string) => Date.parse(iso);
 
-// The "needs" tags this pairing follows. Plan step "Pairing" adds "events" here.
-const BUILT: string[] = [];
+// The "needs" tags this pairing follows. plan-scan-commands.md step 11 adds "events" here.
+const BUILT: string[] = ["shift-end"];
 const ready = cases.filter((c) => !c.needs || BUILT.includes(c.needs));
 const waiting = cases.filter((c) => !ready.includes(c));
 
 function toScan(e: VectorEvent): Scan {
   const parts = parseBarcode(e.barcode);
   if (!parts) throw new Error(`bad barcode in vectors: ${e.barcode}`);
-  return { ...parts, id: e.id, barcode: e.barcode, station: e.station, stationNo: e.stationNo, stationKind: e.stationKind, direction: e.direction, time: ms(e.time), durationSec: e.durationSec, device: null };
+  return { ...parts, id: e.id, barcode: e.barcode, station: e.station, stationNo: e.stationNo, stationKind: e.stationKind, direction: e.direction, time: ms(e.time), durationSec: e.durationSec, device: null, ...eventField(e.event) };
 }
 
 const maxOpenOf = (c: VectorCase) =>
@@ -67,10 +70,24 @@ function check(c: VectorCase, scans: Scan[]) {
   const intervals = pairHistory(scans, { now: ms(c.now), maxOpen: maxOpenOf(c) });
   const done = intervals
     .filter((iv) => iv.status === "done" && (iv.end as number) >= ms(c.todayStart))
-    .map((iv) => ({ barcode: iv.barcode, stationNo: iv.stationNo, start: iv.start, end: iv.end }))
+    .map((iv) => ({
+      barcode: iv.barcode,
+      stationNo: iv.stationNo,
+      start: iv.start,
+      end: iv.end,
+      activeSec: ((iv.end as number) - iv.start) / 1000,
+      autoStopped: iv.autoStopped,
+    }))
     .sort((a, b) => (a.end as number) - (b.end as number) || a.stationNo - b.stationNo || a.barcode.localeCompare(b.barcode));
   const expectedDone = c.expected.done
-    .map((d) => ({ barcode: d.barcode, stationNo: d.stationNo, start: ms(d.start), end: ms(d.end) }))
+    .map((d) => ({
+      barcode: d.barcode,
+      stationNo: d.stationNo,
+      start: ms(d.start),
+      end: ms(d.end),
+      activeSec: d.activeSec ?? (ms(d.end) - ms(d.start)) / 1000,
+      autoStopped: d.endEvent === "ShiftEnd",
+    }))
     .sort((a, b) => a.end - b.end || a.stationNo - b.stationNo || a.barcode.localeCompare(b.barcode));
   expect(done).toEqual(expectedDone);
 
@@ -264,5 +281,69 @@ describe("pairHistory", () => {
   it("a scan with no station number gets station 0", () => {
     const [iv] = pairHistory(pass(at("07:00"), at("07:10"), { stationNo: null }), { now: NOW });
     expect(iv).toMatchObject({ stationNo: 0, status: "done" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stop at shift end (docs/plan-shift-end.md §4.6, §7.2)
+// ---------------------------------------------------------------------------
+
+describe("pairHistory at shift end", () => {
+  const NEXT_DAY = "2026-10-22";
+
+  it("a ShiftEnd Out ends the pass like any Out, auto-stopped", () => {
+    const a = scan("In", at("13:20"));
+    const b = scan("Out", at("14:00"), { event: "ShiftEnd", durationSec: 2400 });
+    expect(pairHistory([a, b], { now: NOW + 86_400_000 })[0]).toMatchObject({
+      status: "done",
+      start: a.time,
+      end: b.time,
+      endEvent: "shift_end",
+      autoStopped: true,
+      outScanId: b.id,
+    });
+  });
+
+  it("a late Out within 12 hours ends the pass instead; the ShiftEnd is ignored", () => {
+    const a = scan("In", at("13:20"));
+    const b = scan("Out", at("14:00"), { event: "ShiftEnd", durationSec: 2400 });
+    const late = scan("Out", at("15:10"), { durationSec: 6600 });
+    const ivs = pairHistory([a, b, late], { now: NOW + 86_400_000 });
+    expect(ivs).toHaveLength(1);
+    expect(ivs[0]).toMatchObject({ start: a.time, end: late.time, endEvent: null, autoStopped: false, outScanId: late.id });
+  });
+
+  it("a late Out more than 12 hours after is skipped, not a second pass", () => {
+    const a = scan("In", at("13:20"));
+    const b = scan("Out", at("14:00"), { event: "ShiftEnd", durationSec: 2400 });
+    const late = scan("Out", at("07:00", NEXT_DAY), { durationSec: 63_600 });
+    const ivs = pairHistory([a, b, late], { now: at("12:00", NEXT_DAY) });
+    expect(ivs.map((iv) => [iv.start, iv.end, iv.autoStopped])).toEqual([[a.time, b.time, true]]);
+  });
+
+  it("the next morning's pass after an auto-stop continues the visit, not rework", () => {
+    const a = scan("In", at("13:20"));
+    const b = scan("Out", at("14:00"), { event: "ShiftEnd", durationSec: 2400 });
+    // Wall clock: 17 hours, far over the 60 minute pause.
+    const [c, d] = pass(at("07:00", NEXT_DAY), at("07:30", NEXT_DAY));
+    const ivs = pairHistory([a, b, c, d], { now: at("12:00", NEXT_DAY) });
+    expect(ivs.map((iv) => [iv.visit, iv.autoStopped])).toEqual([
+      [1, true],
+      [1, false],
+    ]);
+    // The same gap after a scan-out is rework.
+    const [e, f] = pass(at("13:20"), at("14:00"));
+    expect(pairHistory([e, f, c, d], { now: at("12:00", NEXT_DAY) }).map((iv) => iv.visit)).toEqual([1, 2]);
+  });
+
+  it("a Mark never pairs; one with ShiftEnd after a Pause Out marks that pass auto-stopped", () => {
+    const a = scan("In", at("08:00"));
+    const b = scan("Out", at("08:30"), { event: "Pause", durationSec: 1800 });
+    const mark = scan("Mark", at("14:00"), { event: "ShiftEnd" });
+    const ivs = pairHistory([a, b, mark], { now: NOW + 86_400_000 });
+    expect(ivs).toHaveLength(1);
+    expect(ivs[0]).toMatchObject({ start: a.time, end: b.time, endEvent: "shift_end", autoStopped: true });
+    // A Mark alone is nothing.
+    expect(pairHistory([scan("Mark", at("14:00"), { event: "Hold" })], { now: NOW })).toEqual([]);
   });
 });

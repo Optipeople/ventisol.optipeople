@@ -235,6 +235,11 @@ export interface StationRow {
   reworkPasses: number | null;
   openCount: number | null;
   missingScanOutCount: number | null;
+  /**
+   * Passes the station stopped at shift end that ended in the day (they count
+   * in every time). Null without data, and over a period.
+   */
+  autoStoppedCount: number | null;
   /** Tid pr. stk.: the median pass time. */
   timePerPiece: Duration;
   meanPieceSeconds: number | null;
@@ -307,6 +312,10 @@ export interface TimelineInterval {
   /** Null while open and on a missing scan-out. */
   endAt: Iso | null;
   startEstimated: boolean;
+  /** How it ended: shift_end when the station stopped it at shift end. Null on a scan-out. */
+  endEvent: string | null;
+  /** Stopped by the station at shift end: endAt is the shift end, not a scan. */
+  autoStopped: boolean;
   /** Wall clock, In to Out. Null seconds while open and on a missing scan-out. */
   duration: Duration;
   /**
@@ -745,10 +754,22 @@ export interface MissingScanOut {
   stationKind: string;
   /** When it was scanned In. */
   startAt: Iso;
+  /** auto_stopped: when the station stopped it at shift end. Null on a missing scan-out. */
+  endAt: Iso | null;
+  /** The day the In was scanned (missing), or the day of the stop (auto_stopped). */
   localDay: Day;
-  /** stale: no Out within 36 hours. superseded: a later In took its place. */
-  missingReason: "stale" | "superseded";
-  /** "Ingen ud-scanning i 36 timer" or "Afløst af en senere ind-scanning". */
+  /**
+   * missing: never scanned out, counts in no time. auto_stopped: not scanned
+   * out either, but the station stopped it at shift end (a forgotten scan-out
+   * that was caught); it counts in times up to the stop.
+   */
+  kind: "missing" | "auto_stopped";
+  /** stale: no Out within 36 hours. superseded: a later In took its place. Null on an auto-stop. */
+  missingReason: "stale" | "superseded" | null;
+  /**
+   * "Ingen ud-scanning i 36 timer", "Afløst af en senere ind-scanning", or
+   * "Stoppet ved vagtskifte 14:00".
+   */
   reasonLabel: string;
   orderStatus: "in_progress" | "packed";
 }

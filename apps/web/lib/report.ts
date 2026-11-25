@@ -15,6 +15,12 @@
 //     progress, else idle.
 //   - An element still in progress counts up to "now"; an In older than
 //     36 hours with no Out is ignored.
+//   - A pass the station stopped at shift end (an Out with Event ShiftEnd)
+//     is a pass like any other. A late Out of the same element there, with
+//     no In between, ends it instead when it comes within 12 hours, and is
+//     skipped after that (docs/plan-shift-end.md §4.6).
+//   - A Mark row carries no time and never pairs. A Mark with ShiftEnd
+//     right after a Pause Out marks that pass auto-stopped.
 //
 // These mirror DayReport in the station app (apps/station), so the reports
 // site and the operators' screen agree on the numbers.
@@ -29,6 +35,14 @@ import { isPacking, type Scan } from "@/lib/scans";
  * element left overnight to still be in progress the next working day.
  */
 export const STALE_OPEN_MS = 36 * 3_600_000;
+
+/**
+ * A real Out this soon after a ShiftEnd Out of the same element at the same
+ * station (no In between) ends that pass instead; a later one is skipped.
+ * Overtime the same evening is kept; a scan-out the next day is the forgotten
+ * one the shift end stop exists for (docs/plan-shift-end.md §4.6).
+ */
+export const LATE_OUT_MAX_MS = 12 * 3_600_000;
 
 /** One element at one station: from its In to its Out (or to now). */
 export interface WorkInterval {
@@ -45,6 +59,8 @@ export interface WorkInterval {
   durationMs: number;
   /** No Out yet: the interval runs to now. */
   inProgress: boolean;
+  /** The station stopped it at shift end (an Out with Event ShiftEnd), not a scan-out. */
+  autoStopped: boolean;
   /**
    * No In in the data (it fell before the period read): the start was put
    * back from the Out's DurationSec.
@@ -133,6 +149,7 @@ function interval(open: Scan, start: number, end: number, extra: Partial<WorkInt
     end,
     durationMs: Math.max(0, end - start),
     inProgress: false,
+    autoStopped: false,
     startEstimated: false,
     visit: 1,
     ...extra,
@@ -148,6 +165,11 @@ function interval(open: Scan, start: number, end: number, extra: Partial<WorkInt
  * - An Out with no open In: its In fell before the period read, so the start
  *   is put back from DurationSec. Without DurationSec it cannot be timed and
  *   is skipped.
+ * - A late Out: an Out with no open In, at most LATE_OUT_MAX_MS after a
+ *   ShiftEnd Out of the same element at the same station with no In between,
+ *   ends that interval instead. Later than that it is skipped.
+ * - A Mark carries no time. One with ShiftEnd right after a Pause Out of the
+ *   same element at the same station marks that interval auto-stopped.
  * - An In still open at the end: in progress, counting up to `now`, unless it
  *   is older than STALE_OPEN_MS. As many per station as its "Max i gang"
  *   (`maxOpen`, by station number; 1 when not given): when more elements are
@@ -156,22 +178,49 @@ function interval(open: Scan, start: number, end: number, extra: Partial<WorkInt
 export function pairScans(scans: Scan[], now: number, maxOpen: MaxOpen = {}): WorkInterval[] {
   const sorted = dedupeScans(scans).sort(byTime);
   const open = new Map<string, Scan>();
+  // A pass stopped at shift end, per element and station, until its next In.
+  const stopped = new Map<string, WorkInterval>();
+  // A pass ended by a Pause Out, until its next row there.
+  const paused = new Map<string, WorkInterval>();
   const result: WorkInterval[] = [];
+
+  const done = (key: string, iv: WorkInterval, out: Scan) => {
+    result.push(iv);
+    if (iv.autoStopped) stopped.set(key, iv);
+    else stopped.delete(key);
+    if (out.event === "Pause") paused.set(key, iv);
+  };
 
   for (const scan of sorted) {
     const key = keyOf(scan);
-    if (scan.direction === "In") {
-      open.set(key, scan);
+    const pausedPass = paused.get(key);
+    paused.delete(key);
+    if (scan.direction === "Mark") {
+      if (pausedPass && scan.event === "ShiftEnd") pausedPass.autoStopped = true;
       continue;
     }
+    if (scan.direction === "In") {
+      open.set(key, scan);
+      stopped.delete(key);
+      continue;
+    }
+    const autoStopped = scan.event === "ShiftEnd";
     const opening = open.get(key);
     if (opening) {
       open.delete(key);
-      result.push(interval(opening, opening.time, scan.time, {}));
-    } else if (scan.durationSec != null) {
-      result.push(
-        interval(scan, scan.time - scan.durationSec * 1000, scan.time, { startEstimated: true })
-      );
+      done(key, interval(opening, opening.time, scan.time, { autoStopped }), scan);
+      continue;
+    }
+    const last = stopped.get(key);
+    if (last && scan.time >= last.end) {
+      if (scan.time - last.end <= LATE_OUT_MAX_MS) {
+        Object.assign(last, { end: scan.time, durationMs: Math.max(0, scan.time - last.start), autoStopped });
+        if (!autoStopped) stopped.delete(key);
+      }
+      continue;
+    }
+    if (scan.durationSec != null) {
+      done(key, interval(scan, scan.time - scan.durationSec * 1000, scan.time, { startEstimated: true, autoStopped }), scan);
     }
   }
 
@@ -202,24 +251,29 @@ export const PAUSE_MAX_MS = 60 * 60_000;
  * other station in between, and ended at most PAUSE_MAX_MS before this one
  * started. `gapMs` measures that gap: wall clock unless given, the shift
  * time between them in pairHistory, so a night or a weekend is a pause too.
+ * `continues` says the next pass there always continues this one, however
+ * long the gap (pairHistory: a pass the station stopped at shift end).
  */
 export function numberVisits<T extends { barcode: string; start: number; end: number | null; visit: number | null }>(
   passes: T[],
   station: (pass: T) => string,
-  gapMs: (from: number, to: number) => number = (from, to) => to - from
+  gapMs: (from: number, to: number) => number = (from, to) => to - from,
+  continues: (prev: T) => boolean = () => false
 ): void {
   const visits = new Map<string, number>();
-  const last = new Map<string, { station: string; end: number | null }>();
+  const last = new Map<string, { station: string; pass: T }>();
   for (const pass of passes) {
     const at = station(pass);
     const key = `${pass.barcode}\u0000${at}`;
     const n = visits.get(key) ?? 0;
     const prev = last.get(pass.barcode);
-    const paused = n > 0 && prev?.station === at && prev.end != null && gapMs(prev.end, pass.start) <= PAUSE_MAX_MS;
+    const end = prev?.pass.end;
+    const paused =
+      n > 0 && prev?.station === at && end != null && (continues(prev.pass) || gapMs(end, pass.start) <= PAUSE_MAX_MS);
     const visit = paused ? n : n + 1;
     visits.set(key, visit);
     pass.visit = visit;
-    last.set(pass.barcode, { station: at, end: pass.end });
+    last.set(pass.barcode, { station: at, pass });
   }
 }
 

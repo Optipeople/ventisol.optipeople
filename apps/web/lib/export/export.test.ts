@@ -6,7 +6,7 @@ import { readSheet } from "read-excel-file/node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Claims } from "@/lib/db";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
-import { REPORT_QUERY_NAMES, type ReportQueryName } from "@/lib/reports";
+import { REPORT_QUERY_NAMES, type MissingScanOut, type ReportQueryName } from "@/lib/reports";
 import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/test-support";
 import { cellText, formatHoursMinutes, xlsxCell } from "./cells";
 import { REPORT_EXPORTS, type ExportColumn } from "./columns";
@@ -84,6 +84,30 @@ describe("column definitions", () => {
     expect(xlsxCell("percent", 50)).toMatchObject({ value: 0.5 });
     expect(xlsxCell("int", null)).toBeNull();
     expect((xlsxCell("datetime", "2026-10-21T05:42:00Z")!.value as Date).toISOString()).toBe("2026-10-21T07:42:00.000Z");
+  });
+
+  it("missing scan-outs say which were stopped at shift end, and when", () => {
+    const columns = REPORT_EXPORTS.missing_scan_outs.columns as ExportColumn<MissingScanOut>[];
+    const cell = (row: MissingScanOut, header: string) => {
+      const c = columns.find((x) => x.header === header);
+      if (!c) throw new Error(header);
+      return cellText(c.kind, c.value(row) ?? null);
+    };
+    const base = {
+      intervalId: "i", orderNo: 50010, customer: null, barcode: "050010010101", position: 1, subPosition: 1, piece: 1,
+      elementTypeId: null, stationNo: 1, stationName: "Station 10", stationKind: "assembly",
+      startAt: "2026-11-13T12:20:00.000Z", localDay: "2026-11-13", orderStatus: "in_progress",
+    } as const;
+    const stopped: MissingScanOut = {
+      ...base, endAt: "2026-11-13T13:00:00.000Z", kind: "auto_stopped", missingReason: null, reasonLabel: "Stoppet ved vagtskifte 14:00",
+    };
+    const missing: MissingScanOut = { ...base, endAt: null, kind: "missing", missingReason: "stale", reasonLabel: "Ingen ud-scanning i 36 timer" };
+    expect([cell(stopped, "Auto-stop"), cell(stopped, "Stoppet"), cell(stopped, "Årsag")]).toEqual([
+      "Ja", "13-11-2026 14:00", "Stoppet ved vagtskifte 14:00",
+    ]);
+    expect(cell(missing, "Auto-stop")).toBe("Nej");
+    const stationAuto = REPORT_EXPORTS.station_day.columns.find((c) => c.header === "Auto-stop");
+    expect(stationAuto).toBeDefined();
   });
 
   it("read URL parameters as the schema wants them", () => {

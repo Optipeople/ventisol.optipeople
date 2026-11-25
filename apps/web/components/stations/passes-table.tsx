@@ -83,6 +83,12 @@ export function PassesTable({ day, intervals }: { day: string; intervals: Timeli
               </DataTableCell>
               <DataTableCell className="whitespace-nowrap tabular-nums">
                 {iv.endAt ? time(iv.endAt, day) : <span className="text-[var(--ds-grey-medium-05)]">Ikke scannet ud</span>}
+                {iv.autoStopped && (
+                  <span className="text-[var(--ds-grey-medium-05)]" title="Ikke scannet ud: stationen stoppede elementet ved vagtskifte">
+                    {" "}
+                    (vagtskifte)
+                  </span>
+                )}
               </DataTableCell>
               <DataTableCell align="right" className="whitespace-nowrap tabular-nums">
                 {iv.status === "missing_out" ? (

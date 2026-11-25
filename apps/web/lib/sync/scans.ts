@@ -114,12 +114,14 @@ export interface RawScan {
   station_no: number | null;
   station_kind: string | null;
   machine_id: string | null;
-  direction: "In" | "Out" | null;
+  direction: "In" | "Out" | "Mark" | null;
   scan_time: string | null;
   duration_sec: number | null;
   device: string | null;
   row_id: string | null;
   created_date: string | null;
+  /** The Event column as OptiCloud holds it (null when empty: an ordinary scan). */
+  event: string | null;
 }
 
 export function asText(v: unknown): string | null {
@@ -144,8 +146,8 @@ export function asIsoTime(v: unknown): string | null {
 
 /**
  * The mirror of one row: every column as OptiCloud holds it, nothing filled
- * in from elsewhere. The direction is normalised to "In" / "Out" (the column
- * has a check), anything else is null. Null when the row has no id at all.
+ * in from elsewhere. The direction is normalised to "In" / "Out" / "Mark" (the
+ * column has a check), anything else is null. Null when the row has no id at all.
  */
 export function toRawScan(row: MasterDataRow): RawScan | null {
   const v = row.values ?? {};
@@ -163,12 +165,13 @@ export function toRawScan(row: MasterDataRow): RawScan | null {
     station_no: asInt(getValue(v, "StationNo")),
     station_kind: asText(getValue(v, "StationKind")),
     machine_id: asText(getValue(v, "MachineId")),
-    direction: direction === "in" ? "In" : direction === "out" ? "Out" : null,
+    direction: direction === "in" ? "In" : direction === "out" ? "Out" : direction === "mark" ? "Mark" : null,
     scan_time: asIsoTime(getValue(v, "ScanTime")),
     duration_sec: asInt(getValue(v, "DurationSec")),
     device: asText(getValue(v, "Device")),
     row_id: asText(row.id),
     created_date: asIsoTime(row.createdDate),
+    event: asText(getValue(v, "Event")),
   };
 }
 
@@ -215,6 +218,7 @@ const SCAN_COLUMNS = [
   "device",
   "row_id",
   "created_date",
+  "event",
 ] as const;
 
 const quoted = (column: string) => `"${column}"`;
@@ -233,7 +237,7 @@ const UPSERT_SQL = `
       "scan_id" text, "barcode" text, "order_no" integer, "position" integer,
       "sub_position" integer, "piece" integer, "station" text, "station_no" integer,
       "station_kind" text, "machine_id" text, "direction" text, "scan_time" timestamptz,
-      "duration_sec" integer, "device" text, "row_id" text, "created_date" timestamptz)
+      "duration_sec" integer, "device" text, "row_id" text, "created_date" timestamptz, "event" text)
   ),
   old as (
     select o.scan_id, o.barcode, o.order_no, o.station_no, o.scan_time

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getValue, parseBarcode, parseScanRow, parseScanTime, positionLabel } from "@/lib/scans";
+import { getValue, parseBarcode, parseScanEvent, parseScanRow, parseScanTime, positionLabel, toEndEvent } from "@/lib/scans";
+import { toRawScan } from "@/lib/sync/scans";
 
 describe("positionLabel", () => {
   it("treats sub-position 01 as the position itself", () => {
@@ -100,6 +101,37 @@ describe("parseScanRow", () => {
     });
     expect([s?.orderNo, s?.position, s?.subPosition, s?.piece]).toEqual([58556, 5, 2, 3]);
     expect(s?.stationKind).toBe("Assembly");
+  });
+
+  it("keeps the Event and Mark rows; an ordinary row has no event", () => {
+    expect(parseScanRow({ id: "row1", values })).not.toHaveProperty("event");
+    expect(parseScanRow({ id: "a", values: { ...values, event: "" } })).not.toHaveProperty("event");
+    expect(parseScanRow({ id: "b", values: { ...values, Event: "ShiftEnd" } })).toMatchObject({ direction: "Out", event: "ShiftEnd" });
+    expect(parseScanRow({ id: "c", values: { ...values, direction: "Mark", event: "shiftend" } })).toMatchObject({
+      direction: "Mark",
+      event: "ShiftEnd",
+    });
+    // An unknown event reads as Scan, as in the station app.
+    expect(parseScanRow({ id: "d", values: { ...values, event: "Teleport" } })).not.toHaveProperty("event");
+  });
+
+  it("names every event, and how it ends a pass", () => {
+    expect(["Scan", "Pause", "Resume", "Hold", "CheckedOut", "Undo", "ShiftEnd", "", null].map(parseScanEvent)).toEqual([
+      "Scan", "Pause", "Resume", "Hold", "CheckedOut", "Undo", "ShiftEnd", "Scan", "Scan",
+    ]);
+    expect([undefined, "Scan", "Hold", "CheckedOut", "ShiftEnd"].map((e) => toEndEvent(e as never))).toEqual([
+      null, null, "hold", "checked_out", "shift_end",
+    ]);
+  });
+
+  it("mirrors Event and Mark into raw.scans", () => {
+    expect(toRawScan({ id: "r", values })).toMatchObject({ direction: "Out", event: null });
+    expect(toRawScan({ id: "r", values: { ...values, Event: "ShiftEnd" } })).toMatchObject({ direction: "Out", event: "ShiftEnd" });
+    expect(toRawScan({ id: "r", values: { ...values, direction: "mark", event: "Hold" } })).toMatchObject({
+      direction: "Mark",
+      event: "Hold",
+    });
+    expect(toRawScan({ id: "r", values: { ...values, direction: "Sideways" } })?.direction).toBeNull();
   });
 
   it("rejects a row without direction, time or station", () => {

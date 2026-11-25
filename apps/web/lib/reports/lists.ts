@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 import type { Claims } from "@/lib/db";
-import { isoWeek, startOfWeek } from "@/lib/time";
+import { formatClock, isoWeek, startOfWeek } from "@/lib/time";
 import {
   clockSchema,
   daySchema,
@@ -32,10 +32,18 @@ import type {
   StaffingDay,
 } from "./types";
 
-const MISSING_REASON_LABELS: Record<MissingScanOut["missingReason"], string> = {
+const MISSING_REASON_LABELS: Record<NonNullable<MissingScanOut["missingReason"]>, string> = {
   stale: "Ingen ud-scanning i 36 timer",
   superseded: "Afløst af en senere ind-scanning",
 };
+
+/** Why a row is on the list, in Danish: the missing reason, or when the station stopped it. */
+export function missingScanOutReason(row: Pick<MissingScanOut, "kind" | "missingReason" | "endAt">): string {
+  if (row.kind === "auto_stopped") {
+    return row.endAt ? `Stoppet ved vagtskifte ${formatClock(Date.parse(row.endAt))}` : "Stoppet ved vagtskifte";
+  }
+  return row.missingReason ? (MISSING_REASON_LABELS[row.missingReason] ?? row.missingReason) : "";
+}
 
 export const missingScanOutsParams = z
   .object({ from: daySchema.optional(), to: daySchema.optional(), ...pageShape })
@@ -44,8 +52,12 @@ export const missingScanOutsParams = z
 type MissingRaw = Omit<MissingScanOut, "reasonLabel"> & { totalCount: number };
 
 /**
- * Passes that were scanned In and never Out, newest first. The period is on
- * the local day of the In scan; without it the whole history is listed.
+ * Passes that were scanned In and never Out, newest first: the missing
+ * scan-outs (kind missing, they count in no time), and the passes the station
+ * stopped at shift end (kind auto_stopped, with endAt: forgotten scan-outs
+ * that were caught; they count in times up to the stop). The period is on the
+ * local day of the In scan for a missing one, of the stop for an auto-stop;
+ * without it the whole history is listed.
  */
 export async function listMissingScanOuts(
   claims: Claims,
@@ -66,7 +78,7 @@ export async function listMissingScanOuts(
       (raw): MissingScanOut => {
         const { totalCount, ...row } = raw;
         void totalCount;
-        return { ...row, reasonLabel: MISSING_REASON_LABELS[row.missingReason] ?? row.missingReason };
+        return { ...row, reasonLabel: missingScanOutReason(row) };
       }
     )
   );

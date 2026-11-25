@@ -142,6 +142,7 @@ const stationColumns: ExportColumn<StationRow>[] = [
   col("Udnyttelse", "percent", (r) => r.utilisationPercent),
   col("Omarbejde", "int", (r) => r.reworkPasses),
   col("Mangler ud-scanning", "int", (r) => r.missingScanOutCount),
+  col("Auto-stop", "int", (r) => r.autoStoppedCount),
   col("Status", "text", (r) => r.statusLabel, 16),
 ];
 
@@ -408,6 +409,8 @@ export const REPORT_EXPORTS: Record<ReportQueryName, AnyExportDefinition> = {
       col("Stk.", "int", (r) => r.piece, 6),
       col("Station", "text", (r) => r.stationName, 18),
       col("Scannet ind", "datetime", (r) => r.startAt),
+      col("Auto-stop", "bool", (r) => r.kind === "auto_stopped"),
+      col("Stoppet", "datetime", (r) => r.endAt),
       col("Årsag", "text", (r) => r.reasonLabel, 30),
       col("Ordrestatus", "text", (r) => ORDER_STATE[r.orderStatus]),
     ],

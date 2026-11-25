@@ -201,7 +201,12 @@ async function StationDetail({
                 label="Udnyttelse"
                 value={station.utilisationPercent == null ? NO_DATA : `${station.utilisationPercent} %`}
                 hint={
-                  (station.missingScanOutCount ?? 0) > 0 ? `${station.missingScanOutCount} mangler ud-scanning` : undefined
+                  [
+                    (station.missingScanOutCount ?? 0) > 0 ? `${station.missingScanOutCount} mangler ud-scanning` : null,
+                    (station.autoStoppedCount ?? 0) > 0 ? `${station.autoStoppedCount} auto-stop ved vagtskifte` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || undefined
                 }
                 explain="Tid i arbejde i forhold til vagtens tid"
               />

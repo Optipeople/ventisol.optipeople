@@ -123,7 +123,14 @@ export function PassesTable({ intervals, elements }: { intervals: OrderInterval[
                 </DataTableCell>
                 <DataTableCell className="whitespace-nowrap tabular-nums">
                   {i.endAt ? (
-                    formatDayTime(i.endAt)
+                    <>
+                      {formatDayTime(i.endAt)}
+                      {i.endEvent === "shift_end" && (
+                        <span className={`ml-1 text-[12px] ${muted}`} title="Ikke scannet ud: stationen stoppede elementet ved vagtskifte">
+                          (vagtskifte)
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className={i.status === "missing_out" ? "text-[var(--ds-red-dark)]" : "text-[var(--ds-blue-primary)]"}>
                       {PASS_STATUS[i.status]}

@@ -166,6 +166,7 @@ export function deriveStationDay(
     elementsThrough: new Set(done.map((m) => m.row.barcode)).size,
     reworkPasses: done.filter((m) => m.row.isRework).length,
     missingScanOutCount: missing.length,
+    autoStoppedCount: done.filter((m) => m.row.endEvent === "shift_end").length,
     openCount: openNow.length,
     timePerPieceSeconds: median(durations),
     timePerPieceWorkingSeconds: median(workingDurations),

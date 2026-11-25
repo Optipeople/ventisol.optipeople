@@ -7,6 +7,8 @@
 //
 // The definitions behind every field are in docs/read-model.md.
 
+import type { EndEvent } from "@/lib/scans";
+
 /** ISO 8601 UTC instant, e.g. "2026-10-21T06:00:00.000Z". */
 export type Iso = string;
 /** Europe/Copenhagen calendar day, yyyy-MM-dd. */
@@ -320,6 +322,12 @@ export interface StationIntervalRow {
   localDay: LocalDay;
   inScanId: string | null;
   outScanId: string | null;
+  /**
+   * How the pass ended: the Event of its last row in snake case. shift_end:
+   * the station stopped it at shift end (auto-stop). Null for a scan-out, and
+   * while open or missing.
+   */
+  endEvent: EndEvent | null;
 }
 
 /** core.order_steps: always seven rows per order. */
@@ -372,6 +380,8 @@ export interface StationDayFactsRow {
   elementsThrough: number;
   reworkPasses: number;
   missingScanOutCount: number;
+  /** Finished passes that ended this day stopped by the station at shift end (end_event shift_end). */
+  autoStoppedCount: number;
   openCount: number;
   /** Median of the finished passes ("Tid pr. stk."). Null with none. */
   timePerPieceSeconds: number | null;

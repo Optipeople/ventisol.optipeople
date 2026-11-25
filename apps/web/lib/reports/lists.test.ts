@@ -4,11 +4,13 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, testClaims, type TestDb } from "@/lib/db/testing";
-import { PACKING, pass } from "@/lib/test-helpers";
+import { PACKING, pass, scan } from "@/lib/test-helpers";
 import {
   getBaselineSuggestion,
   getCapacityPlan,
   getStaffingAnalysis,
+  getStationDay,
+  getStationDetail,
   listIncompletePackedOrders,
   listMissingScanOuts,
 } from "./index";
@@ -31,6 +33,20 @@ const HALF_PACKED = {
     deliveryYear: 2026,
     expectedElements: [{ position: 1, quantity: 2, elementTypeId: TYPE_A }],
   },
+};
+
+/**
+ * 50010: scanned In on Station 10 on Friday 13 November at 13:20 and never
+ * Out; the station stopped it at the shift end, 14:00 (an Out with Event
+ * ShiftEnd). Back the next Monday at 07:00 for half an hour.
+ */
+const AUTO_STOPPED = {
+  scans: [
+    scan("In", local("2026-11-13", "13:20", CET), element(50010, 1)),
+    scan("Out", local("2026-11-13", "14:00", CET), { ...element(50010, 1), event: "ShiftEnd", durationSec: 2400 }),
+    ...pass(local("2026-11-16", "07:00", CET), local("2026-11-16", "07:30", CET), element(50010, 1)),
+  ],
+  info: null,
 };
 
 let db: TestDb;
@@ -69,6 +85,46 @@ describe("listMissingScanOuts", () => {
     expect((await listMissingScanOuts(viewer, OCTOBER)).rows).toEqual([]);
     // The open pass of 50006 on Station 20 is an hour old: open, not missing.
     expect((await listMissingScanOuts(viewer)).rows.map((r) => r.orderNo)).not.toContain(50006);
+  });
+});
+
+describe("listMissingScanOuts with auto-stops", () => {
+  beforeEach(async () => {
+    await db.reset();
+    await seedConfig(db);
+    await seedOctober(db, [...IN_PROGRESS_ORDERS, AUTO_STOPPED]);
+  });
+
+  it("lists a pass stopped at shift end as its own kind, with the stop", async () => {
+    const list = await listMissingScanOuts(viewer);
+    expect(list.total).toBe(2);
+    expect(list.rows.map((r) => [r.orderNo, r.kind])).toEqual([
+      [50010, "auto_stopped"],
+      [50008, "missing"],
+    ]);
+    expect(list.rows[0]).toMatchObject({
+      startAt: "2026-11-13T12:20:00.000Z",
+      endAt: "2026-11-13T13:00:00.000Z",
+      localDay: "2026-11-13",
+      missingReason: null,
+      reasonLabel: "Stoppet ved vagtskifte 14:00",
+    });
+    expect(list.rows[1]).toMatchObject({ kind: "missing", endAt: null, reasonLabel: "Ingen ud-scanning i 36 timer" });
+    expect((await listMissingScanOuts(viewer, { from: "2026-11-13", to: "2026-11-13" })).rows.map((r) => r.orderNo)).toEqual([
+      50010,
+    ]);
+  });
+
+  it("counts the auto-stop on its station day, and the pass in time", async () => {
+    const day = await getStationDay(viewer, { day: "2026-11-13" });
+    expect(day.rows.find((r) => r.stationNo === 1)).toMatchObject({ autoStoppedCount: 1, countThrough: 1, missingScanOutCount: 0 });
+    const detail = await getStationDetail(viewer, { stationNo: 1, day: "2026-11-13", clock: "wall" });
+    expect(detail.timeline.map((t) => [t.orderNo, t.autoStopped, t.endEvent, t.duration.seconds])).toEqual([
+      [50010, true, "shift_end", 2400],
+    ]);
+    // Monday's pass continues the visit: the same work going on, not rework.
+    const monday = await getStationDetail(viewer, { stationNo: 1, day: "2026-11-16", clock: "wall" });
+    expect(monday.timeline.find((t) => t.orderNo === 50010)).toMatchObject({ autoStopped: false, isRework: false, visit: 1 });
   });
 });
 

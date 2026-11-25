@@ -55,6 +55,8 @@ export interface TimelinePass {
   /** done, open (still in progress) or missing_out (never scanned Out). */
   status: TimelineInterval["status"];
   isRework: boolean;
+  /** The station stopped it at shift end: `end` is the shift end, not a scan-out. */
+  autoStopped: boolean;
   /** Copenhagen time, "21.10 kl. 07:00". */
   start: string;
   end: string | null;
@@ -160,6 +162,7 @@ export async function stationTimeline(ctx: ToolContext, input: StationTimelineIn
     elementType: t.elementTypeName ?? t.elementTypeId,
     status: t.status,
     isRework: t.isRework,
+    autoStopped: t.autoStopped,
     start: formatDayTime(t.startAt),
     end: t.endAt ? formatDayTime(t.endAt) : null,
     durationSeconds: t.duration.seconds == null ? null : Math.round(t.duration.seconds),
@@ -222,7 +225,7 @@ function timelineViews(t: StationTimeline): ToolView[] {
     ],
     rows: t.rows.slice(0, 12).map((r) => ({
       start: r.start,
-      end: r.end ?? STATUS_LABELS[r.status],
+      end: r.end ? (r.autoStopped ? `${r.end} (vagtskifte)` : r.end) : STATUS_LABELS[r.status],
       element: elementLabel(r),
       type: r.elementType ?? "",
       time: formatDuration(r.durationSeconds),

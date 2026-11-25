@@ -10,8 +10,8 @@
 //
 // docs/scan-rules-vectors.json runs against this in pairing.test.ts.
 
-import { dedupeScans, maxOpenAt, numberVisits, stationKey, type MaxOpen } from "@/lib/report";
-import { isPacking, type Scan } from "@/lib/scans";
+import { dedupeScans, LATE_OUT_MAX_MS, maxOpenAt, numberVisits, stationKey, type MaxOpen } from "@/lib/report";
+import { isPacking, toEndEvent, type EndEvent, type Scan } from "@/lib/scans";
 import { workingMsBetween } from "./calendar";
 import { DEFAULT_PARAMS, type IntervalStatus, type MissingReason, type StationKind, type WorkCalendar } from "./types";
 
@@ -38,6 +38,14 @@ export interface PairedInterval {
   visit: number | null;
   inScanId: string | null;
   outScanId: string | null;
+  /**
+   * The Event of the row that ended the pass (core.station_intervals.end_event):
+   * shift_end when the station stopped it at shift end. Null for an ordinary
+   * Out, and while open or missing.
+   */
+  endEvent: EndEvent | null;
+  /** Stopped by the station at shift end, not scanned out (endEvent shift_end). */
+  autoStopped: boolean;
 }
 
 export interface PairOptions {
@@ -88,8 +96,16 @@ function make(scan: Scan, start: number, end: number | null, extra: Partial<Pair
     visit: null,
     inScanId: null,
     outScanId: null,
+    endEvent: null,
+    autoStopped: false,
     ...extra,
   };
+}
+
+/** How an Out (or a Mark closing a pause) ends its pass. */
+function ending(row: Scan): Pick<PairedInterval, "endEvent" | "autoStopped"> {
+  const endEvent = toEndEvent(row.event);
+  return { endEvent, autoStopped: endEvent === "shift_end" };
 }
 
 /** Where an interval ends for counting: its Out, or now while it is open. */
@@ -132,6 +148,13 @@ function inProgress(fresh: Scan[], opts: PairOptions): Set<Scan> {
  *   In wins; the earlier becomes a missing scan-out (superseded).
  * - An Out with no open In: the start is put back from DurationSec
  *   (startEstimated). Without DurationSec it cannot be timed and is skipped.
+ * - A late Out (docs/plan-shift-end.md §4.6): an Out with no open In, at most
+ *   12 hours after a ShiftEnd Out of the same element at the same station
+ *   with no In between, ends that pass instead (the ShiftEnd is ignored).
+ *   Later than that it is skipped.
+ * - A Mark carries no time and never pairs. One right after a Pause Out of
+ *   the same element at the same station closes the pause: that pass ends
+ *   with the Mark's event (shift_end when the station stopped it).
  * - An In still open at the end: open (in progress) while it is at most
  *   staleOpenSeconds old, a missing scan-out (stale) after that. A station
  *   works on at most its "Max i gang" elements at once (`maxOpen`, 1 unless
@@ -140,7 +163,8 @@ function inProgress(fresh: Scan[], opts: PairOptions): Set<Scan> {
  *   older ones are missing scan-outs (superseded).
  *
  * Visits number the done and open intervals per element and station, oldest
- * first; a pass back after a short pause continues its visit (numberVisits).
+ * first; a pass back after a short pause continues its visit (numberVisits),
+ * and so does the next pass after one stopped at shift end.
  * Sorted by start.
  */
 export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] {
@@ -148,10 +172,17 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
   const staleMs = (opts.staleOpenSeconds ?? DEFAULT_PARAMS.staleOpenSeconds) * 1000;
   const sorted = dedupeScans(scans).sort(byTime);
   const open = new Map<string, Scan>();
+  // The pass each element and station last ended, until its next In: a late
+  // Out or a Mark may still change how it ends.
+  const closed = new Map<string, PairedInterval>();
   const result: PairedInterval[] = [];
 
   const missing = (scan: Scan, reason: MissingReason) =>
     result.push(make(scan, scan.time, null, { status: "missing_out", missingReason: reason, inScanId: scan.id }));
+  const done = (key: string, iv: PairedInterval) => {
+    result.push(iv);
+    closed.set(key, iv);
+  };
 
   for (const scan of sorted) {
     const key = pairKey(scan);
@@ -159,15 +190,36 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
       const earlier = open.get(key);
       if (earlier) missing(earlier, "superseded");
       open.set(key, scan);
+      closed.delete(key);
+      continue;
+    }
+    if (scan.direction === "Mark") {
+      const last = closed.get(key);
+      if (last?.endEvent === "pause") {
+        Object.assign(last, ending(scan));
+        closed.delete(key);
+      }
       continue;
     }
     const opening = open.get(key);
     if (opening) {
       open.delete(key);
-      result.push(make(opening, opening.time, scan.time, { inScanId: opening.id, outScanId: scan.id }));
-    } else if (scan.durationSec != null) {
-      result.push(
-        make(scan, scan.time - scan.durationSec * 1000, scan.time, { startEstimated: true, outScanId: scan.id })
+      done(key, make(opening, opening.time, scan.time, { inScanId: opening.id, outScanId: scan.id, ...ending(scan) }));
+      continue;
+    }
+    const stopped = closed.get(key);
+    if (stopped?.autoStopped && stopped.end != null && scan.time >= stopped.end) {
+      // A late Out after a ShiftEnd: within 12 hours it ends the pass, later it is skipped.
+      if (scan.time - stopped.end <= LATE_OUT_MAX_MS) {
+        Object.assign(stopped, { end: scan.time, outScanId: scan.id, ...ending(scan) });
+        closed.delete(key);
+      }
+      continue;
+    }
+    if (scan.durationSec != null) {
+      done(
+        key,
+        make(scan, scan.time - scan.durationSec * 1000, scan.time, { startEstimated: true, outScanId: scan.id, ...ending(scan) })
       );
     }
   }
@@ -189,7 +241,9 @@ export function pairHistory(scans: Scan[], opts: PairOptions): PairedInterval[] 
   numberVisits(
     result.filter((iv) => iv.status !== "missing_out"),
     (iv) => `${iv.stationNo}\u0000${iv.stationNo === 0 ? iv.station : ""}`,
-    calendar ? (from, to) => workingMsBetween(from, to, calendar) : undefined
+    calendar ? (from, to) => workingMsBetween(from, to, calendar) : undefined,
+    // The same work going on after the station stopped it at shift end: not rework.
+    (prev) => prev.autoStopped
   );
   return result;
 }

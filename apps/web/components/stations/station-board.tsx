@@ -81,10 +81,19 @@ function Tile({ row, href }: { row: StationRow; href: string }) {
       {/* One line, never wrapping: every tile has the same rows at the same height. */}
       <div className="flex items-center justify-between gap-2 whitespace-nowrap">
         <StationStatusTag status={row.status} />
-        {(row.missingScanOutCount ?? 0) > 0 && (
+        {(row.missingScanOutCount ?? 0) > 0 ? (
           <span className="truncate text-[12px] font-bold leading-[16px] text-[var(--ds-orange-text)]">
             {row.missingScanOutCount} mangler ud-scanning
           </span>
+        ) : (
+          (row.autoStoppedCount ?? 0) > 0 && (
+            <span
+              className="truncate text-[12px] leading-[16px] text-[var(--ds-grey-medium-05)]"
+              title="Elementer stationen stoppede ved vagtskifte, fordi de ikke blev scannet ud"
+            >
+              {row.autoStoppedCount} auto-stop
+            </span>
+          )
         )}
       </div>
     </Link>
