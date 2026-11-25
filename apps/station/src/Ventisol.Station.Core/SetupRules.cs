@@ -63,7 +63,9 @@ public static class SetupRules
 
     // The Arbejdsformer the drop-down offers. Pakning comes with the packing checklist; until then a
     // station that has it (a newer app's file) keeps it and shows it, but it can't be picked.
-    public static IReadOnlyList<StationWorkMode> OfferedWorkModes { get; } = [StationWorkMode.Enkel, StationWorkMode.Session];
+    // Session is offered once its workflow is built (plan-scan-commands.md step 5); until then it would
+    // be a choice that does nothing. A station already saved as Session still shows it.
+    public static IReadOnlyList<StationWorkMode> OfferedWorkModes { get; } = [StationWorkMode.Enkel];
 
     public static string WorkModeLabel(StationWorkMode mode) => mode switch
     {

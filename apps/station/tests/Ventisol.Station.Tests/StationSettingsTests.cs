@@ -276,7 +276,7 @@ public class StationSettingsTests
     [Fact]
     public void The_drop_down_offers_enkel_and_session_with_their_labels()
     {
-        Assert.Equal([StationWorkMode.Enkel, StationWorkMode.Session], SetupRules.OfferedWorkModes);
+        Assert.Equal([StationWorkMode.Enkel], SetupRules.OfferedWorkModes);
         Assert.Equal("Enkel (scan ind / scan ud)", SetupRules.WorkModeLabel(StationWorkMode.Enkel));
         Assert.Equal("Session (Start / Pause / Hold)", SetupRules.WorkModeLabel(StationWorkMode.Session));
         Assert.Equal("Pakning (tjekliste og paller)", SetupRules.WorkModeLabel(StationWorkMode.Pakning));
