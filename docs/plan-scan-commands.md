@@ -1,11 +1,14 @@
 # Plan: command cards Start, Pause and Hold (Arbejdsform "Session")
 
 Feature #1 from Ventisol's feedback of 2026-11-25. A plan to build from; nothing here is built yet.
-Features #2 (packing checklist, `Pakning`, [`plan-packing-checklist.md`](plan-packing-checklist.md))
-and #3 (pallet labels, `Palle`, `VS-PRINT`, `VS-PL-<10 digits>`, [`plan-pallet-labels.md`](plan-pallet-labels.md))
-are planned by others on top of the barcode classification (§3), the Arbejdsform setting (§4) and
-the `Event` column with `Direction = Mark` (§6) defined here. Steps 2 to 4 of §10 must land before
-either of them.
+Features #2 (packing checklist and pallet building at packing, Arbejdsform `Pakning`,
+[`plan-packing-checklist.md`](plan-packing-checklist.md)) and #3 (pallet data, ids `VS-PL-<10 digits>`,
+printing and the portal's pallet views, [`plan-pallet-labels.md`](plan-pallet-labels.md)) are planned
+on top of the barcode classification (§3), the Arbejdsform setting (§4) and the `Event` column with
+`Direction = Mark` (§6) defined here. Steps 2 to 4 of §10 must land before either of them.
+
+What happens to an element still running at a station's shift end is planned in
+[`plan-shift-end.md`](plan-shift-end.md), for every Arbejdsform. It writes the `Event` value `ShiftEnd`.
 
 Read with: [`opticloud-scans.md`](opticloud-scans.md) (table, Writing, Rules, Orders on machines),
 [`read-model.md`](read-model.md) (pairing, split time), [`../apps/station/README.md`](../apps/station/README.md).
@@ -69,7 +72,8 @@ long before the first element is picked up, and the scans are seconds apart anyw
 
 **Decision:** HOLD means "stop all, the session ends". It does not mean "unfinished". Why: Ventisol
 uses Hold both for "done with all" and for "something odd happened", so the scans cannot tell the
-two apart. Reason cards are an open question (§9).
+two apart. **Decision (Ventisol, 2026-11-25):** Hold needs no reason for now. `VS-HOLD-<WORD>` stays
+reserved for reason cards later (§3.1) and reads as Unknown until then.
 
 ### 2.5 Session station: shortcuts and mistakes
 
@@ -95,14 +99,13 @@ mistaken for each other, and a retail code (digits) is never a command.
 | `VS-START` | Command `Start` | #1 | Session: start a session, or go on after a pause |
 | `VS-PAUSE` | Command `Pause` | #1 | Session: stop every clock at the station, keep the elements |
 | `VS-HOLD` | Command `Hold` | #1 | Session: stop every element, end the session |
-| `VS-UNDO` | Command `Undo` | #2 and #3 | Pakning: cancel the next scanned check-out. Palle: take the window added last off the open pallet |
-| `VS-PRINT` | Command `Print` | #3 | Palle: print the open pallet and close it |
-| `VS-REPRINT` | Command `Reprint` | #3 | Palle: print the last pallet printed at the station again |
-| `VS-CLEAR` | Command `Clear` | #3 | Palle: scanned twice within 10 s, empty the open pallet |
-| `VS-PL-<10 digits>` | Pallet | #3 | a pallet label. Format owned by #3: `yyMMdd` + PC digit + 3-digit counter. Any other `VS-PL-…` is Unknown (`Ukendt pallelabel`) |
-| `VS-CLOSE` | proposed | #2 | close an order as sent short (#2 §9); Unknown until defined |
-| `VS-SHIPPED` | proposed | #3 | mark a pallet shipped at loading (#3 §10); Unknown until defined |
-| `VS-HOLD-<WORD>` | reserved | future | a Hold with a reason, if Ventisol wants reasons (§9); Unknown until then |
+| `VS-UNDO` | Command `Undo` | #2 | Pakning: take the piece added last off the open pallet and un-check it |
+| `VS-PRINT` | Command `Print` | #2 (floor), #3 (printing) | Pakning: print the open pallet and close it |
+| `VS-REPRINT` | Command `Reprint` | #2, #3 | Pakning: print the last pallet printed at the station again |
+| `VS-CLEAR` | Command `Clear` | #2 | Pakning: scanned twice within 10 s, empty the open pallet |
+| `VS-PL-<10 digits>` | Pallet | #3 (format), #2 (scan) | a pallet label; at Pakning it reopens that pallet. Format: `yyMMdd` + PC digit + 3-digit counter. Any other `VS-PL-…` is Unknown (`Ukendt pallelabel`) |
+| `VS-SHIPPED` | proposed | #3 | mark a pallet shipped at loading (#3, open questions); Unknown until defined |
+| `VS-HOLD-<WORD>` | reserved | future | a Hold with a reason. Decided: no reasons for now (§2.4); Unknown until then |
 | any other `VS-<WORD>` | Unknown | | refused, `Ukendt kort` |
 
 Rules for new words (features #2, #3 and later): one word of `A` to `Z`, at most 12 letters, or
@@ -111,7 +114,7 @@ English; the Danish is on the printed card and the screen.
 
 **Decision:** a known command at a station whose Arbejdsform does not use it is refused, nothing is
 stored, with one shared message: `Kortet bruges ikke her` / `Station 30 kører Session` (the station's
-name and Arbejdsform). The same goes for a pallet label at a station that is not `Pakning` or `Palle`.
+name and Arbejdsform). The same goes for a pallet label at a station that is not `Pakning`.
 Why: one rule the operator learns once, and each mode needs no texts for the other modes' cards.
 Which words each mode uses:
 
@@ -119,8 +122,10 @@ Which words each mode uses:
 |---|---|
 | `Enkel` | no command, no pallet label |
 | `Session` | `VS-START`, `VS-PAUSE`, `VS-HOLD` |
-| `Pakning` | `VS-UNDO`, pallet labels (#2 §8, once #3 exists) |
-| `Palle` | `VS-UNDO`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR`, pallet labels |
+| `Pakning` | `VS-UNDO`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR`, pallet labels (#2 §2) |
+
+Pallets are built at the packing station (Ventisol, 2026-11-25), so there is no separate pallet mode
+and no extra scanner.
 
 **Decision:** no separate Resume, Done or Cancel card. Why: three cards are easier to keep at a
 table than six, and each is a clear state: START = clocks run, PAUSE = clocks stop, HOLD = all done.
@@ -166,15 +171,14 @@ unchanged.
 Per station in Opsætning, next to "Max i gang": **Arbejdsform**, a drop-down.
 
 ```csharp
-public enum StationWorkMode { Enkel, Session, Pakning, Palle }
+public enum StationWorkMode { Enkel, Session, Pakning }
 ```
 
 | Value | Shown as | Behaviour |
 |---|---|---|
 | `Enkel` | `Enkel (scan ind / scan ud)` | today's toggle; the default; every station after the update |
 | `Session` | `Session (Start / Pause / Hold)` | this plan |
-| `Pakning` | `Pakning (tjekliste)` | feature #2; not offered until built; #2 adds it to the drop-down in its own setup step |
-| `Palle` | `Palle (pallelabels)` | feature #3; not offered until built; #3 adds it to the drop-down in its own setup step |
+| `Pakning` | `Pakning (tjekliste og paller)` | feature #2; not offered until built; #2 adds it to the drop-down in its own setup step |
 
 - Stored in `settings.json` per station as `"workMode": "Session"`, as text. A file without it is
   `Enkel`. A value this version does not know (a newer app wrote it) reads as `Enkel` and the PC logs
@@ -240,15 +244,14 @@ and a restart brings the station back as Idle. That loses nothing (no time runs)
 | Element at Idle | starts the session and the element | a forgotten START must not lose a scan |
 | Same card read twice within 2 s | ignored (`RepeatScans`) | the cradle reads twice; harmless anyway |
 | Element beyond "Max i gang" | refused, `Maks 4 i gang – scan en ud eller Hold` | as today |
-| Forgotten PAUSE over night | no time counted (the elements are out); START next morning resumes | paused time is never work |
-| Paused over a weekend (more than 36 h) | the paused set is forgotten; START says `Intet på pause – scan elementerne` | the read window is 36 h (§9 asks if that is fine) |
-| Forgotten HOLD over night (running) | counts as today: wall clock runs, the portal's working-time column leaves the night out, the row turns amber after "Marker efter" | same as a forgotten element today; auto-pause is an open question |
+| Shift end while Running (a forgotten HOLD) | as [`plan-shift-end.md`](plan-shift-end.md): the elements keep running while there is activity; with none within the grace period each gets an Out back-dated to the shift end, `Event = ShiftEnd`; the station is Idle | the same rule for every Arbejdsform |
+| Shift end while Paused (a forgotten PAUSE) | the paused set is ended the same way at the shift end ([`plan-shift-end.md`](plan-shift-end.md)); START next morning starts a new session, `Klar – scan elementer` | paused time is never work, and no pause outlives the shift |
 | Restart while Running or Paused | rebuilt from journal and OptiCloud (§7.5) | the rows hold it |
 | Network down | outbox, as today | unchanged |
 | OptiPeople stops the element's order | that element ends (Out), the others go on | as today |
 | Mode changed while Paused | warned, ended with `Mark` / `Hold` on Gem | no orphan pauses |
 | Command card at an Enkel station | refused, `Kortet bruges ikke her` | Enkel stations keep exactly today's data |
-| `VS-UNDO`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR` or a pallet label at a Session station | refused, `Kortet bruges ikke her` | belongs to #2 and #3 (§3.1) |
+| `VS-UNDO`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR` or a pallet label at a Session station | refused, `Kortet bruges ikke her` | belongs to Pakning (#2, §3.1) |
 | Viewer on an older version | sees paused elements as not on the station; times right | old readers only pair In and Out |
 | Clock change (summer time) | nothing | every time is UTC |
 
@@ -265,7 +268,7 @@ One new column in `VentisolScans`, added on connect like any missing column (`Sc
 This plan owns the values. Every feature that writes a value adds it here:
 
 ```csharp
-public enum ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo }
+public enum ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo, ShiftEnd }
 ```
 
 | Value | Written by | Meaning |
@@ -276,6 +279,7 @@ public enum ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo }
 | `Hold` | #1 | an Out by HOLD, or a `Mark` ending a paused element |
 | `CheckedOut` | #2 | a check-out at a Pakning station |
 | `Undo` | #2 | cancels the latest `CheckedOut` of the same barcode at the same station |
+| `ShiftEnd` | [`plan-shift-end.md`](plan-shift-end.md) | an Out back-dated to the station's shift end, `Direction = Out` |
 
 And one new value of `Direction`: `Mark`, a row that carries no time and never pairs.
 
@@ -288,7 +292,9 @@ And one new value of `Direction`: `Mark`, a row that carries no time and never p
 | `Out` | `Hold` | HOLD, per element in progress | yes |
 | `Mark` | `Hold` | HOLD (or a stop, or a mode change) of an element already on pause | no: closes the pause, no time |
 | `Out` | `CheckedOut` | #2: a check-out at a Pakning station, `DurationSec` 0 or since its open In there | yes |
-| `Mark` | `Undo` | #2: `VS-UNDO` then a scan of a checked piece at a Pakning station | no: cancels that check-out, no time |
+| `Mark` | `Undo` | #2: `VS-UNDO` at a Pakning station, for the piece added last to the open pallet | no: cancels that check-out, no time |
+| `Out` | `ShiftEnd` | [`plan-shift-end.md`](plan-shift-end.md): an element still running at shift end with no activity within the grace period; stamped at the shift end | yes |
+| `Mark` | `ShiftEnd` | [`plan-shift-end.md`](plan-shift-end.md): an element on pause at shift end with no activity within the grace period; closes the pause | no: closes the pause, no time |
 
 - Every row still carries the element's barcode, order, position and station. No row is written for
   START with no elements, or for PAUSE or HOLD with nothing in progress.
@@ -316,8 +322,8 @@ And one new value of `Direction`: `Mark`, a row that carries no time and never p
 - **Rollback of the station app** (`StartupGuard`): an outbox file with `"direction": "Mark"` cannot be
   read by the old version and goes to `outbox\failed`; the next new version moves it back. A
   Pause-Out sent by the old version loses its `Event`. Both are rare and lose no time.
-- **Feature #3** writes no rows to `VentisolScans`: pallets have their own table,
-  `VentisolPalletEvents` (#3 §5). A later row that is not an element would use `Barcode` = the `VS-`
+- **Pallet events** are not rows in `VentisolScans`: pallets have their own table,
+  `VentisolPalletEvents` (#3 §4). A later row that is not an element would use `Barcode` = the `VS-`
   payload and `Direction` = `Mark`. Old apps then skip it (`Barcode.TryParse` fails on letters), and
   the portal stores it without placing it.
 
@@ -338,8 +344,8 @@ All in `apps/station/src`. Core first, UI on top.
   `StationSetup` too, and `Config` passes it on.
 - `FileStation` gains `string? WorkMode`; `Deserialize` parses it with a fallback to `Enkel`;
   `Serialize` writes the name. Version stays 1 (an added field with a default).
-- `Normalize`: `Pakning` and `Palle` stay as they are (a newer app's file must round-trip); only an
-  unknown text falls back.
+- `Normalize`: `Pakning` stays as it is (a newer app's file must round-trip); only an unknown text
+  falls back.
 - `SetupRules.Hints(StationSettings)`: the `Session med Maks 1` hint. `SetupRules.ModeChanges(old,
   new, pausedPerStation)`: the warnings of §4. Neither stops a save.
 
@@ -356,16 +362,17 @@ All in `apps/station/src`. Core first, UI on top.
   `Held`, `NoChange`, `Rejected` (with a reason code the view model turns into Danish).
 - `IStationWorkflow { StationOutcome Handle(ScanCode code, DateTimeOffset now); }` with
   `EnkelWorkflow` (today's `Scan`, commands refused) and `SessionWorkflow` (§5).
-  `StationWorkflow.For(StationState)` picks by `WorkMode`. Features #2 and #3 route `Pakning` and
-  `Palle` to their own engines (`PackingStation`, `PalletStation`) in `MainViewModel.Scan`; those
-  refuse the words they do not use with the shared message of §3.1. Why an interface: four modes in
-  one switch would grow into one long method.
+  `StationWorkflow.For(StationState)` picks by `WorkMode`. Feature #2 routes `Pakning` to its own
+  engine (`PackingStation`, which also holds the open pallet) in `MainViewModel.Scan`; it refuses the
+  words it does not use with the shared message of §3.1. Why an interface: three modes in one switch
+  would grow into one long method.
 - `Restore(active, paused, pausedSince)`: as today, plus the paused set.
 
 ### 7.4 `Cloud/ScanEvent.cs`, `Cloud/ScanJson.cs`, `Cloud/ScanTable.cs`
 
-- `ScanDirection` gains `Mark`. New `ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo }`
-  (§6.1; #2 adds the last two with its own step). `ScanEvent` gains `Event` (last, default `Scan`).
+- `ScanDirection` gains `Mark`. New `ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo,
+  ShiftEnd }` (§6.1; #2 adds `CheckedOut` and `Undo` with its own step, `plan-shift-end.md` adds
+  `ShiftEnd`). `ScanEvent` gains `Event` (last, default `Scan`).
 - `Columns` gains `new("Event", "Hændelse", ColumnType.String)`; the table gets it on connect.
 - `From(ScanResult)` maps `ScanKind.Mark` to a `Mark` row and copies `Event`. `ToValues` leaves out
   `Event` when it is `Scan`. `TryFromValues` reads it, case-insensitive; an unknown text reads as
@@ -398,8 +405,8 @@ All in `apps/station/src`. Core first, UI on top.
   "Marker efter" amber goes by active time.
 - `MainWindow.xaml` tile template: the grey `PAUSE` band, the ready text, and a small `Session` label in
   the tile header so a Session station is told from an Enkel one.
-- `SetupView`: the Arbejdsform drop-down per station row (only `Enkel` and `Session` offered; #2 and
-  #3 each add their value in their own setup step), the hint and the warning of §4.
+- `SetupView`: the Arbejdsform drop-down per station row (only `Enkel` and `Session` offered; #2 adds
+  `Pakning` in its own setup step), the hint and the warning of §4.
 - `DemoScanner`: with a station's number, `Alt` + number cycles START, PAUSE, HOLD at that station.
 - Viewer mode: state comes from `ScanReplay` (in progress and paused, from the rows), whatever the
   viewer's own Arbejdsform. A viewer never sees Running with 0 elements (not stored).
@@ -420,7 +427,8 @@ All in `apps/station/src`. Core first, UI on top.
 
 - Migration: `raw.scans` gains `event text`; the direction check becomes `in ('In', 'Out', 'Mark')`.
 - `lib/sync/scans.ts` `toRawScan`: keep `Mark`, copy `Event` (empty means `Scan`).
-- `lib/scans.ts`: `Scan` gains `event: "Scan" | "Pause" | "Resume" | "Hold" | "CheckedOut" | "Undo"`;
+- `lib/scans.ts`: `Scan` gains `event: "Scan" | "Pause" | "Resume" | "Hold" | "CheckedOut" | "Undo" |
+  "ShiftEnd"`;
   `Direction` gains `"Mark"`. #2 builds its pairing of `CheckedOut` and `Undo` on this.
   `parseScanRow` keeps `Mark` rows. `lib/report.ts` (the old pairing) ignores `Mark`.
 
@@ -441,7 +449,8 @@ All in `apps/station/src`. Core first, UI on top.
 - **Active time**: every time that sums passes (touch time, split time, wall-clock pass time) already
   leaves the pause out, because the element was Out. Nothing to change.
 - **Split time**: a paused element has no open pass, so it takes no share while paused. Unchanged.
-- **Hold**: just the end of a pass (`end_event = 'hold'`). No own figure until reasons exist (§9).
+- **Hold**: just the end of a pass (`end_event = 'hold'`). No own figure: Hold has no reasons for now
+  (§2.4).
 - **Pieces by visit** (its own step, §10 step 11): `count_through` counts visits that ended that day
   (a visit ends with its last pass), and time per piece (median and mean) is the sum of a visit's split
   time. **Decision:** count by visit for every pass, also today's heuristic pauses (60 minutes). Why:
@@ -467,22 +476,25 @@ All in `apps/station/src`. Core first, UI on top.
   its colour (green, amber, red), the Code 128 barcode and the payload under it. **Decision:** print
   from the portal, with a small Code 128 encoder of our own (`lib/barcode/code128.ts`, tested against
   known patterns). Why: an office browser prints anywhere, the station PC may have no printer, no
-  dependency, and features #2 and #3 add their cards to the same page.
+  dependency, and feature #2 adds the packing cards (`VS-UNDO`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR`)
+  to the same page.
 
 ## 9. Open questions
 
+Decided with Ventisol on 2026-11-25:
+
+- Hold needs no reason for now. `VS-HOLD-<WORD>` stays reserved and reads as Unknown (§2.4, §3.1).
+- Which stations run Session is a setting, so it does not change what we build. It is decided on the
+  rollout day (§10 step 14).
+- A session still running or paused at the station's shift end is handled by
+  [`plan-shift-end.md`](plan-shift-end.md) (§5.3). So no auto-pause setting, and no pause is left
+  open over a night or a weekend.
+
 For Ventisol:
 
-1. HOLD is both "done with all" and "something went wrong". Do you need to tell them apart in the
-   reports? If yes: reason cards (`VS-HOLD-GLAS`, `VS-HOLD-MANGLER` ...), reserved in §3.
-2. Which stations work in Session? Glazing (Station 30)? The assembly tables?
-3. At the end of a shift, should a running session pause by itself (an "Auto-pause kl." setting), or is
-   the amber mark enough?
-4. A pause over a weekend (more than 36 hours) is forgotten and the elements must be scanned again.
-   Acceptable, or do you pause over weekends?
-5. An element scanned during a pause is refused. Would you rather it resumed the session?
-6. Should the break time per station show in the reports (pause minutes per day)?
-7. Cards: one set per station, laminated, A6? Fixed to the table?
+1. An element scanned during a pause is refused. Would you rather it resumed the session?
+2. Should the break time per station show in the reports (pause minutes per day)?
+3. Cards: one set per station, laminated, A6? Fixed to the table?
 
 For the OptiCloud backend owner:
 
@@ -504,13 +516,13 @@ portal. The station app may ship before the portal (§6.2).
    1 ms resume order). Both test suites skip tagged cases until their step lifts it.
 2. **Barcode classification.** `ScanCodes.Classify` and the records in `Barcode.cs`. Tests: every
    payload in §3.1, `VS+START`, lower case, spaces, `VS-PL-2611251007` and `vs+pl+2611251007` as
-   PalletCode, `VS-PL-0042` as Unknown, `VS-CLOSE`, `VS-SHIPPED` and `VS-HOLD-GLAS` as Unknown, digits
+   PalletCode, `VS-PL-0042` as Unknown, `VS-XYZ`, `VS-SHIPPED` and `VS-HOLD-GLAS` as Unknown, digits
    unchanged (all existing `Barcode` tests pass as they are).
 3. **Arbejdsform setting.** Enum, `StationConfig`, `StationSetup`, JSON with fallback, `SetupRules`
    hint and warning. Opsætning drop-down. Tests: old file reads `Enkel`, unknown text reads `Enkel`,
    `Pakning` round-trips, hint and warning texts.
 4. **Rows.** `ScanEvent.Event` (with `Scan`, `Pause`, `Resume`, `Hold`; #2 step 1 adds
-   `CheckedOut` and `Undo`), `ScanDirection.Mark`, the `Event` column, `ToValues`,
+   `CheckedOut` and `Undo`, `plan-shift-end.md` adds `ShiftEnd`), `ScanDirection.Mark`, the `Event` column, `ToValues`,
    `TryFromValues`, `ScanJson`. Tests: Enkel rows identical to today's, round trips, old row reads
    `Scan`, unknown event reads `Scan`, `Mark` row round trip, the column is created on connect against
    `FakeOptiCloud`.
@@ -539,6 +551,7 @@ portal. The station app may ship before the portal (§6.2).
     paused element.
 14. **Docs and rollout.** `apps/station/README.md` (Arbejdsform, cards), `read-model.md` (§8),
     `opticloud-scans.md` final. Release, then set one station to Session with Ventisol and watch a day.
+    Which stations get Session (and cards) is decided with Ventisol on the day; it is only a setting.
 
 ## 11. Test plan
 

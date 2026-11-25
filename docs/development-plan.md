@@ -25,6 +25,7 @@ Updated 2026-11-25.
 | 13 | Command cards Start, Pause, Hold | Station app + portal, [`plan-scan-commands.md`](plan-scan-commands.md) | Planned (2026-11-25) |
 | 14 | Packing checklist | Station app + portal, [`plan-packing-checklist.md`](plan-packing-checklist.md) | Planned (2026-11-25) |
 | 15 | Pallet labels | Station app + portal, [`plan-pallet-labels.md`](plan-pallet-labels.md) | Planned (2026-11-25) |
+| 16 | Stop at shift end | Station app + portal, [`plan-shift-end.md`](plan-shift-end.md) | Planned (2026-11-25) |
 
 ### 1. Station app (native Windows)
 
@@ -96,35 +97,43 @@ See "Advice: CI/CD and auto-update" below.
 
 Short technical descriptions in OptiCore, written as we build.
 
-### 13 to 15. Feedback from the floor, 2026-11-25
+### 13 to 16. Feedback from the floor, 2026-11-25
 
-Three features from a visit at Ventisol. Each has a plan of its own, ready to build. Nothing is built yet.
+Four features from a visit at Ventisol. Each has a plan of its own, ready to build. Nothing is built yet.
 
 | # | Feature | What Ventisol asked for | Plan |
 |---|---|---|---|
 | 13 | Command cards | Scan **Start**, **Pause** and **Hold** cards, so breaks and broken glass don't count as work, and so an operator can scan Start, then every window he works on, then Hold | [`plan-scan-commands.md`](plan-scan-commands.md) |
-| 14 | Packing checklist | Scan an order at packing and see every piece in it. Each piece scanned lights up and is checked out of production. The order's time ends at the last one | [`plan-packing-checklist.md`](plan-packing-checklist.md) |
-| 15 | Pallet labels | Scan the windows on a pallet, then a **Print** card. A sheet prints with a pallet id and every window on it, so you can tell which part of an order is on which pallet | [`plan-pallet-labels.md`](plan-pallet-labels.md) |
+| 14 | Packing checklist | Scan an order at packing and see every piece in it. Each piece scanned lights up and is checked out of production. The order's time ends at the last one | [`plan-packing-checklist.md`](plan-packing-checklist.md) (owns the whole floor flow at packing, pallets included) |
+| 15 | Pallet labels | Pallets are built at packing. Each piece checked out also goes on the open pallet; a **Print** card prints a sheet with a pallet id and every window on it, so you can tell which part of an order is on which pallet | [`plan-pallet-labels.md`](plan-pallet-labels.md) (pallet data, ids, printing, portal views) |
+| 16 | Stop at shift end | An operator forgot to scan out and the order ran into the next day. An element still running at shift end keeps running if there is activity; if nothing happens, its stop time is set to the shift end. Every station, every Arbejdsform | [`plan-shift-end.md`](plan-shift-end.md) |
 
 **Shared ground, owned by #13:**
 
 - **Command barcodes** are Code 128 with letters, `VS-<WORD>`. Element labels are digits only, so they can't be mistaken for each other. One classifier, `ScanCodes.Classify`, sorts every scan into element, command, pallet or unknown. The command words and their owners are listed in `plan-scan-commands.md` §3.
-- **Arbejdsform**, a setting per station: `Enkel` (today: scan in, scan out), `Session` (#13), `Pakning` (#14), `Palle` (#15). A station that keeps `Enkel` works exactly as today.
+- **Arbejdsform**, a setting per station: `Enkel` (today: scan in, scan out), `Session` (#13), `Pakning` (#14, with #15's pallets). A station that keeps `Enkel` works exactly as today.
 - **Rows** stay in `VentisolScans`, with one new column, `Event`, and one new `Direction`, `Mark`, for a row that carries no time. Old rows and old app versions keep working. Pallets get a table of their own, `VentisolPalletEvents` (#15).
 
 **Build order:**
 
-1. #13 steps 2 to 4: barcode classification, the Arbejdsform setting, the `Event` column. The other two build on these.
-2. Then #13 (Session), #14 and #15 can be built side by side. They touch the same view model (`MainViewModel.Scan` routes by Arbejdsform), so not by three sessions at once.
-3. #14's pallet scan at packing (its §8) comes after #15.
-4. #15 needs a printer and probably an 8th scanner on site. Order them early.
+1. #13 steps 2 to 4: barcode classification, the Arbejdsform setting, the `Event` column. The others build on these.
+2. #16 (stop at shift end) right after: it fixes a problem Ventisol has today, on today's simple stations.
+3. Then #13 (Session) and #14/#15 (packing with pallets). They touch the same view model (`MainViewModel.Scan` routes by Arbejdsform), so not by several sessions at once.
+4. #15 needs a printer on site. Choose and order it early.
 
-**To settle with Ventisol before building** (each plan has its full list):
+**Answered by Morten, 2026-11-25:**
 
-- Which stations use `Session`, and does Hold need reasons (glass broken, part missing) or is one Hold card enough?
-- Should a session pause by itself at the end of a shift?
-- Packing: does the first scan of an order also check that window out? Can an order leave short, and who closes it?
-- Pallets: where are they built, and is an 8th scanner there all right? Which printer: an A4 sheet in a sleeve, or a label printer? Does our sheet replace the 3E pallet label?
+- Which stations use `Session` is a setting, not a build question. Decide on the day which stations get cards.
+- Hold needs no reason for now (`VS-HOLD-<WORD>` stays reserved).
+- At shift end a running element stops: see #16.
+- An order can't leave short. The operator can leave a half-done checklist; the order stays open until every piece is checked out.
+- Pallets are built at the packing station. No 8th scanner.
+
+**Still open with Ventisol** (each plan has its full list):
+
+- Which printer. The sheet waits on it (A4 from Windows first, a label printer later).
+- Does our pallet sheet replace the pallet label 3E prints? Probably yes.
+- Packing: does the first scan of an order also check that window out?
 
 **To ask the OptiCloud backend owner:** adding a column and a `Direction` value to a large `VentisolScans`; whether `GetRowsPaged` can filter on `OrderNo` (packing needs an order's whole history); whether a second table for pallets is fine; whether a machine stop with a reason can be registered for Pause and Hold.
 

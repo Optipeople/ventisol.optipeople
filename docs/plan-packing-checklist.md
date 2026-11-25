@@ -1,13 +1,20 @@
-# Plan: the packing checklist (Pakning)
+# Plan: packing checklist and pallets (Pakning)
 
-Feature #2 from Ventisol's feedback of 2026-11-25. A plan to build from, no code yet. It sits beside
-`plan-scan-commands.md` (feature #1: command barcodes and the "Arbejdsform" setting) and
-`plan-pallet-labels.md` (feature #3: pallets). This doc owns the behaviour of Arbejdsform `Pakning`.
+Feature #2 from Ventisol's feedback of 2026-11-25, with the answers from Morten's visit the same day.
+A plan to build from, no code yet. It sits beside `plan-scan-commands.md` (feature #1: command
+barcodes and the "Arbejdsform" setting) and `plan-pallet-labels.md` (feature #3: pallet data, pallet
+ids, printing and the portal's pallet views). This doc owns the whole floor flow at the packing
+station, Arbejdsform `Pakning`: the checklist, building pallets, and the meaning of `VS-UNDO`,
+`VS-PRINT`, `VS-REPRINT`, `VS-CLEAR` and a scanned pallet label there.
 
 Feature #1 steps 2 to 4 must land first: the barcode classification (`ScanCodes.Classify`), the
 Arbejdsform setting (`StationWorkMode`) and the rows (the `Event` column, `ScanEventKind`,
 `Direction = Mark`). Feature #1 owns those; this doc only adds the `Event` values `CheckedOut` and
-`Undo` and the command `VS-UNDO`'s meaning at Pakning.
+`Undo`. The pallet part (§2.3 on) uses #3's pallet ids, `VentisolPalletEvents`, `PalletBook` and
+printer (#3 §8).
+
+An element still in progress at the packing station's shift end follows `plan-shift-end.md`, as at
+every station. A check-out is a moment, not a span, so it is rarely affected.
 
 Written 2026-11-25.
 
@@ -18,10 +25,22 @@ Written 2026-11-25.
 > is "checked out" of production. A final checklist: "Yes, we have this window on this pallet now, it's
 > ready for transport, so it's out of production and the final time ends here."
 
+And for pallets (feature #3): put the windows on a pallet, scan every window, scan a "print" barcode,
+and get a paper with each window's barcode and a pallet id with its own barcode.
+
+Answered at the visit (2026-11-25):
+
+- **Pallets are built at the packing station.** No separate pallet place, no extra scanner, no pallet
+  mode. One scan at packing both checks the piece out and puts it on the open pallet.
+- **An order can't leave short.** The operator may leave a half-done checklist, but the order stays
+  open until every piece is checked out. There is no command to close an order short.
+- Pallets may hold several orders.
+
 What that means for us:
 
 - One scan per piece at packing, not an In and an Out.
-- The station shows the whole order, not just the piece scanned, so the operator sees what is missing.
+- The station shows the whole order, not just the piece scanned, so the operator sees what is missing,
+  and it shows the open pallet, so he sees what is on it.
 - The last check-out of an order is the end of its lead time. Today the docs say no order can be called
   packed from the scans alone (`opticloud-scans.md`, Rules, last line). The checklist is the signal that
   was missing.
@@ -29,59 +48,54 @@ What that means for us:
 ## 2. How it works on the floor
 
 The packing station (station 7, "Pakning", kind `Packing`) is set to Arbejdsform `Pakning` in
-Opsætning. Its scanner then feeds the checklist, not the in/out toggle.
+Opsætning. Its scanner then feeds the checklist and the pallet, not the in/out toggle.
 
-Step by step:
+### 2.1 The checklist
 
 1. Nothing open. The widget says **"Scan et element for at åbne pakkelisten"**.
 2. The operator scans a window of order 58830 (Pos. 2, piece 1). The station:
    - opens the checklist for 58830 from the order's 3E production list (section 3),
    - checks that piece out at once (judgment: every scan at packing is a window in front of the
      operator; asking for a second scan of the same label would only confuse),
+   - puts it on the open pallet, opening a new pallet if none is open (section 2.3),
    - says **"Ordre 58830 åbnet · Pos. 2 stk. 1 tjekket ud"**, lights the piece, plays the OK sound.
 3. Each next scan of the same order lights one more piece: **"Pos. 3 stk. 1 tjekket ud"**. The counter
    at the top goes **"2 af 18"**, **"3 af 18"** ...
-4. The last expected piece: the whole widget turns green, **"Ordre 58830 er færdig · 18 af 18 tjekket
+4. The last expected piece: the checklist turns green, **"Ordre 58830 er færdig · 18 af 18 tjekket
    ud · Klar til transport"**, and the complete sound plays. The list stays on screen until the next
-   scan, or 2 minutes, then goes back to step 1.
-5. A scan of another order while 58830 is half done: the station switches to the new order's list and
-   says **"Skiftet til ordre 58831 · Ordre 58830 mangler 6"** (amber, 5 s). 58830 stays open. It shows
-   in the strip of open orders, and its list comes back, ticks and all, on the next scan of any of its
-   pieces.
+   scan, or 2 minutes, then goes back to step 1. The pallet stays open until `VS-PRINT`.
+5. A scan of another order while 58830 is half done: the station switches the checklist to the new
+   order and says **"Skiftet til ordre 58831 · Ordre 58830 mangler 6"** (amber, 5 s). The piece goes
+   on the same open pallet. 58830 stays open. It shows in the strip of open orders, and its list comes
+   back, ticks and all, on the next scan of any of its pieces.
 
-What else the operator can see:
+**Rule: an order can't leave short.** A half-done order stays open, in the strip and on the portal's
+lists, until every expected piece is checked out. Nothing closes it by hand.
 
-| Situation | Screen (Danish) | Sound |
-|---|---|---|
-| Piece checked | `Pos. 3 stk. 2 tjekket ud` | OK |
-| Order complete | `Ordre 58830 er færdig · 18 af 18 tjekket ud · Klar til transport` | Complete |
-| Already checked | `Pos. 3 stk. 2 er allerede tjekket ud kl. 10:42` | Warning |
-| Not on the list | `Pos. 7 stk. 1 er ikke på produktionslisten · tjekket ud alligevel` | Warning |
-| No list for the order | `Ingen produktionsliste for ordre 58830 · viser kun de scannede` | Warning (first scan only) |
-| List still loading | `Henter produktionslisten ...` (the tick is kept and shown when it arrives) | OK |
-| Piece was still in progress at an assembly station | `Pos. 3 stk. 2 var stadig i gang på Station 30 · stoppet dér` | Warning |
-| Unreadable or not an element | `Ikke en elementkode` (as today) | Warning |
-| Pallet label, before feature #3 | `Palle-scanning ved pakning er ikke klar endnu` | Warning |
-| A card Pakning does not use (`VS-START`, `VS-PAUSE`, `VS-HOLD`, `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR`) | `Kortet bruges ikke her` (feature #1's shared message, §3.1), nothing stored | Warning |
-| An unknown `VS-` card | `Ukendt kort` (feature #1) | Warning |
+### 2.2 What the operator sees
 
-Sketch of the widget (about 6 x 4 cells of the 12 x 6 grid; it scales like `DocumentWidgetView`):
+The checklist shows the order of the piece scanned last. The open pallet is always shown beside it.
+**Decision:** both on screen at once, the checklist on the left (about two thirds), the pallet on the
+right. Why: each scan changes both, and the operator needs both answers ("what is missing of this
+order", "what is on this pallet") without a scan to switch view.
+
+Sketch of the widget (about 8 x 4 cells of the 12 x 6 grid; it scales like `DocumentWidgetView`):
 
 ```
-+----------------------------------------------------------------------+
-| PAKNING                                    Ordre 58830     12 af 18  |
-| Jensen Byg ApS · Lev. uge 48                                         |
-|----------------------------------------------------------------------|
-| ## Pos. 1  Drej Kip    1485 x 1380   [1][2][3]              3 af 3   |
-| .. Pos. 2  Fast karm    980 x 1200   [1][ ][ ][ ]           1 af 4   |
-| ## Pos. 3  Terrassedør 1890 x 2180   [1]                    1 af 1   |
-| .. Pos. 4  Bundhængt    600 x  600   [ ][ ][ ][ ][ ][ ]     0 af 6   |
-|    ... 2 positioner mere                                            |
-| !! Pos. 7  Ikke på listen            [1]                    ekstra   |
-|----------------------------------------------------------------------|
-| Pos. 2 stk. 1 tjekket ud                                      10:42  |
-| Åbne ordrer: 58831  3 af 9   ·   58790  7 af 8                       |
-+----------------------------------------------------------------------+
++---------------------------------------------------------+----------------------------------+
+| PAKNING                       Ordre 58830     12 af 18  | PALLE 261125-1-007   åben 0:12   |
+| Jensen Byg ApS · Lev. uge 48                            | 9 vinduer · 2 ordrer             |
+|---------------------------------------------------------| Ordre 58830 (7) · 58831 (2)      |
+| ## Pos. 1  Drej Kip    1485 x 1380  [1][2][3]   3 af 3  |----------------------------------|
+| .. Pos. 2  Fast karm    980 x 1200  [1][ ][ ][ ] 1 af 4 | 58830 Pos. 2 stk. 1    <- sidst  |
+| ## Pos. 3  Terrassedør 1890 x 2180  [1]         1 af 1  | 58830 Pos. 1 stk. 3              |
+| .. Pos. 4  Bundhængt    600 x  600  [ ][ ][ ][ ][ ][ ]  | 58831 Pos. 4 stk. 1              |
+|    ... 2 positioner mere                                | 58831 Pos. 4 stk. 2              |
+| !! Pos. 7  Ikke på listen           [1]         ekstra  | ... 5 mere                       |
+|---------------------------------------------------------+----------------------------------|
+| Pos. 2 stk. 1 tjekket ud · lagt på palle 261125-1-007                                10:42 |
+| Åbne ordrer: 58831  3 af 9   ·   58790  7 af 8               Scan VS-PRINT for at udskrive |
++--------------------------------------------------------------------------------------------+
   ## = row lit (all its pieces checked)   .. = not done   !! = extra (amber)
   [n] = piece n lit   [ ] = piece not checked yet
 ```
@@ -93,9 +107,67 @@ UI rules:
 - Rows are 48 px or more and the counter is 72 px, for reading from a few metres. The last row touched
   flashes once and is scrolled into view. Done rows move nothing: the order stays the PDF's order, so the
   operator learns where to look.
+- The pallet panel shows the newest five pieces, newest first, and the orders on the pallet when there
+  are two or more. With no pallet open it says `Ingen palle åben · næste vindue starter en ny`. A
+  pallet open longer than "Marker efter (timer)" gets an amber `åben over 4 t`, as a forgotten element
+  does.
 - Colours mean state, as in the rest of the app: green lit, neutral not done, amber extra or warning,
-  red outline for a piece that went back to production after it was checked (section 4).
-- The station's own tile, when it is on screen, shows the short form: `Ordre 58830 · 12 af 18`.
+  red outline for a piece that went back to production after it was checked (section 4), red for a
+  printer error.
+- The station's own tile, when it is on screen, shows the short form:
+  `Ordre 58830 · 12 af 18 · Palle 261125-1-007 (9)`. No in-progress rows, no stop button.
+
+### 2.3 Pallets
+
+**Decided: the first piece scanned with no pallet open opens a new pallet.** Why: no "start" card,
+one scan less per pallet, and an operator can't forget it. The pallet id is made on the PC at once
+(#3 §3), so it needs no network.
+
+- **Each piece scanned** is checked out (a `CheckedOut` row, section 5) and added to the open pallet
+  (an `Add` pallet event, #3 §4). Flash: `Pos. 3 stk. 1 tjekket ud · lagt på palle 261125-1-007`.
+- **`VS-PRINT`**: the pallet sheet prints (#3 §5) and the pallet closes. Flash:
+  `Udskriver palle 261125-1-007` / `9 vinduer · 2 ordrer`. The next piece opens a new pallet.
+- **Printer fails**: red flash `Printeren svarer ikke` / `Pallen er gemt – scan VS-PRINT igen`. The
+  pallet stays open; nothing is lost.
+- **`VS-UNDO`**: one card, one meaning. It takes the piece added last off the open pallet **and**
+  un-checks it. `Fortrudt: ordre 58556 · Pos. 5 · stk. 3 · ikke tjekket ud`. Scanned again, the one
+  before, down to an empty pallet. It acts at once; it does not wait for a scan. Why: the label of a
+  wrong window may already be stacked out of reach.
+- **`VS-CLEAR`**, then `VS-CLEAR` again within 10 s: throws the open pallet away. First:
+  `Scan VS-CLEAR igen for at tømme palle 261125-1-007`. Then: `Palle 261125-1-007 tømt · 9 vinduer
+  ikke tjekket ud`. **Decided:** every piece on it is un-checked too, as if undone one by one. Why:
+  the same meaning as `VS-UNDO`; a piece is checked out because it is on a pallet.
+- **A pallet label (`VS-PL-…`)** with no pallet open, or the open pallet empty: that pallet reopens,
+  `Palle 261125-1-004 åbnet igen – 6 vinduer`. Scan more pieces, then `VS-PRINT` prints a new sheet
+  with the same id; the old sheet is thrown away. `VS-PRINT` straight after reopening, with no change,
+  prints the same sheet again. Reopening changes no check-out and does not switch the checklist.
+- **`VS-REPRINT`**: prints the last pallet printed at this station again (label gone or torn).
+- **A piece already checked out and on another pallet** (printed or open at another PC): it moves to
+  the open pallet. **Decided:** the check-out time stays the first one; only the pallet changes (an
+  `Add` with `FromPallet`, no new `CheckedOut` row). Why: the piece left production at its first
+  check-out; moving it between pallets is not a new end of lead time. Flash (amber):
+  `Flyttet fra palle 261125-1-004` / `Palle 261125-1-004 skal printes igen` when that one was printed.
+- **A piece already checked out and on no pallet** (checked out before pallets were built at
+  packing): it goes on the open pallet, the check-out stays. `Lagt på palle · tjekket ud kl. 10:42`.
+
+### 2.4 Messages
+
+| Situation | Screen (Danish) | Sound |
+|---|---|---|
+| Piece checked | `Pos. 3 stk. 2 tjekket ud · lagt på palle 261125-1-007` | OK |
+| Order complete | `Ordre 58830 er færdig · 18 af 18 tjekket ud · Klar til transport` | Complete |
+| Already checked, on the open pallet | `Pos. 3 stk. 2 er allerede på pallen · tjekket ud kl. 10:42` | Warning |
+| Already checked, on another pallet | `Flyttet fra palle 261125-1-004` / `Palle 261125-1-004 skal printes igen` | Warning |
+| Not on the list | `Pos. 7 stk. 1 er ikke på produktionslisten · tjekket ud alligevel` | Warning |
+| No list for the order | `Ingen produktionsliste for ordre 58830 · viser kun de scannede` | Warning (first scan only) |
+| List still loading | `Henter produktionslisten ...` (the tick is kept and shown when it arrives) | OK |
+| Piece was still in progress at an assembly station | `Pos. 3 stk. 2 var stadig i gang på Station 30 · stoppet dér` | Warning |
+| Pallet printed | `Udskriver palle 261125-1-007` / `9 vinduer · 2 ordrer` | OK |
+| Printer error or none set | `Printeren svarer ikke` / `Ingen printer valgt i Opsætning` (red) | Warning |
+| Unreadable or not an element | `Ikke en elementkode` (as today) | Warning |
+| A card Pakning does not use (`VS-START`, `VS-PAUSE`, `VS-HOLD`) | `Kortet bruges ikke her` (feature #1's shared message, §3.1), nothing stored | Warning |
+| A pallet card or label before build step 11 | `Palle-scanning ved pakning er ikke klar endnu`, nothing stored | Warning |
+| An unknown `VS-` card | `Ukendt kort` (feature #1) | Warning |
 
 ## 3. Where the list of pieces comes from
 
@@ -132,10 +204,10 @@ When the list is missing or wrong:
   the portal's 12-hour quiet rule (`packedQuietSeconds`) still closes it there.
 - **Antal unreadable** for a position (`Quantity` null, `Problems` not empty): that position shows the
   pieces seen, with `Antal ukendt`, and the order can't be complete on the station.
-- **Piece not on the list** (position not in the PDF, or piece above Antal): it is still checked out
-  and recorded. It shows as an amber extra row and does not count in "12 af 18". Judgment: the floor is
-  never blocked by a wrong list; the read model already lets such an element not block packed
-  (`in_document = false`).
+- **Piece not on the list** (position not in the PDF, or piece above Antal): it is still checked out,
+  put on the pallet and recorded. It shows as an amber extra row and does not count in "12 af 18".
+  Judgment: the floor is never blocked by a wrong list; the read model already lets such an element not
+  block packed (`in_document = false`).
 - **A newer print** of the PDF: the locator takes the newest, and the list is rebuilt when it changes
   (`OrderDocumentLoad.FileKey`). Ticks are kept by barcode; pieces that drop off the list become extras.
 
@@ -145,40 +217,68 @@ A checklist belongs to an order. The station keeps any number open; one is shown
 rest are in the strip. Judgment: a pallet can hold several orders and an operator can switch back and
 forth, but one big list at a time is what can be read from a distance.
 
-- **Active order**: the order of the last element scanned at the station.
-- **Open**: an order with at least one check-out and not complete. It stays open across days and
-  restarts until it is complete, or 14 days after its last check-out (then only the portal lists it).
+- **Active order**: the order of the last piece scanned at the station.
+- **Open order**: an order with at least one check-out and not complete. It stays open across days and
+  restarts until it is complete (§2.1, the order can't leave short). After 14 days with no check-out it
+  leaves the station's strip, but stays open: the portal lists it, and its next scan brings it back.
 - **Complete**: every expected piece is checked out and none of them went back to production. Extras
   don't count. Without a list, never complete on the station.
 - A piece is **checked out** by its latest `CheckedOut` row at a packing station, unless a later scan
   undoes it: an `Undo` row (section 5) or an `In` at an assembly station (rework).
+- **Open pallet**: at most one per Pakning station. It survives a restart and the night. The pallet
+  rules (one pallet per window, the replay) are #3's (§4 there).
+- **Checked out and on a pallet go together.** A scan does both, `VS-UNDO` and `VS-CLEAR` undo both. A
+  move changes only the pallet. A checked-out piece on no pallet exists only from before pallets were
+  built here.
 
 Edge cases:
 
 | Case | What happens | Why |
 |---|---|---|
 | Piece scanned twice within 2 s | Ignored (`RepeatScans`, as today) | Scanner double read |
-| Piece already checked, scanned again | No row written. `... er allerede tjekket ud kl. 10:42`, warning sound | A toggle at packing would undo work by accident. Undo is a deliberate act (`VS-UNDO`). |
-| Piece not on the list | Recorded, amber extra row | Never block the floor; the portal flags it |
-| Piece of another order | Switch the active order, the old one stays open | Half-done orders are normal (a pallet goes, the rest follows) |
-| Order left half done | Stays open, in the strip and on the portal's list; its next scan brings the list back | Ventisol: "it stays open, shows on next scan" |
+| Piece already checked and on the open pallet, scanned again | No row, no event. `... er allerede på pallen`, warning sound | A toggle at packing would undo work by accident. Undo is a deliberate act (`VS-UNDO`). |
+| Piece already checked, on another pallet | Moves to the open pallet; check-out time unchanged | §2.3 |
+| Piece not on the list | Checked out, on the pallet, amber extra row | Never block the floor; the portal flags it |
+| Piece of another order | Switch the active order, same open pallet, the old order stays open | Mixed pallets are allowed |
+| Order left half done | Stays open, in the strip and on the portal's list; its next scan brings the list back | An order can't leave short |
 | Piece still in progress at an assembly station | That station gets an `Out` at the check time (as a stop from its tile), then the check-out | An open `In` elsewhere would keep the order "on a station" and not packed in the read model |
 | Piece in progress at packing itself (an `In` from Enkel mode, before the switch) | The check-out is its `Out`, with `DurationSec` since that `In` | Pairs as today |
-| Checked piece comes back for rework (scanned `In` at Station 30) | The chip turns red outlined, `Tilbage i produktion (Station 30)`; the order is open again; checking it again later moves the end time | Packed is derived, not latched (`read-model.md` §4) |
+| Checked piece comes back for rework (scanned `In` at Station 30) | The chip turns red outlined, `Tilbage i produktion (Station 30)`; the order is open again. It stays on its pallet in the pallet data, marked the same way in the pallet panel and the portal; checked again later, it moves to the then open pallet and the end time moves | Packed is derived, not latched (`read-model.md` §4) |
 | Remake with the same label | Treated as the same piece: if it was checked out and went back, it is checked again | Same barcode, same element |
 | Remake of an older order (below 58000) | Accepted when its PDF is in the folder (`OrderHints.Exists`), as today | Existing rule |
-| Wrong piece checked by mistake | `VS-UNDO`, then scan the piece: `Pos. 3 stk. 2 er ikke længere tjekket ud` | Needs a deliberate command; see section 5 |
+| Wrong piece scanned | `VS-UNDO` (the piece added last), or several `VS-UNDO` for one further back | Needs a deliberate command |
+| `VS-UNDO`, open pallet empty or none open | Refused, `Intet at fortryde` | Nothing to take off |
+| `VS-UNDO` after a move | Off this pallet and un-checked; it does not go back to the old pallet | One meaning for the card |
+| `VS-PRINT`, no pallet open | Refused, `Ingen palle åben – scan vinduerne først` | |
+| `VS-PRINT`, open pallet empty | Refused, `Pallen er tom` | |
+| `VS-CLEAR` once | Asks, `Scan VS-CLEAR igen for at tømme palle X` | A pallet is not thrown away by one stray read |
+| Pallet label, open pallet has pieces | Refused, `Print eller tøm palle Y først` | One open pallet per station |
+| Pallet label of the open pallet | Nothing, `Det er den åbne palle` | |
+| Pallet label never seen (other PC, before sync) | Opens it empty; old pieces show once the events arrive, `Palle X åbnet – ukendt indhold` | Never wait on the network |
+| `VS-PL-` with other than 10 digits | Refused, `Ukendt pallelabel` | #3 §3 |
+| Over 60 pieces on one pallet | Refused, `Maks 60 vinduer på en palle`, not checked out | A typo-loop guard, not a real limit (#3, open questions) |
 | List arrives after the scan (slow share) | The tick is kept; the list is drawn when it arrives | Never wait on the network to record |
-| Offline | Check-outs go to the outbox and journal as every scan does; the screen never waits | Existing outbox |
-| Pallet label at packing | Before feature #3: refused with a message, nothing stored. After: section 8 | |
-| `VS-START`, `VS-PAUSE`, `VS-HOLD`, or #3's `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR` | Refused, nothing stored, `Kortet bruges ikke her` | A Pakning station has no session and no open pallet; feature #1's shared rule (§3.1). The tile shows no `PAUSE` band or `Session` label |
+| Offline | Check-outs and pallet events go to their outboxes and journals; the screen never waits; printing needs no network | Existing outbox |
+| `VS-START`, `VS-PAUSE`, `VS-HOLD` | Refused, nothing stored, `Kortet bruges ikke her` | A Pakning station has no session; feature #1's shared rule (§3.1). The tile shows no `PAUSE` band or `Session` label |
 
 **In time versus pieces scanned twice.** At packing in Pakning mode a scan is a moment, not a span. A
 check-out row carries `DurationSec = 0` (or the seconds since its open `In` at packing, if there was
-one). A second scan of a checked piece writes nothing, so a piece is never counted twice and no packing
-time is invented. The order's time ends at its last check-out.
+one). A second scan of a checked piece writes no check-out, so a piece is never counted twice and no
+packing time is invented. The order's time ends at its last check-out.
 
 ## 5. Data in OptiCloud
+
+A scan at packing writes two things, at the same time: a check-out row in `VentisolScans` (below) and
+an `Add` event in `VentisolPalletEvents` (#3 §4). Each goes through its own outbox.
+
+| Floor action | `VentisolScans` | `VentisolPalletEvents` (#3) |
+|---|---|---|
+| Piece scanned | `Out` + `CheckedOut` | `Add` |
+| Piece moved from another pallet | nothing | `Add` with `FromPallet` |
+| `VS-UNDO` | `Mark` + `Undo` | `Remove` |
+| `VS-CLEAR` (twice) | `Mark` + `Undo` per piece on it | `Clear` |
+| `VS-PRINT`, `VS-REPRINT` | nothing | `Print` |
+| Pallet label (reopen) | nothing | nothing (the next `Add` reopens it) |
 
 **Choice: a check-out is the existing `Out` row at the packing station, with feature #1's column
 `Event` = `CheckedOut`.**
@@ -197,19 +297,19 @@ rule ("every expected element has a finished pass at a packing station") and `pa
 change, and older station versions on viewers don't break.
 
 The `Event` column, `ScanEventKind` and `Direction = Mark` come from feature #1
-(`plan-scan-commands.md` §6, its build step 4). This doc adds two values to `ScanEventKind`
-(`Scan, Pause, Resume, Hold, CheckedOut, Undo`), listed in #1 §6.1:
+(`plan-scan-commands.md` §6, its build step 4). This doc adds two values to `ScanEventKind`, listed
+in #1 §6.1:
 
 - `CheckedOut`: the piece is on the pallet and out of production. `Direction = Out`.
 - `Undo`: cancels the latest `CheckedOut` of the same barcode at the same station. `Direction = Mark`.
 
 A reader that does not know a value reads it as `Scan` (#1 §7.4).
 
-**Undo** (`VS-UNDO`, see section 9): one row with `Direction = Mark`, `Event = Undo`, at the packing
-station, at the time of the undo, `DurationSec` left out. A new reader drops it together with the
-`CheckedOut` it cancels. `Mark` is a row that carries no time and never pairs (#1 §6), so an old reader
-never starts a pass from it: an old station app skips it (unknown direction), and the portal before
-#1's raw-scans step stores it with direction null and drops it. Such a reader still counts the
+**Undo** (`VS-UNDO`, and each piece of a `VS-CLEAR`): one row with `Direction = Mark`, `Event = Undo`,
+at the packing station, at the time of the undo, `DurationSec` left out. A new reader drops it together
+with the `CheckedOut` it cancels. `Mark` is a row that carries no time and never pairs (#1 §6), so an
+old reader never starts a pass from it: an old station app skips it (unknown direction), and the portal
+before #1's raw-scans step stores it with direction null and drops it. Such a reader still counts the
 cancelled check-out as a finished pass at packing until it has the new version. Harmless. Judgment:
 OptiCloud rows are never edited or deleted by the station (the table is a log, and re-sends rely on
 `ScanId`).
@@ -219,12 +319,12 @@ assembled days before it is packed. New: `ScanTable.ReadOrderAsync(order)`, `Get
 `keyword=<order>` and the rows kept whose `OrderNo` is that order, the same way `ExistsAsync` finds a
 `ScanId`. If the keyword finds nothing it falls back to the 36-hour window plus the local store. Read
 when a checklist is opened or comes back, and every minute while it is active. Open question for the
-backend owner: a real column filter.
+backend owner: a real column filter. Pallets are read from #3's `PalletBook` (14 days of events).
 
 **Local store.** `packing.json` in the data folder (written with `AtomicFile`): per open order, the
 checked pieces (barcode, time, `ScanId`), the time of the last check-out, and the active order. It
 restores the widget at once after a restart, before any network, as the journal does for the stations.
-OptiCloud wins when both are known (by `ScanId`).
+OptiCloud wins when both are known (by `ScanId`). The open pallet comes back from #3's pallet journal.
 
 ## 6. Station app changes
 
@@ -250,42 +350,46 @@ Core (`Ventisol.Station.Core`), all pure and tested:
   - `PackingChecklist.cs`: one order's state. `Apply(IEnumerable<ScanEvent>)` rebuilds it from the
     history (check-outs, undos, assembly `In`s after a check-out). `Check(Barcode, DateTimeOffset)`
     gives a `PackingResult`: `Checked`, `AlreadyChecked(at)`, `Extra`, with `Count`, `Expected`,
-    `Completed`. `Undo(Barcode, ...)` gives `Undone` or `NotChecked`. `SetList(PackingList)` keeps the
-    ticks by barcode.
-  - `PackingStation.cs`: the station's open checklists and the active one. `Scan(Barcode, now)` picks
-    or opens the checklist, switches the active order, and returns what to record and what to say
-    (`PackingOutcome`: rows to write, message key, sound). Open orders older than 14 days drop.
+    `Completed`. `Uncheck(Barcode, ...)` gives `Undone` or `NotChecked`. `SetList(PackingList)` keeps
+    the ticks by barcode.
+  - `PackingStation.cs`: the state machine of a Pakning station. It holds the open checklists, the
+    active one, the open pallet (read from #3's `PalletBook`, ids from `PalletIdAllocator`) and the
+    10 s `VS-CLEAR` confirm window. `Scan(Barcode, now)`, `Command(ScanCommand, now)` and
+    `Pallet(PalletId, now)` return a `PackingOutcome`: scan rows to write, pallet events to write, a
+    `PrintRequest` when a sheet is due, message key, sound. Open orders with no check-out for 14 days
+    leave the strip. Pure, no I/O.
   - `PackingStore.cs`: load and save `packing.json`; tolerant of a missing or broken file (starts
     empty and logs).
 - `StationSettings.cs` / `StationSettingsJson.cs`: the Arbejdsform comes from feature #1
-  (`StationWorkMode { Enkel, Session, Pakning, Palle }`, `StationConfig.WorkMode`,
-  `StationSetup.WorkMode`, `FileStation.WorkMode` in `settings.json`). This doc adds
-  `PackingSound` (bool, default true) to `StationSettings`.
+  (`StationWorkMode { Enkel, Session, Pakning }`, `StationConfig.WorkMode`, `StationSetup.WorkMode`,
+  `FileStation.WorkMode` in `settings.json`). This doc adds `PackingSound` (bool, default true) to
+  `StationSettings`. The printer fields and "Palle-PC nr." are #3's (§6 there).
 - `SetupRules.cs`: `Pakning` only on a station of kind `Packing` (the setup shows it greyed otherwise:
   `Kun for en pakkestation`). Judgment: the rows must say `StationKind = Packing` for the read model.
-- `SetupView`: this doc adds `Pakning (tjekliste)` to the Arbejdsform drop-down (feature #1 offers only
-  `Enkel` and `Session`).
+- `SetupView`: this doc adds `Pakning (tjekliste og paller)` to the Arbejdsform drop-down (feature #1
+  offers only `Enkel` and `Session`).
 
 App (`Ventisol.Station`):
 
 - `ViewModels/MainViewModel.cs`, `Scan`: after `ScanCodes.Classify` (feature #1), when the station's
-  Arbejdsform is `Pakning`, an `ElementCode` goes to `PackingStation.Scan` instead of the station
-  workflow, a `CommandCode` `Undo` arms the undo, a `PalletCode` goes to section 8, and any other
-  command is refused with feature #1's shared message. Before the check-out, any other station
-  on this PC with that element in progress is stopped through `Stop(...)` with a new
-  `StopReason.CheckedOut` (`StationViewModel.cs`). The outcome's rows go out through `Recorded` like
-  any scan (outbox, journal). `Hints` and `LastOrderChanged` work as today.
+  Arbejdsform is `Pakning`, an `ElementCode` goes to `PackingStation.Scan`, a `CommandCode` `Undo`,
+  `Print`, `Reprint` or `Clear` to `PackingStation.Command`, a `PalletCode` to
+  `PackingStation.Pallet`, and any other command is refused with feature #1's shared message. Before a
+  check-out, any other station on this PC with that element in progress is stopped through `Stop(...)`
+  with a new `StopReason.CheckedOut` (`StationViewModel.cs`). The outcome's scan rows go out through
+  `Recorded` like any scan (outbox, journal), its pallet events through `PalletRecorded`, and a
+  `PrintRequest` through `PrintRequested` (#3 §6). `Hints` and `LastOrderChanged` work as today.
 - `ViewModels/PackingViewModel.cs` (new): what the widget binds to: order, customer line, Lev. uge,
-  counter text (`12 af 18`, `5 tjekket ud · listen kendes ikke`), rows with chips, the message line
-  with its state, the open-orders strip, `IsComplete`. Ticks once a second for the message timeouts and
-  the 2-minute return to idle.
+  counter text (`12 af 18`, `5 tjekket ud · listen kendes ikke`), rows with chips, the pallet panel
+  (id, open time, count, orders, newest five), the message line with its state, the open-orders strip,
+  `IsComplete`. Ticks once a second for the message timeouts, the pallet's open time and the 2-minute
+  return to idle.
 - `ViewModels/Widgets.cs`: `WidgetKind.Packing`, `PackingWidget(spec, PackingViewModel)` with
-  `Spec.Station` set to the packing station. Catalog entry `("Pakkeliste", WidgetKind.Packing, null, 6, 4)`.
+  `Spec.Station` set to the packing station. Catalog entry `("Pakkeliste", WidgetKind.Packing, null, 8, 4)`.
   The picker asks which station, as for the Document widget.
-- `PackingWidgetView.xaml` (+ `.xaml.cs`, new): the layout of section 2, with a size rule like
-  `DocumentWidgetView.Fit` (small block: order, counter and message only).
-- `StationViewModel.cs` / the station tile: in Pakning mode the tile shows `Ordre 58830 · 12 af 18`,
-  and no in-progress rows or stop button.
+- `PackingWidgetView.xaml` (+ `.xaml.cs`, new): the layout of section 2.2, with a size rule like
+  `DocumentWidgetView.Fit` (small block: order, counter, pallet id and count, message only).
+- `StationViewModel.cs` / the station tile: in Pakning mode the tile shows the short form of §2.2.
 - `MainWindow.xaml.cs`: makes the `PackingViewModel` per Pakning station (like `OrderDocumentViewModel`),
   loads the list in the background on the first scan of an order (`OrderDocuments.LoadAsync`, as
   `PrefetchDocument` does), feeds it OptiCloud's order history, and saves `PackingStore` after each
@@ -295,13 +399,16 @@ App (`Ventisol.Station`):
   played with `System.Media.SoundPlayer` off the UI thread, only on a scan PC and only when
   `PackingSound` is on. The scanner's own beep says "read"; the PC's sound says "accepted". Opsætning
   gets `Lyd ved pakning` (Til / Fra).
+- `DemoScanner`: key 7 scans a piece at the packing station; Shift+7 sends `VS-PRINT`, which goes to a
+  print preview window instead of a printer (#3 §6).
 - Viewer mode: the widget works the same from what OptiCloud holds. The active order is the order of
   the newest `CheckedOut` row at that station; the open strip is the orders with check-outs in the 36
-  hours read. A viewer records nothing and plays no sound. The list comes from `CloudDocumentSource`
-  when the viewer has no folder.
+  hours read; the open pallet comes from the pallet events. A viewer records nothing, prints nothing
+  and plays no sound. The list comes from `CloudDocumentSource` when the viewer has no folder.
 
-Restart: `PackingStore` gives the screen at once, then the journal and outbox, then OptiCloud's order
-history for the active order and the open ones (as `ApplyLoaded` does for the stations).
+Restart: `PackingStore` and the pallet journal give the screen at once, then the scan journal and
+outbox, then OptiCloud's order history for the active order and the open ones (as `ApplyLoaded` does
+for the stations).
 
 ## 7. Web portal / read model changes
 
@@ -311,8 +418,8 @@ history for the active order and the open ones (as `ApplyLoaded` does for the st
   for a check-out (`durationSec` 0, no `In`), an undo (a `Mark` row with `event` `Undo`), and a
   check-out after a rework `In`. Both apps run them.
 - `lib/derive/pairing.ts`: a `Mark` row with `event = 'Undo'` drops itself and the `CheckedOut` it
-  cancels; it never opens a pass. A pass made from a
-  `CheckedOut` row gets `is_checkout = true` (new column on `core.station_intervals`).
+  cancels; it never opens a pass. A pass made from a `CheckedOut` row gets `is_checkout = true` (new
+  column on `core.station_intervals`).
 - Time per piece (station day facts, `getBaselineSuggestion`, Normaltid, "Mod normalt") leaves
   `is_checkout` passes out. They have no measured length; counting them as 0 would drag the packing
   median down. They still count in "Gennem i dag".
@@ -327,55 +434,46 @@ history for the active order and the open ones (as `ApplyLoaded` does for the st
   rule all of it would read as "Venter før pakning".
 - `listIncompletePackedOrders` (`rpt.incomplete_packed_orders`): also an order with a check-out whose
   expected pieces are not all checked out after `quietHours`. `missingElements` gets `checkedOut` beside
-  `packed`. The Overblik list "Pakket ordre med manglende element" reads it.
+  `packed`. The Overblik list "Pakket ordre med manglende element" reads it. Since an order can't leave
+  short, this list is the office's view of orders still waiting for pieces.
 - Order page (`app/(detail)/ordre/[orderNo]`): a "Pakkeliste" panel in the same shape as the station
   (positions with piece chips, lit when checked out, the time on hover), and a "Tjekket ud" column in
   the elements table. The "Elementer pakket" tile reads `12 af 18 tjekket ud` when the order has
-  check-outs.
+  check-outs. The pallets of the order are #3's "Paller" section (§7 there).
 - Ugeplan "Klar til afsendt" may read a complete checklist; left as is until Ventisol asks.
 
-## 8. Later: pallet scan at packing
+## 8. A pallet label scanned at packing
 
-Once feature #3 exists, a pallet label `VS-PL-<number>` scanned at a Pakning station ticks off every
-window on that pallet in one go. This depends on `plan-pallet-labels.md` for where a pallet's windows
-are stored and how to read them; nothing here stores pallets.
+A pallet label `VS-PL-<number>` at a Pakning station **reopens** that pallet (§2.3). It does not tick
+anything off: every piece on a pallet was already checked out when it went on. Rules:
 
-- `ScanCodes.Classify` (feature #1) gives a `PalletCode` for `VS-PL-` + 10 digits (`PalletId.TryParse`).
-  Packing reads the pallet through `PalletBook` (doc #3, §9): `Find(id)`, then `Contents(id)`.
-  `PackingStation.ScanPallet(PalletId, IReadOnlyList<PalletElement>, now)` runs `Check` for each
-  window, in order, and writes one `CheckedOut` row per window (same time, own `ScanId`), so the read
-  model needs nothing new. Packing writes nothing to `VentisolPalletEvents`.
-- Windows of several orders on one pallet: each order's checklist gets its ticks; the active order is
-  the one with the most windows on the pallet.
-- Message: `Palle VS-PL-2611251007: 8 vinduer tjekket ud · Ordre 58830 12 af 18`. Already checked and
-  extras are counted in the message, not listed.
-- `Find` gives null (made on another PC, not synced yet): `Pallen er ikke kendt endnu`, nothing written.
-  An empty pallet: `Pallen er tom`.
-- An open pallet (not printed) is still ticked off, with the amber line `Pallen er ikke printet`; a
-  pallet with `ChangedSincePrint` gets `Papiret på pallen er ikke opdateret`. Judgment: the windows are
-  there either way; the warning is about the paper.
-- The portal can show which pallet each window left on by joining `core.pallet_elements` (doc #3) on
-  the barcode and the check-out time. No pallet column on the scan row.
+- `ScanCodes.Classify` (feature #1) gives a `PalletCode` for `VS-PL-` + 10 digits (`PalletId.TryParse`,
+  #3 §3). `PackingStation.Pallet` reads it through `PalletBook.Find(id)` and `Contents(id)`.
+- Allowed with no pallet open or the open pallet empty; refused when the open pallet has pieces
+  (`Print eller tøm palle Y først`).
+- The reopened pallet's pieces become the undo order (newest first), so `VS-UNDO` can take off a piece
+  that was put on before the print.
+- `VS-PRINT` with no change since reopening is a reprint (`Print` with `Reprint = true`, #3 §4).
+- Reopening does not change the active checklist and writes nothing by itself.
 
 ## 9. Open questions
+
+Decided with Ventisol on 2026-11-25 (no longer open): pallets are built at packing; pallets may hold
+several orders; an order can't leave short and there is no close command; `VS-UNDO` is wanted, with
+the meaning of §2.3.
 
 For Ventisol:
 
 1. Does the first scan of an order also check that window out? We assume yes (section 2).
 2. A window packed in two parts ("Karm og ramme pakkes særskilt"): one label or two? We tick per label.
-3. Can one pallet hold several orders? The design allows it; we need to know if it is common.
-4. An order that leaves short (a part delivery): should the operator be able to close it as sent
-   incomplete? Not in this plan. It would need a command such as `VS-CLOSE` (flagged, not defined;
-   listed as proposed in `plan-scan-commands.md` §3.1, Unknown until defined).
-5. Do they want `VS-UNDO` (undo the next scanned check-out)? We plan it as the last station step.
-   It is the same card as the Palle station's `VS-UNDO` (feature #3), listed in `plan-scan-commands.md`
-   §3.1; at Pakning it cancels the next scanned check-out. It needs a printed card at packing.
-6. Does the central PC have speakers, and can the packing operator hear them? Else sound is off and a
+3. Does the central PC have speakers, and can the packing operator hear them? Else sound is off and a
    screen by packing matters more.
-7. Can the packing operator read the central screen from where they scan, or do they need a screen at
+4. Can the packing operator read the central screen from where they scan, or do they need a screen at
    packing (a viewer PC showing only the Pakkeliste widget)? A viewer lags up to 5 s.
-8. When should the packing station switch to `Pakning`? Until then it keeps `Enkel` (scan in, scan out).
-9. Is a remade window given the same label as the original?
+5. When should the packing station switch to `Pakning`? Until then it keeps `Enkel` (scan in, scan out).
+6. Is a remade window given the same label as the original?
+
+The printer and the 3E pallet label are open in #3 (open questions there).
 
 For the backend owner:
 
@@ -388,69 +486,88 @@ For the backend owner:
 
 Each step is one commit, with its tests, in this order. Feature #1 steps 2 to 4 (classification,
 Arbejdsform setting, rows with the `Event` column and `Mark`) land before step 1. Step 3 also needs
-feature #1 step 10 (raw scans).
+feature #1 step 10 (raw scans). Step 11 needs #3 steps 1 to 8 (pallet ids, events, `PalletBook`,
+outbox and sync, sheet, settings, Windows printer); those can be built before or alongside steps 1 to
+10. Until step 11, pallet cards and labels at Pakning are refused (§2.4).
 
 1. **ScanEvent: `CheckedOut` and `Undo`.** The two values in `ScanEventKind`, their mapping (`Out` +
    `CheckedOut`, `Mark` + `Undo`) through `ScanEvent.From`, `ToValues`, `TryFromValues`. Tests in
    `ScanEventTests` (round trip of both, an `Undo` row is `Direction = Mark`, a check-out row is `Out`
    with `DurationSec`). Add the two values to `opticloud-scans.md`, The table.
 2. **Shared vectors and station replay.** The new cases in `scan-rules-vectors.json` (feature #1 adds
-   `event`); `ScanReplay` handles a `Mark` / `Undo` row; `WorkRecord.IsCheckout`; `DayReport` leaves check-outs out of average
-   time. Tests: `ScanRulesVectorsTests`, `ScanReplayTests`, `DayReportTests`.
+   `event`); `ScanReplay` handles a `Mark` / `Undo` row; `WorkRecord.IsCheckout`; `DayReport` leaves
+   check-outs out of average time. Tests: `ScanRulesVectorsTests`, `ScanReplayTests`, `DayReportTests`.
 3. **Web pairing on the same vectors.** On feature #1's `raw.scans.event` and `Mark`:
-   `lib/derive/pairing.ts` (`is_checkout`, a `Mark` / `Undo` row drops its check-out). Tests: `scan-rules-vectors.test.ts`, `pairing.test.ts`,
-   `scans.test.ts`. From here old and new readers agree.
+   `lib/derive/pairing.ts` (`is_checkout`, a `Mark` / `Undo` row drops its check-out). Tests:
+   `scan-rules-vectors.test.ts`, `pairing.test.ts`, `scans.test.ts`. From here old and new readers agree.
 4. **PackingList and PackingChecklist.** Pure, in `Packing/`. Tests (`PackingListTests`,
    `PackingChecklistTests`) against the real samples where present (skip without `orderdocs/`) and
-   hand-made documents: expected count, sub-positions, `Quantity` null, extras, already checked, undo,
-   rework `In` after a check-out, a newer list keeping ticks.
+   hand-made documents: expected count, sub-positions, `Quantity` null, extras, already checked,
+   uncheck, rework `In` after a check-out, a newer list keeping ticks.
 5. **Arbejdsform `Pakning` in setup.** On top of feature #1's setting: `Pakning` in the Opsætning
    drop-down, `SetupRules` (only kind `Packing`), `PackingSound` in settings and JSON. Tests:
    `StationSettingsTests`.
-6. **PackingStation and PackingStore.** Several orders, switching, 14-day drop, the outcome's rows and
-   messages; `packing.json` load/save, broken file. Tests: `PackingStationTests`, `PackingStoreTests`.
+6. **PackingStation (checklist) and PackingStore.** Several orders, switching, 14-day strip, the
+   outcome's rows and messages; `packing.json` load/save, broken file. Tests: `PackingStationTests`,
+   `PackingStoreTests`.
 7. **ScanTable.ReadOrderAsync.** Keyword read, exact `OrderNo` filter, fallback. FakeOptiCloud: check
    its keyword search matches an `OrderNo`. Tests: `ScanTableTests`.
 8. **Scan routing in MainViewModel.** Pakning stations go to `PackingStation`; stopping an element in
-   progress at another station; rows through `Recorded`. Manual check with `DemoScanner` and
-   FakeOptiCloud: rows in `/fake/state` with `Event`.
+   progress at another station; rows through `Recorded`; pallet cards refused for now. Manual check
+   with `DemoScanner` and FakeOptiCloud: rows in `/fake/state` with `Event`.
 9. **The widget.** `PackingViewModel`, `PackingWidget`, `PackingWidgetView.xaml`, catalog entry, the
-   short form on the station tile, list loading through `OrderDocuments`. A `--snapshot` style picture
-   for review, like `--snapshot-document`.
+   short form on the station tile, list loading through `OrderDocuments`. The pallet panel is drawn
+   empty until step 11. A `--snapshot` style picture for review, like `--snapshot-document`.
 10. **Restore, viewer and sound.** `PackingStore` on start, OptiCloud order history, the viewer's
     active order, `Sounds.cs` and `Lyd ved pakning`. Tests for the viewer's choice of active order.
-11. **Undo (`VS-UNDO`).** On feature #1's `CommandCode` `Undo`. 30 s window for the next element scan;
-    a `Mark` row with `Event = Undo`. Tests in `PackingStationTests`; the other commands refused with
+11. **Pallets at packing.** On #3 steps 1 to 9. `PackingStation` opens a pallet on the first piece,
+    writes an `Add` with each check-out, moves a checked-out piece (`FromPallet`, check-out time kept),
+    `VS-PRINT`, `VS-REPRINT`, `VS-CLEAR` (with the un-checks), a pallet label reopens (§8), the 60
+    limit, the printer error. `PalletRecorded` and `PrintRequested` wired; the pallet panel and the
+    tile's pallet text; the open pallet restored from the pallet journal; the viewer's open pallet;
+    demo keys. Tests: every pallet row of the §4 table in `PackingStationTests`, view model texts for
+    §2.4.
+12. **Undo (`VS-UNDO`).** On feature #1's `CommandCode` `Undo`: the piece added last off the open
+    pallet and un-checked (`Remove` and a `Mark` / `Undo` row), again for the one before, after a
+    reopen too, after a move. Tests in `PackingStationTests`; the session commands refused with
     `Kortet bruges ikke her`.
-12. **Read model.** `is_checkout` out of piece-time figures, `checked_out_at`, `elements_checked_out`,
+13. **Read model.** `is_checkout` out of piece-time figures, `checked_out_at`, `elements_checked_out`,
     `packed_source = 'checklist'`, the Pakning span in the route, `incomplete_packed_orders`. Tests:
     `order.test.ts`, `station.test.ts`, `lists.test.ts`, `core-migration.test.ts`. Update
     `read-model.md` and `reports.md` in the same commit.
-13. **Portal order page.** The Pakkeliste panel, the "Tjekket ud" column, the tile text.
-14. **Docs.** `apps/station/README.md` (Arbejdsform Pakning, the widget, sound), `opticloud-scans.md`
-    Rules (the last line about packed changes: with a checklist the order's end is known).
+14. **Portal order page.** The Pakkeliste panel, the "Tjekket ud" column, the tile text.
+15. **Docs.** `apps/station/README.md` (Arbejdsform Pakning, the widget, pallets, the cards, sound),
+    `opticloud-scans.md` Rules (the last line about packed changes: with a checklist the order's end is
+    known).
 
 ## 11. Test plan
 
 Unit tests are listed per step. On top of them:
 
 - **With FakeOptiCloud, one PC.** Station 7 set to `Pakning`, the documents folder pointed at
-  `orderdocs/`. Scan all pieces of a sample order with `DemoScanner`: the counter, the lit rows, the
-  complete state and sound. Check the rows in `/fake/state`: one `Out` per piece, `Event = CheckedOut`,
-  `DurationSec = 0`, no row for a repeat.
-- **Two orders.** Scan half of A, then B, then the rest of A: the switch message, the strip, A's ticks
-  back.
-- **Restart.** Close the app mid-order and start it with FakeOptiCloud stopped: the list and ticks
-  come back from `packing.json` and the journal. Start FakeOptiCloud: nothing is sent twice.
+  `orderdocs/`, the printer set to the print preview. Scan all pieces of a sample order with
+  `DemoScanner`: the counter, the lit rows, the pallet panel, the complete state and sound. `VS-PRINT`:
+  the sheet. Check `/fake/state`: one `Out` per piece, `Event = CheckedOut`, `DurationSec = 0`, one
+  `Add` per piece and one `Print` in the pallet table, nothing for a repeat.
+- **Two orders, one pallet.** Scan half of A, then B, then the rest of A: the switch message, the strip,
+  A's ticks back, one pallet with both orders.
+- **Move and reopen.** Print pallet 1, scan one of its pieces onto pallet 2: one `Add` with
+  `FromPallet`, no new `CheckedOut`, the check-out time unchanged, `Palle … skal printes igen`. Scan
+  pallet 1's label: reopened; `VS-PRINT`: a new sheet.
+- **Undo and clear.** `VS-UNDO` twice: two `Remove` events and two `Mark` / `Undo` rows, the chips
+  unlit. `VS-CLEAR` twice: a `Clear` and one `Undo` row per piece; the last released station app as a
+  viewer skips the `Mark` rows.
+- **Restart.** Close the app mid-order with a pallet open and start it with FakeOptiCloud stopped: the
+  list, ticks and open pallet come back from `packing.json` and the journals. Start FakeOptiCloud:
+  nothing is sent twice.
 - **Viewer.** A second app (`VENTISOL_STATION_DATA` elsewhere, Visning) with the widget shows the same
-  order within 5 s.
+  order and pallet within 5 s.
 - **Edge cases.** No PDF for the order; a position with Antal unreadable; a piece above Antal; a piece
   still in progress at Station 30 (gets its `Out` there); rework `In` after a check-out (red chip,
-  order open again); undo (one `Mark` row with `Event = Undo` in `/fake/state`, the last released
-  station app as a viewer skips it); `VS-PAUSE` at Pakning refused.
+  order open again); printer off (pallet stays open); `VS-PAUSE` at Pakning refused.
 - **Portal.** Run the sync against FakeOptiCloud: the order is packed at the last check-out,
   `packed_source = 'checklist'`, the packing median of the station day is not 0, a half-done order shows
-  in `listIncompletePackedOrders` after 12 quiet hours.
+  in `listIncompletePackedOrders` after 12 quiet hours, the order page shows its pallets (#3).
 - **On site, before switching for good.** One shift with the packing station in `Pakning` and an office
-  person comparing the screen with the pallet. Check the sound can be heard, and the screen read, from
-  where the operator scans.
+  person comparing the screen and the printed sheets with the pallets. Check the sound can be heard,
+  and the screen read, from where the operator scans.
