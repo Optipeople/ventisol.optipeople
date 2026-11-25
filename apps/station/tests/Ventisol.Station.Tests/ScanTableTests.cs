@@ -1,3 +1,4 @@
+using Ventisol.Station.Core;
 using Ventisol.Station.Core.Cloud;
 using static Ventisol.Station.Tests.TestScans;
 
@@ -224,6 +225,63 @@ public class ScanTableTests
 
         Assert.Equal(2, back.Count);
         Assert.Equal([ScanDirection.In, ScanDirection.Out], back.Select(b => b.Direction));
+    }
+
+    // A table made before the Event column gets it on connect, and only it.
+    [Fact(Timeout = 10000)]
+    public async Task A_table_from_before_the_event_column_gets_it_on_connect()
+    {
+        var api = new FakeOptiCloud();
+        api.Tables.Add(new FakeOptiCloud.Table(Guid.NewGuid(), "VentisolScans"));
+        api.Tables[0].Columns.AddRange(ScanEvent.Columns.Where(c => c.Name != "Event").Select(c => (c.Name, (int)c.Type)));
+        using var client = api.Client();
+
+        await new ScanTable(client).EnsureAsync(FakeOptiCloud.Account);
+
+        Assert.Equal(1, api.Count("AddColumn"));
+        Assert.Contains(api.Requests, r => r.Path.Contains("AddColumn") && r.Body!.Contains("\"Event\""));
+        Assert.Equal(("Event", (int)ColumnType.String), api.Scans.Columns[^1]);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Rows_with_an_event_and_mark_rows_read_back()
+    {
+        var api = new FakeOptiCloud();
+        using var client = api.Client();
+        var table = new ScanTable(client);
+        await table.EnsureAsync(FakeOptiCloud.Account);
+        var @in = In("058556050103", 1, T0);
+        var pause = Out("058556050103", 1, T0.AddMinutes(5)) with { DurationSec = 300, Event = ScanEventKind.Pause };
+        var mark = Scan("058556050103", 1, ScanDirection.Mark, T0.AddMinutes(9)) with { Event = ScanEventKind.ShiftEnd };
+
+        await table.AddAsync(@in);
+        await table.AddAsync(pause);
+        await table.AddAsync(mark);
+        var back = await table.ReadSinceAsync(T0.AddHours(-1));
+
+        Assert.Equal([@in, pause, mark], back);
+        Assert.DoesNotContain(api.Requests, r => r.Path.Contains("AddRow") && r.Body!.Contains(@in.ScanId.ToString()) && r.Body.Contains("Event"));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task An_unknown_event_reads_as_a_scan_and_is_said_once()
+    {
+        var api = new FakeOptiCloud();
+        var a = Out("058556050103", 1, T0.AddMinutes(1));
+        var b = Out("058556050102", 1, T0.AddMinutes(2));
+        api.AddRow(a);
+        api.AddRow(b);
+        foreach (var row in api.Scans.Rows) row["Event"] = "Lunch";
+        var said = new List<string>();
+        using var client = api.Client();
+        var table = new ScanTable(client, said.Add);
+        await table.EnsureAsync(FakeOptiCloud.Account);
+
+        var back = await table.ReadSinceAsync(T0);
+        await table.ReadSinceAsync(T0);
+
+        Assert.Equal([a, b], back);
+        Assert.Single(said, s => s.Contains("Lunch"));
     }
 }
 

@@ -166,4 +166,35 @@ public class ScanReplayTests
         var given = ScanReplay.Replay([In(A, 3, T0), In(B, 3, T0.AddMinutes(5)), In(C, 3, T0.AddMinutes(10))], stations, maxOpen: new Dictionary<int, int> { [3] = 6 });
         Assert.Equal(3, given.InProgress[3].Count);
     }
+
+    // A Mark carries no time and never pairs. Until the Session rules read them (plan step 6), they
+    // change nothing: not an Out, not an In, not a record.
+    [Fact]
+    public void A_mark_row_is_left_out_of_the_pairing()
+    {
+        var mark = Scan(A, 1, ScanDirection.Mark, T0.AddMinutes(5)) with { Event = ScanEventKind.Hold };
+        var orphan = Scan(B, 1, ScanDirection.Mark, T0.AddMinutes(6), duration: 60) with { Event = ScanEventKind.ShiftEnd };
+
+        var open = Replay(In(A, 1, T0), mark, orphan);
+        var closed = Replay(In(A, 1, T0), mark, Out(A, 1, T0.AddMinutes(10)));
+
+        Assert.Equal(new ActiveElement(Code(A), T0), Assert.Single(open.InProgress[1]));
+        Assert.Empty(open.Done);
+        Assert.Empty(closed.InProgress);
+        Assert.Equal(new WorkRecord(StationConfig.Defaults[0], Code(A), T0, T0.AddMinutes(10)), Assert.Single(closed.Done));
+    }
+
+    // Pause-Out and Resume-In pair as ordinary passes for now (plan §6.1); chains come with step 6.
+    [Fact]
+    public void Rows_with_an_event_pair_as_ordinary_passes()
+    {
+        var r = Replay(
+            In(A, 1, T0),
+            Out(A, 1, T0.AddMinutes(10)) with { Event = ScanEventKind.Pause },
+            In(A, 1, T0.AddMinutes(30)) with { Event = ScanEventKind.Resume },
+            Out(A, 1, T0.AddMinutes(35)) with { Event = ScanEventKind.ShiftEnd });
+
+        Assert.Empty(r.InProgress);
+        Assert.Equal([TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(5)], r.Done.Select(d => d.Duration));
+    }
 }

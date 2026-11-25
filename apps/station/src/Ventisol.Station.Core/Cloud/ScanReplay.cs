@@ -19,7 +19,7 @@ public sealed record LoadedScans(IReadOnlyList<ScanEvent> Events, DateTimeOffset
 // against the same vectors (docs/scan-rules-vectors.json).
 public static class ScanReplay
 {
-    // Pairs by station number and barcode, oldest first, In before Out at the same time.
+    // Pairs by station number and barcode, oldest first, In before Out at the same time. Mark rows are skipped.
     // - In then Out: one WorkRecord. Scanning it in again later (rework) makes another.
     // - A second In while one is open: the earlier never got its Out (a missed scan), the later wins.
     // - An Out with no In: its In is older than the scans given, so the start is put back from
@@ -42,6 +42,9 @@ public static class ScanReplay
 
         foreach (var e in events.DistinctBy(e => e.ScanId).OrderBy(e => e.At).ThenBy(e => e.Direction))
         {
+            // A Mark carries no time and never pairs. What it closes (a pause) is read with the
+            // Session rules (docs/plan-scan-commands.md §7.5); until then it is left out.
+            if (e.Direction == ScanDirection.Mark) continue;
             var key = (e.StationNo, e.Barcode.Raw);
             if (e.Direction == ScanDirection.In)
             {

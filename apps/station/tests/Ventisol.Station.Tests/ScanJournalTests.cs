@@ -1,3 +1,4 @@
+using Ventisol.Station.Core;
 using Ventisol.Station.Core.Cloud;
 using static Ventisol.Station.Tests.TestScans;
 
@@ -114,5 +115,37 @@ public sealed class ScanJournalTests : IDisposable
 
         Assert.Equal([late], journal.ReadSince(Noon.AddHours(-14)));
         Assert.Equal([late], journal.ReadSince(DateTimeOffset.MinValue));
+    }
+
+    // Rows with an Event, and Mark rows, come back as they went in; an ordinary scan's line has no event.
+    [Fact]
+    public void Events_and_marks_survive_the_journal_and_an_ordinary_line_is_as_before()
+    {
+        var journal = new ScanJournal(_folder);
+        var a = In("058556050103", 1, Noon.AddMinutes(-30));
+        var b = Out("058556050103", 1, Noon.AddMinutes(-20)) with { Event = ScanEventKind.Pause, DurationSec = 600 };
+        var c = Scan("058556050103", 1, ScanDirection.Mark, Noon.AddMinutes(-10)) with { Event = ScanEventKind.ShiftEnd };
+        journal.Append(a);
+        journal.Append(b);
+        journal.Append(c);
+
+        Assert.Equal([a, b, c], new ScanJournal(_folder).ReadSince(Noon.AddHours(-1)));
+        var lines = File.ReadAllLines(Path.Combine(_folder, $"{Noon:yyyy-MM-dd}.jsonl"));
+        Assert.DoesNotContain("event", lines[0], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"event\":\"Pause\"", lines[1]);
+        Assert.Contains("\"direction\":\"Mark\"", lines[2]);
+    }
+
+    // A line written by a newer app with an event this one does not know reads as an ordinary scan.
+    [Fact]
+    public void An_unknown_event_in_the_journal_reads_as_a_scan()
+    {
+        var journal = new ScanJournal(_folder);
+        var a = Out("058556050103", 1, Noon);
+        journal.Append(a with { Event = ScanEventKind.Hold });
+        var file = Path.Combine(_folder, $"{Noon:yyyy-MM-dd}.jsonl");
+        File.WriteAllText(file, File.ReadAllText(file).Replace("\"Hold\"", "\"Lunch\""));
+
+        Assert.Equal([a], journal.ReadSince(Noon.AddHours(-1)));
     }
 }

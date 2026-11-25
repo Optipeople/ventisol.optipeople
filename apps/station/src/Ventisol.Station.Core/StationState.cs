@@ -1,10 +1,18 @@
 namespace Ventisol.Station.Core;
 
 // Rejected: nothing is stored. Reason says why, for the log (the tile has its own words).
-public enum ScanKind { In, Out, Switched, Rejected }
+// Mark: a row that carries no time and never pairs (docs/plan-scan-commands.md §6.1).
+public enum ScanKind { In, Out, Switched, Rejected, Mark }
+
+// Why a row was written: the Event column of VentisolScans. Scan is an ordinary scan and is left
+// out of the row. The values belong to docs/plan-scan-commands.md §6.1; a newer app may add more.
+public enum ScanEventKind { Scan, Pause, Resume, Hold, CheckedOut, Undo, ShiftEnd }
 
 public sealed record ScanResult(ScanKind Kind, StationConfig Station, Barcode Barcode, DateTimeOffset At, TimeSpan? Duration = null, string? Reason = null)
 {
+    // Why the row is written; Scan for an ordinary scan.
+    public ScanEventKind Event { get; init; }
+
     // When switching orders, this holds the previous order that was stopped.
     public Barcode? Previous { get; init; }
 

@@ -168,7 +168,7 @@ app.MapPost("/api/MasterData/CreateRow/{tableId:guid}", async (Guid tableId, Htt
         }
         var id = Guid.NewGuid();
         t.Rows.Add(new RowData { Id = id, CreatedDate = DateTimeOffset.UtcNow, Values = row });
-        request.HttpContext.Items["note"] = string.Join(" ", new[] { "Barcode", "Direction", "ScanTime", "DurationSec" }
+        request.HttpContext.Items["note"] = string.Join(" ", new[] { "Barcode", "Direction", "Event", "ScanTime", "DurationSec" }
             .Where(row.ContainsKey).Select(k => $"{k}={Store.Text(row[k])}"));
         return Data(new { id });
     });

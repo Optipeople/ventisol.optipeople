@@ -1,3 +1,4 @@
+using Ventisol.Station.Core;
 using Ventisol.Station.Core.Cloud;
 using static Ventisol.Station.Tests.TestScans;
 
@@ -584,5 +585,24 @@ public sealed class OutboxTests : IDisposable
         Assert.True(File.Exists(tmp));
         Assert.Single(log);
         Assert.Equal(1, new Outbox(_folder).Pending);
+    }
+
+    // A waiting Mark row and a row with an Event survive a restart as they went in.
+    [Fact]
+    public void Waiting_events_and_marks_survive_a_restart()
+    {
+        var a = Out("058556050103", 1, T0) with { Event = ScanEventKind.CheckedOut, DurationSec = 0 };
+        var b = Scan("058556050103", 1, ScanDirection.Mark, T0.AddMinutes(1)) with { Event = ScanEventKind.Undo };
+        var c = In("058556050102", 1, T0.AddMinutes(2));
+        new Outbox(_folder).Add(a);
+        new Outbox(_folder).Add(b);
+        new Outbox(_folder).Add(c);
+
+        var again = new Outbox(_folder);
+
+        Assert.Equal([a, b, c], again.Peek());
+        var files = Directory.GetFiles(_folder, "*.json").Order(StringComparer.Ordinal).Select(File.ReadAllText).ToList();
+        Assert.Contains("\"direction\":\"Mark\"", files[1]);
+        Assert.DoesNotContain("event", files[2], StringComparison.OrdinalIgnoreCase);
     }
 }

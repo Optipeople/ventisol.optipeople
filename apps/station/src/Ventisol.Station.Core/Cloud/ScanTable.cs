@@ -15,7 +15,7 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
     readonly SemaphoreSlim _ensuring = new(1, 1);
     Guid? _tableId;
     Guid _accountId;
-    bool _unsortedLogged, _cappedLogged;
+    bool _unsortedLogged, _cappedLogged, _unknownEventLogged;
 
     public Guid? TableId { get { lock (_gate) return _tableId; } }
 
@@ -153,6 +153,7 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
             foreach (var row in result.Rows)
             {
                 if (!ScanEvent.TryFromValues(row.Values, out var e)) { skipped++; continue; }
+                if (ScanEvent.UnknownEvent(row.Values) is { } unknown) UnknownEvent(unknown);
                 if (last is { } p)
                 {
                     rising |= e.At > p;
@@ -225,6 +226,14 @@ public sealed class ScanTable(OptiCloudClient client, Action<string>? log = null
 
         if (skipped > 0) log?.Invoke($"OptiCloud: {skipped} rækker i {Name} kunne ikke læses som scanninger");
         return [.. found.Values.OrderBy(e => e.At).ThenBy(e => e.Direction)];
+
+        // Said once: a newer app's Event value, read as an ordinary scan.
+        void UnknownEvent(string text)
+        {
+            bool tell;
+            lock (_gate) (tell, _unknownEventLogged) = (!_unknownEventLogged, true);
+            if (tell) log?.Invoke($"OptiCloud: ukendt hændelse \"{text}\" i {Name} læses som en scanning");
+        }
 
         // Said once: the poll comes here every few seconds.
         void Capped()
