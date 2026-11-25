@@ -11,12 +11,27 @@ public class ScanRulesVectorsTests
     static readonly Lazy<JsonElement> File = new(() =>
         JsonDocument.Parse(System.IO.File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "scan-rules-vectors.json"))).RootElement.Clone());
 
-    static IEnumerable<JsonElement> Cases => File.Value.GetProperty("cases").EnumerateArray();
+    static IEnumerable<JsonElement> AllCases => File.Value.GetProperty("cases").EnumerateArray();
+
+    // A case tagged "needs" waits for a rule not built yet (Event, Mark, pause, shift end; see the
+    // file's _doc). It is left out here until the step that builds it removes the tag from this list.
+    static readonly string[] Built = [];
+
+    static string? Needs(JsonElement c) => c.TryGetProperty("needs", out var n) ? n.GetString() : null;
+
+    static IEnumerable<JsonElement> Cases => AllCases.Where(c => Needs(c) is not { } n || Built.Contains(n));
 
     public static TheoryData<string> Names => [.. Cases.Select(c => c.GetProperty("name").GetString()!)];
 
     [Fact]
     public void There_are_vectors() => Assert.True(Cases.Count() >= 14);
+
+    [Fact]
+    public void Cases_waiting_for_a_rule_are_tagged_with_a_known_need()
+    {
+        Assert.All(AllCases.Where(c => Needs(c) is not null), c => Assert.Equal("events", Needs(c)));
+        Assert.Equal(AllCases.Count(), AllCases.Select(c => c.GetProperty("name").GetString()).Distinct().Count());
+    }
 
     [Theory]
     [MemberData(nameof(Names))]

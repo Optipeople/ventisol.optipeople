@@ -17,7 +17,27 @@
     "  inProgress: per station, its latest maxOpen Ins with no Out, over the whole window, each",
     "       {stationNo, barcode, since}; at most maxOpen per station (one at a station with 1);",
     "       compare sorted by stationNo, then since, then barcode.",
-    "Times compare as instants (same millisecond), not as strings."
+    "Times compare as instants (same millisecond), not as strings.",
+    "",
+    "Planned, not built yet (docs/plan-scan-commands.md and docs/plan-shift-end.md, opticloud-scans.md",
+    "Events). A case with \"needs\": \"events\" uses them; both suites skip it until the step that builds",
+    "the rule lifts the tag (plan-scan-commands.md step 6 and 11, plan-shift-end.md step 5 and 9).",
+    "  event, optional on an event: the row's Event (Scan | Pause | Resume | Hold | CheckedOut | Undo |",
+    "       ShiftEnd); missing means Scan. direction may then also be Mark (no time, never pairs).",
+    "  A chain: passes of one element at one station joined where an Out with Pause is followed by an",
+    "       In with Resume. A chain is one record: start its first In, end its last Out.",
+    "  done entries gain activeSec (the sum of the chain's passes, compared when given) and endEvent",
+    "       (the Event of the row that closed the record: its last Out, or the Mark that closed its",
+    "       pause; missing means Scan; ShiftEnd means auto-stopped).",
+    "       A chain still paused is not done.",
+    "  paused, optional (missing means none): per station the elements whose last row is an Out with",
+    "       Pause there, not closed by a Mark, not scanned anywhere since, the Out inside the window,",
+    "       each {stationNo, barcode, since (the Pause Out), beforeSec (the chain's passes so far)};",
+    "       compare sorted as inProgress.",
+    "  inProgress entries gain beforeSec, compared when given: the chain's passes before its latest In.",
+    "  A late Out: an Out with no open In, at most 12 h after a ShiftEnd Out of the same element at the",
+    "       same station with no In between, ends that record instead (endEvent Scan). Later than 12 h",
+    "       it is skipped."
   ],
   "cases": [
     {
@@ -237,6 +257,206 @@
           { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T06:05:00Z" },
           { "stationNo": 3, "barcode": "058556050101", "since": "2026-10-21T06:30:00Z" }
         ]
+      }
+    },
+    {
+      "name": "session: pause and resume make one record, the pause left out of its active time",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0015-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0015-000000000002", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0015-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "event": "Resume", "time": "2026-10-21T06:45:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0015-000000000004", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Hold", "time": "2026-10-21T07:00:00Z", "durationSec": 900 }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 3, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T07:00:00Z", "activeSec": 2700, "endEvent": "Hold" } ],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "session: paused now, not done and not in progress",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 4 },
+      "events": [
+        { "id": "00000000-0000-0000-0016-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0016-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:10:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0016-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T09:00:00Z", "durationSec": 10800 },
+        { "id": "00000000-0000-0000-0016-000000000004", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T09:00:00Z", "durationSec": 10200 }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [],
+        "paused": [
+          { "stationNo": 3, "barcode": "058556050103", "since": "2026-10-21T09:00:00Z", "beforeSec": 10800 },
+          { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T09:00:00Z", "beforeSec": 10200 }
+        ]
+      }
+    },
+    {
+      "name": "session: a pause over the window start; a Pause Out before the window is forgotten",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0017-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-19T20:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0017-000000000002", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-19T21:00:00Z", "durationSec": 3600 },
+        { "id": "00000000-0000-0000-0017-000000000003", "barcode": "058557010101", "stationNo": 2, "station": "Station 20", "stationKind": "Assembly", "direction": "In", "time": "2026-10-19T21:30:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0017-000000000004", "barcode": "058557010101", "stationNo": 2, "station": "Station 20", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-19T22:30:00Z", "durationSec": 3600 }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [],
+        "paused": [ { "stationNo": 2, "barcode": "058557010101", "since": "2026-10-19T22:30:00Z", "beforeSec": 3600 } ]
+      }
+    },
+    {
+      "name": "session: a Mark (Hold) closes a pause and ends the record at its Pause Out",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0018-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0018-000000000002", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:20:00Z", "durationSec": 1200 },
+        { "id": "00000000-0000-0000-0018-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Mark", "event": "Hold", "time": "2026-10-21T06:50:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 3, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:20:00Z", "activeSec": 1200, "endEvent": "Hold" } ],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "session: resumed and running again, rebuilt from the rows (a restart) with the time before",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0019-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0019-000000000002", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0019-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "event": "Resume", "time": "2026-10-21T06:40:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [ { "stationNo": 3, "barcode": "058556050103", "since": "2026-10-21T06:40:00Z", "beforeSec": 1800 } ],
+        "paused": []
+      }
+    },
+    {
+      "name": "session: a paused element scanned in at another station leaves the pause; the rest stay paused",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 4 },
+      "events": [
+        { "id": "00000000-0000-0000-0020-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0020-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:01:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0020-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0020-000000000004", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1740 },
+        { "id": "00000000-0000-0000-0020-000000000005", "barcode": "058556050103", "stationNo": 4, "station": "Station 40", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:40:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 3, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:30:00Z", "activeSec": 1800, "endEvent": "Pause" } ],
+        "inProgress": [ { "stationNo": 4, "barcode": "058556050103", "since": "2026-10-21T06:40:00Z" } ],
+        "paused": [ { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T06:30:00Z", "beforeSec": 1740 } ]
+      }
+    },
+    {
+      "name": "session: the Resume Ins of one START, 1 ms apart, keep their order",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "maxOpen": { "3": 2 },
+      "events": [
+        { "id": "00000000-0000-0000-0021-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0021-000000000002", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:05:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0021-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0021-000000000004", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1500 },
+        { "id": "00000000-0000-0000-0021-000000000005", "barcode": "058557010101", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "event": "Resume", "time": "2026-10-21T06:40:00.001Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0021-000000000006", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "event": "Resume", "time": "2026-10-21T06:40:00.000Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [
+          { "stationNo": 3, "barcode": "058556050103", "since": "2026-10-21T06:40:00.000Z", "beforeSec": 1800 },
+          { "stationNo": 3, "barcode": "058557010101", "since": "2026-10-21T06:40:00.001Z", "beforeSec": 1500 }
+        ],
+        "paused": []
+      }
+    },
+    {
+      "name": "shift end: a ShiftEnd Out pairs like any Out and marks the record auto-stopped",
+      "needs": "events",
+      "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0022-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T11:20:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0022-000000000002", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "event": "ShiftEnd", "time": "2026-10-21T12:00:00Z", "durationSec": 2400 }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T11:20:00Z", "end": "2026-10-21T12:00:00Z", "activeSec": 2400, "endEvent": "ShiftEnd" } ],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "shift end: a late Out within 12 h of the ShiftEnd ends the record instead",
+      "needs": "events",
+      "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0023-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T11:20:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0023-000000000002", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "event": "ShiftEnd", "time": "2026-10-21T12:00:00Z", "durationSec": 2400 },
+        { "id": "00000000-0000-0000-0023-000000000003", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "time": "2026-10-21T13:10:00Z", "durationSec": 6600 }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T11:20:00Z", "end": "2026-10-21T13:10:00Z", "activeSec": 6600 } ],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "shift end: a late Out more than 12 h after the ShiftEnd is skipped",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0024-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-20T11:20:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0024-000000000002", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "event": "ShiftEnd", "time": "2026-10-20T12:00:00Z", "durationSec": 2400 },
+        { "id": "00000000-0000-0000-0024-000000000003", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "time": "2026-10-21T05:00:00Z", "durationSec": 63600 }
+      ],
+      "expected": {
+        "done": [],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "shift end: a Mark (ShiftEnd) closes a pause, the record auto-stopped at its Pause Out",
+      "needs": "events",
+      "now": "2026-10-21T14:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-20T02:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0025-000000000001", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T06:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0025-000000000002", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Out", "event": "Pause", "time": "2026-10-21T06:30:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0025-000000000003", "barcode": "058556050103", "stationNo": 3, "station": "Station 30", "stationKind": "Assembly", "direction": "Mark", "event": "ShiftEnd", "time": "2026-10-21T12:00:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 3, "start": "2026-10-21T06:00:00Z", "end": "2026-10-21T06:30:00Z", "activeSec": 1800, "endEvent": "ShiftEnd" } ],
+        "inProgress": [],
+        "paused": []
+      }
+    },
+    {
+      "name": "shift end: the next In after a ShiftEnd starts a new record, not a late Out",
+      "needs": "events",
+      "now": "2026-10-21T10:00:00Z", "todayStart": "2026-10-20T22:00:00Z", "windowStart": "2026-10-19T22:00:00Z",
+      "events": [
+        { "id": "00000000-0000-0000-0026-000000000001", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-20T11:20:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0026-000000000002", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "event": "ShiftEnd", "time": "2026-10-20T12:00:00Z", "durationSec": 2400 },
+        { "id": "00000000-0000-0000-0026-000000000003", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T04:10:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0026-000000000004", "barcode": "058556050103", "stationNo": 1, "station": "Station 10", "stationKind": "Assembly", "direction": "Out", "time": "2026-10-21T04:40:00Z", "durationSec": 1800 },
+        { "id": "00000000-0000-0000-0026-000000000005", "barcode": "058557010101", "stationNo": 2, "station": "Station 20", "stationKind": "Assembly", "direction": "In", "time": "2026-10-20T11:00:00Z", "durationSec": null },
+        { "id": "00000000-0000-0000-0026-000000000006", "barcode": "058557010101", "stationNo": 2, "station": "Station 20", "stationKind": "Assembly", "direction": "Out", "event": "ShiftEnd", "time": "2026-10-20T12:00:00Z", "durationSec": 3600 },
+        { "id": "00000000-0000-0000-0026-000000000007", "barcode": "058557010101", "stationNo": 2, "station": "Station 20", "stationKind": "Assembly", "direction": "In", "time": "2026-10-21T04:15:00Z", "durationSec": null }
+      ],
+      "expected": {
+        "done": [ { "barcode": "058556050103", "stationNo": 1, "start": "2026-10-21T04:10:00Z", "end": "2026-10-21T04:40:00Z", "activeSec": 1800 } ],
+        "inProgress": [ { "stationNo": 2, "barcode": "058557010101", "since": "2026-10-21T04:15:00Z" } ],
+        "paused": []
       }
     }
   ]

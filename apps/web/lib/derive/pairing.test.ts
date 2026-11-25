@@ -30,6 +30,8 @@ interface VectorCase {
   windowStart: string;
   /** "Max i gang" per station number, as a string key. A station not listed has 1. */
   maxOpen?: Record<string, number>;
+  /** Waits for a rule not built yet (see the file's _doc). Skipped until its tag is in BUILT. */
+  needs?: string;
   events: VectorEvent[];
   expected: {
     done: { barcode: string; stationNo: number; start: string; end: string }[];
@@ -40,6 +42,11 @@ interface VectorCase {
 const file = fileURLToPath(new URL("../../../../docs/scan-rules-vectors.json", import.meta.url));
 const { cases } = JSON.parse(readFileSync(file, "utf8")) as { cases: VectorCase[] };
 const ms = (iso: string) => Date.parse(iso);
+
+// The "needs" tags this pairing follows. Plan step "Pairing" adds "events" here.
+const BUILT: string[] = [];
+const ready = cases.filter((c) => !c.needs || BUILT.includes(c.needs));
+const waiting = cases.filter((c) => !ready.includes(c));
 
 function toScan(e: VectorEvent): Scan {
   const parts = parseBarcode(e.barcode);
@@ -80,11 +87,13 @@ function check(c: VectorCase, scans: Scan[]) {
 describe("shared scan-rule vectors against pairHistory", () => {
   it("has cases", () => expect(cases.length).toBeGreaterThan(0));
 
-  it.each(cases.map((c) => [c.name, c] as const))("windowed: %s", (_n, c) => {
+  it.skip.each(waiting.map((c) => [c.name] as const))("waits for its rule: %s", () => {});
+
+  it.each(ready.map((c) => [c.name, c] as const))("windowed: %s", (_n, c) => {
     check(c, c.events.map(toScan).filter((s) => s.time >= ms(c.windowStart)));
   });
 
-  it.each(cases.map((c) => [c.name, c] as const))("full history: %s", (_n, c) => {
+  it.each(ready.map((c) => [c.name, c] as const))("full history: %s", (_n, c) => {
     check(c, c.events.map(toScan));
   });
 });

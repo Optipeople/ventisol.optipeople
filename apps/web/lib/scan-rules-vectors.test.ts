@@ -27,6 +27,8 @@ interface VectorCase {
   windowStart: string;
   /** "Max i gang" per station number, as a string key. A station not listed has 1. */
   maxOpen?: Record<string, number>;
+  /** Waits for a rule not built yet (see the file's _doc); skipped here, as lib/report.ts never gets it. */
+  needs?: string;
   events: VectorEvent[];
   expected: {
     done: { barcode: string; stationNo: number; start: string; end: string }[];
@@ -70,7 +72,10 @@ describe("shared scan-rule vectors", () => {
     expect(cases.length).toBeGreaterThan(0);
   });
 
-  it.each(cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+  // lib/report.ts is the old pairing: it ignores Event and Mark, so tagged cases stay skipped here.
+  it.skip.each(cases.filter((c) => c.needs).map((c) => [c.name] as const))("%s", () => {});
+
+  it.each(cases.filter((c) => !c.needs).map((c) => [c.name, c] as const))("%s", (_name, c) => {
     const now = ms(c.now);
     const todayStart = ms(c.todayStart);
     const windowStart = ms(c.windowStart);

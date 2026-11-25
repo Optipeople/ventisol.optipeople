@@ -34,10 +34,11 @@ missing column, on first connect (`MasterData/GetTables`, `CreateTable`, `GetCol
 | `StationNo` | Int (2) | scanner/station number 1 to 7 |
 | `StationKind` | String (0) | `Assembly` or `Packing` |
 | `MachineId` | String (0) | the station's OptiCloud machine id, empty if not set up |
-| `Direction` | String (0) | `In` or `Out` |
+| `Direction` | String (0) | `In` or `Out`; planned: `Mark` (see Events) |
 | `ScanTime` | DateTime (3) | when it was scanned, UTC, ISO 8601 |
 | `DurationSec` | Int (2) | on `Out`: seconds since the matching `In`; empty on `In` |
 | `Device` | String (0) | the PC that sent it (Windows machine name) |
+| `Event` | String (0), friendly name "Hændelse" | planned: why the row was written (see Events); empty means `Scan` |
 
 Rejected scans (an unknown barcode, or a new element at a station already at its "Max i gang")
 are only shown on the screen and not stored.
@@ -52,6 +53,46 @@ the app does not set it, so a table hidden in OptiCloud would not be found and a
 
 Row values come back keyed by column name; match names case-insensitively (the API may
 camelCase them).
+
+## Events
+
+**Planned, not built yet.** From [`plan-scan-commands.md`](plan-scan-commands.md) §6 and
+[`plan-shift-end.md`](plan-shift-end.md) §5. Today every row is a plain `In` or `Out` with no `Event`.
+
+The `Event` column says why a row was written. It is added on connect like any missing column.
+
+| Value | Written by | Meaning |
+|---|---|---|
+| `Scan` | today | an ordinary scan; left out of the row, so an Enkel station's rows stay as today's |
+| `Pause` | Session | an Out by the PAUSE card |
+| `Resume` | Session | an In by START after PAUSE |
+| `Hold` | Session | an Out by HOLD, or a `Mark` ending a paused element |
+| `CheckedOut` | Pakning | a check-out at a Pakning station |
+| `Undo` | Pakning | cancels the latest `CheckedOut` of the same barcode at the same station |
+| `ShiftEnd` | every Arbejdsform | an element still running at shift end, stopped back-dated (see Rules, Shift end) |
+
+`Direction` gains `Mark`: a row that carries no time and never pairs.
+
+| Direction | Event | Written when | Pairs? |
+|---|---|---|---|
+| `In` | empty | an element is scanned in | yes |
+| `Out` | empty | scanned out, switched, stopped on the tile, stopped in OptiPeople | yes |
+| `Out` | `Pause` | PAUSE, per element in progress | yes |
+| `In` | `Resume` | START after PAUSE, per paused element | yes |
+| `Out` | `Hold` | HOLD, per element in progress | yes |
+| `Mark` | `Hold` | HOLD, a tile stop or a mode change, of an element on pause | no: closes the pause |
+| `Out` | `CheckedOut` | a check-out at a Pakning station | yes |
+| `Mark` | `Undo` | `VS-UNDO` at a Pakning station | no: cancels that check-out |
+| `Out` | `ShiftEnd` | an element in progress, no activity within the grace after shift end | yes |
+| `Mark` | `ShiftEnd` | an element on pause, no activity within the grace after shift end | no: closes the pause |
+
+- Every row still carries the element's barcode, order, position and station. No row is written
+  for a card alone (START with no elements, PAUSE or HOLD with nothing in progress).
+- An old row (no `Event`) and an unknown value read as `Scan`.
+- An old station app or viewer reads Pause and Resume as an ordinary Out and In, so its times are
+  right, and skips a `Mark` (unknown direction). The portal before its update drops a `Mark`.
+- A `ShiftEnd` Out has `ScanTime` = the stop time, not when it was written, and a derived `ScanId`
+  (UUID v5 of its In's `ScanId` and `ShiftEnd`), so two writes of the same stop are one row.
 
 ## Files in a list
 
@@ -195,6 +236,59 @@ its `_doc`). Change a rule there and here first.
   gives that other station 7 of 8 hours.
 - No order is called packed or done: the scans can't tell that without the order's element count.
   An order not in progress shows the station it was last scanned out at.
+
+### Session (planned, not built yet)
+
+From [`plan-scan-commands.md`](plan-scan-commands.md) §5 and §6, for a station with Arbejdsform
+`Session`. The vectors tagged `"needs": "events"` hold these rules; both suites skip them until
+the rule is built.
+
+- A station is Idle, Running or Paused. START or an element scanned at Idle starts a session;
+  each element starts at its own scan, not at START.
+- PAUSE: every element in progress gets an Out with `Pause`; they are the paused set. START: every
+  paused element gets an In with `Resume`, stamped 1 ms apart in the order they were first scanned
+  in, so the one scanned in last stays last. HOLD: every element in progress gets an Out with
+  `Hold`, and every paused one a `Mark` with `Hold`.
+- An element scanned while Paused is refused, not stored. A card a station's Arbejdsform does not
+  use is refused, not stored. START or PAUSE a second time does nothing.
+- A chain: the passes of one element at one station, joined where an Out with `Pause` is followed
+  by an In with `Resume`. A chain is one work record: start its first In, end its last Out, active
+  time the sum of its passes. So the pause is never work, and every reader that only pairs In and
+  Out already leaves it out.
+- Paused: per station, the elements whose last row is an Out with `Pause` there, not closed by a
+  `Mark`, and not scanned anywhere since, the Out inside the window. A paused chain is neither in
+  progress nor done. It is paused since that Out, with the time of its passes so far.
+- A paused element scanned in at another station is an ordinary In there; its chain here ends at
+  its Pause Out. The rest of the paused set stays paused.
+- A `Mark` closes a pause and ends its chain at the Pause Out. It carries no time.
+- In progress after a Resume: since the Resume In, with the chain's earlier passes as time before.
+- Visits: a pass that starts with `Resume` always continues the visit before it, however long the
+  pause.
+
+### Shift end (planned, not built yet)
+
+From [`plan-shift-end.md`](plan-shift-end.md) §4 and §5, for every Arbejdsform.
+
+- Shifts come from the station's machine in OptiCloud (`ExternalGetMachineShiftByMachineId`), else
+  the standard shift in Opsætning. Shifts that touch or are less than 2 hours apart are one span;
+  its end is the shift end E. A station with neither is never stopped.
+- Activity at a station: any row for it, any scan it hears (also refused), a card, a tile stop, a
+  tap on `Arbejder videre`. Not a `ShiftEnd` row.
+- Off shift, let `x` be the later of E and the station's last activity. With no activity for the
+  grace period (60 minutes) after `x`, and before the next span starts, everything at the station
+  stops at `x`: each element in progress gets an Out with `ShiftEnd` (`ScanTime` = `x`,
+  `DurationSec` to `x`), each paused element a `Mark` with `ShiftEnd`. So nothing after the shift
+  stops at E; overtime stops at its last activity.
+- Only the scan PC (Scan mode) writes it, after its rebuild from OptiCloud, and not when OptiCloud
+  already has an Out or In of the element after its In. A PC that was off catches up on start,
+  inside the 36 hour window.
+- A `ShiftEnd` Out pairs like any Out. Its record is auto-stopped.
+- A late Out: an Out with no open In, after a `ShiftEnd` Out of the same element at the same station
+  with no In between. At most 12 hours after the `ShiftEnd` time, the real Out wins: the record ends
+  there and is not auto-stopped. Later than 12 hours, the Out is skipped. Today such an Out would
+  make a second record from its `DurationSec` and count the time twice.
+- The next In after a `ShiftEnd` starts a new pass. The read model joins it to the same visit, not
+  rework.
 
 ## Orders on machines
 
