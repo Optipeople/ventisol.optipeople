@@ -227,7 +227,7 @@ forth, but one big list at a time is what can be read from a distance.
   undoes it: an `Undo` row (section 5) or an `In` at an assembly station (rework).
 - **Open pallet**: at most one per Pakning station. It survives a restart and the night. The pallet
   rules (one pallet per window, the replay) are #3's (§4 there).
-- **Checked out and on a pallet go together.** A scan does both, `VS-UNDO` and `VS-CLEAR` undo both. A
+- **Checked out and on a pallet go together.** A scan does both, `VS-UNDO` and `VS-CLEAR` undo both (`VS-CLEAR` un-checking every piece confirmed by Morten 2026-11-25). A
   move changes only the pallet. A checked-out piece on no pallet exists only from before pallets were
   built here.
 
@@ -243,7 +243,7 @@ Edge cases:
 | Order left half done | Stays open, in the strip and on the portal's list; its next scan brings the list back | An order can't leave short |
 | Piece still in progress at an assembly station | That station gets an `Out` at the check time (as a stop from its tile), then the check-out | An open `In` elsewhere would keep the order "on a station" and not packed in the read model |
 | Piece in progress at packing itself (an `In` from Enkel mode, before the switch) | The check-out is its `Out`, with `DurationSec` since that `In` | Pairs as today |
-| Checked piece comes back for rework (scanned `In` at Station 30) | The chip turns red outlined, `Tilbage i produktion (Station 30)`; the order is open again. It stays on its pallet in the pallet data, marked the same way in the pallet panel and the portal; checked again later, it moves to the then open pallet and the end time moves | Packed is derived, not latched (`read-model.md` §4) |
+| Checked piece comes back for rework (scanned `In` at Station 30) | The chip turns red outlined, `Tilbage i produktion (Station 30)`; the order is open again. It stays on its pallet in the pallet data (confirmed by Morten 2026-11-25), marked the same way in the pallet panel and the portal; checked again later, it moves to the then open pallet and the end time moves | Packed is derived, not latched (`read-model.md` §4) |
 | Remake with the same label | Treated as the same piece: if it was checked out and went back, it is checked again | Same barcode, same element |
 | Remake of an older order (below 58000) | Accepted when its PDF is in the folder (`OrderHints.Exists`), as today | Existing rule |
 | Wrong piece scanned | `VS-UNDO` (the piece added last), or several `VS-UNDO` for one further back | Needs a deliberate command |

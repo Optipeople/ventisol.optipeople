@@ -497,15 +497,16 @@ public static class ShiftEndRule
 
 For Ventisol:
 
-1. Grace 60 minutes: right? Shorter catches more, longer keeps more overtime.
-2. Overtime: an element started after the shift and left alone gets zero time (stopped at its own In).
+Answered: grace 60 minutes, confirmed by Morten 2026-11-25.
+
+1. Overtime: an element started after the shift and left alone gets zero time (stopped at its own In).
    Acceptable, with the countdown and `Arbejder videre`?
-3. Are the stations' machines in OptiCloud set up with the real shifts (06:00 to 14:00?), and do you
+2. Are the stations' machines in OptiCloud set up with the real shifts (06:00 to 14:00?), and do you
    work two shifts or nights anywhere?
-4. The next morning's scan of an auto-stopped element starts it again. Is that what the operator
+3. The next morning's scan of an auto-stopped element starts it again. Is that what the operator
    expects, or should the first scan the next day on an auto-stopped element do nothing but show the
    message?
-5. Who should see the auto-stops: only the portal list, or also a daily mail to the foreman?
+4. Who should see the auto-stops: only the portal list, or also a daily mail to the foreman?
 
 For the OptiCloud backend owner:
 
