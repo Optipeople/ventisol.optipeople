@@ -303,6 +303,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Style="{StaticResource Left}" FontFamily="{StaticResource Mono}" Foreground="{StaticResource Ink3}" Text="{Binding Number}" />
@@ -347,6 +348,13 @@
                     <StackPanel x:Name="ModeLine" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="13" Orientation="Horizontal" Margin="0,10,0,2">
                         <Ellipse x:Name="ModeDot" Style="{StaticResource StatusDot}" Fill="{StaticResource Ink3}" />
                         <TextBlock x:Name="ModeText" Style="{StaticResource Small}" Text="{Binding WorkModeNote}" />
+                    </StackPanel>
+
+                    <!-- Vagtslut: where the station's shifts come from -->
+                    <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="13" Orientation="Horizontal" Margin="0,10,0,2">
+                        <TextBlock FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Text="&#xE823;" Foreground="{StaticResource Ink3}"
+                                   VerticalAlignment="Center" Margin="0,1,10,0" />
+                        <TextBlock Style="{StaticResource Small}" Text="{Binding ShiftSource}" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -660,6 +668,54 @@
                             </Border>
                             <TextBlock Style="{StaticResource Small}" Margin="220,16,0,0" TextWrapping="Wrap"
                                        Text="På en station med Max i gang over 1 markeres et element, der har været i gang længere end det. Et glemt element ville ellers tage en del af stationens tid." />
+                        </StackPanel>
+
+                        <!-- ===== Vagtslut (docs/plan-shift-end.md §3.3) ===== -->
+                        <TextBlock Style="{StaticResource Section}" Text="VAGTSLUT" />
+                        <StackPanel Width="880" HorizontalAlignment="Left">
+                            <Border Style="{StaticResource Row}">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource Left}" Width="220" Text="Stop ved vagtslut" />
+                                    <Border Style="{StaticResource Track}" Width="216" HorizontalAlignment="Left">
+                                        <UniformGrid Columns="2">
+                                            <RadioButton Style="{StaticResource Segment}" Content="Til" GroupName="shiftend" IsChecked="{Binding ShiftEndOn}" />
+                                            <RadioButton Style="{StaticResource Segment}" Content="Fra" GroupName="shiftend" IsChecked="{Binding IsShiftEndOff}" />
+                                        </UniformGrid>
+                                    </Border>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource Row}">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource Left}" Width="220" Text="Vent efter vagtslut (min)" />
+                                    <ComboBox Width="120" HorizontalAlignment="Left" ItemsSource="{Binding GraceOptions}" SelectedItem="{Binding ShiftEndGraceMinutes}"
+                                              IsEnabled="{Binding ShiftEndOn}" />
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource Row}">
+                                <DockPanel>
+                                    <TextBlock Style="{StaticResource Left}" Width="220" Text="Standardvagt (man–fre)" />
+                                    <StackPanel Orientation="Horizontal" IsEnabled="{Binding ShiftEndOn}">
+                                        <ComboBox Width="120" ItemsSource="{Binding ShiftTimeOptions}" SelectedItem="{Binding ShiftStart}" ToolTip="Vagtens start" />
+                                        <TextBlock Style="{StaticResource Left}" Margin="12,0" Text="til" />
+                                        <ComboBox Width="120" ItemsSource="{Binding ShiftTimeOptions}" SelectedItem="{Binding ShiftEnd}" ToolTip="Vagtens slut" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="220,16,0,0">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShiftNote}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <Ellipse Style="{StaticResource StatusDot}" Fill="{StaticResource Warn}" />
+                                <TextBlock Style="{StaticResource Small}" Foreground="{StaticResource Ink}" Text="{Binding ShiftNote}" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Small}" Margin="220,16,0,0" TextWrapping="Wrap"
+                                       Text="Elementer, der stadig er i gang, stoppes ved vagtens slut, når der ikke er sket noget på stationen i ventetiden. Standardvagt Ingen: stationen stoppes ikke." />
                         </StackPanel>
 
                         <!-- ===== Ordredokumenter ===== -->

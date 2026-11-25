@@ -23,6 +23,12 @@ public sealed record WorkModeOption(StationWorkMode Mode)
     public override string ToString() => Mode.ToString();
 }
 
+// One time in a Standardvagt drop-down, in steps of 15 minutes. Time null is "none".
+public sealed record ShiftTimeOption(TimeOnly? Time)
+{
+    public override string ToString() => Time is { } t ? StandardShift.Time(t) : "Ingen";
+}
+
 public sealed record ScannerOption(string? Id, string Label)
 {
     public override string ToString() => Label;
@@ -89,6 +95,15 @@ public sealed partial class SetupViewModel : ObservableObject
         DocumentsFolder = settings.DocumentsFolder ?? "";
         MarkAfterHours = settings.MarkAfterHours;
         MarkAfterOptions = [.. DefaultMarkAfterOptions.Append(settings.MarkAfterHours).Distinct().Order()];
+        ShiftEndOn = settings.ShiftEndOn;
+        ShiftEndGraceMinutes = settings.ShiftEndGraceMinutes;
+        GraceOptions = [.. DefaultGraceOptions.Append(settings.ShiftEndGraceMinutes).Distinct().Order()];
+        // Every quarter of an hour, plus a saved time between them (a hand-edited file), so it shows.
+        ShiftTimeOptions = [new ShiftTimeOption(null), .. Enumerable.Range(0, 24 * 4).Select(q => new TimeOnly(q / 4, q % 4 * 15))
+            .Concat(new[] { settings.StandardShift?.Start, settings.StandardShift?.End }.OfType<TimeOnly>()).Distinct().Order()
+            .Select(t => new ShiftTimeOption(t))];
+        ShiftStart = new ShiftTimeOption(settings.StandardShift?.Start);
+        ShiftEnd = new ShiftTimeOption(settings.StandardShift?.End);
 
         _ready = true;
         RebuildMachines();
@@ -247,6 +262,53 @@ public sealed partial class SetupViewModel : ObservableObject
     static readonly int[] DefaultMarkAfterOptions = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24, 48];
     public IReadOnlyList<int> MarkAfterOptions { get; }
     [ObservableProperty] public partial int MarkAfterHours { get; set; } = StationSettings.DefaultMarkAfterHours;
+
+    // ----- Vagtslut
+
+    // "Stop ved vagtslut", on by default.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsShiftEndOff))]
+    public partial bool ShiftEndOn { get; set; } = true;
+
+    public bool IsShiftEndOff { get => !ShiftEndOn; set { if (value) ShiftEndOn = false; } }
+
+    // "Vent efter vagtslut (min)", 15 to 90.
+    static readonly int[] DefaultGraceOptions = [15, 30, 45, 60, 75, 90];
+    public IReadOnlyList<int> GraceOptions { get; } = DefaultGraceOptions;
+    [ObservableProperty] public partial int ShiftEndGraceMinutes { get; set; } = StationSettings.DefaultShiftEndGraceMinutes;
+
+    // "Standardvagt", Monday to Friday: start and end, each "Ingen" or a time.
+    public IReadOnlyList<ShiftTimeOption> ShiftTimeOptions { get; } = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShiftNote))]
+    public partial ShiftTimeOption? ShiftStart { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShiftNote))]
+    public partial ShiftTimeOption? ShiftEnd { get; set; }
+
+    // The standard shift as chosen; null when none, or only half chosen (Problem says so).
+    StandardShift? ChosenShift =>
+        ShiftStart?.Time is { } a && ShiftEnd?.Time is { } b && a != b ? new StandardShift(a, b) : null;
+
+    // A line under the standard shift that doesn't stop a save (a night shift), or null.
+    public string? ShiftNote => SetupRules.StandardShiftHint(ChosenShift);
+
+    // Where a station's shifts come from, for its row (SetupRules.ShiftSource).
+    internal string ShiftSource() =>
+        SetupRules.ShiftSource(StationSettings.Default with { ShiftEndOn = ShiftEndOn, StandardShift = ChosenShift });
+
+    partial void OnShiftEndOnChanged(bool value) => ShiftChanged();
+    partial void OnShiftStartChanged(ShiftTimeOption? value) => ShiftChanged();
+    partial void OnShiftEndChanged(ShiftTimeOption? value) => ShiftChanged();
+
+    void ShiftChanged()
+    {
+        if (!_ready) return;
+        foreach (var row in Stations) row.RefreshShiftSource();
+        UpdateProblems();
+    }
 
     // ----- Ordredokumenter
 
@@ -491,7 +553,10 @@ public sealed partial class SetupViewModel : ObservableObject
             string.IsNullOrWhiteSpace(Username) ? null : Username.Trim(),
             [.. Stations.Select(s => s.ToSetup())],
             StationSettingsJson.NormalizeFolder(DocumentsFolder),
-            MarkAfterHours);
+            MarkAfterHours,
+            ShiftEndOn,
+            ShiftEndGraceMinutes,
+            ChosenShift);
         return ok;
     }
 
@@ -501,6 +566,7 @@ public sealed partial class SetupViewModel : ObservableObject
         var ok = TryBuild(out var s);
         Problem = !ok ? "Konto-id ser ikke rigtigt ud"
             : SetupRules.Problems(s).FirstOrDefault()
+              ?? SetupRules.StandardShiftProblem(ShiftStart?.Time, ShiftEnd?.Time)
               ?? (MustRetypePassword ? RetypePassword + " (eller tryk Glem)"
                   : NewPin.Length > 0 && !SetupPin.IsValid(NewPin) ? $"PIN skal være {SetupPin.MinDigits} til {SetupPin.MaxDigits} cifre"
                   : null);
@@ -693,6 +759,11 @@ public sealed partial class SetupStationViewModel : ObservableObject
 
     [RelayCommand]
     void Identify() => _owner.Identify(this);
+
+    // Where the station's shifts come from: OptiPeople, the standard shift, or none (SetupRules.ShiftSource).
+    public string ShiftSource => _owner.ShiftSource();
+
+    internal void RefreshShiftSource() => OnPropertyChanged(nameof(ShiftSource));
 
     public StationSetup ToSetup() =>
         new(Number, Name.Trim(), Kind, Machine is null ? InitialMachineId : Machine.Id, Scanner is null ? InitialScanner : Scanner.Id, MaxActive,

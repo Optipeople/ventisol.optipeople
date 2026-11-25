@@ -16,8 +16,14 @@ public static class StationSettingsJson
     sealed record FileStation(int Number, string? Name, StationKind Kind, Guid? MachineId, string? ScannerSerial, int MaxActive = 1,
         string? WorkMode = null);
 
+    // The Vagtslut settings came later still: a file without them reads as on, 60 minutes and no standard
+    // shift (0 minutes is "not given"). The standard shift's times are "HH:mm" text; one that can't be read
+    // makes it none (logged), never the whole file unreadable.
+    sealed record FileShift(string? Start, string? End);
+
     sealed record FileSettings(int Version, StationMode Mode, string? ApiBaseUrl, Guid? AccountId, string? Username, List<FileStation>? Stations,
-        string? DocumentsFolder = null, int MarkAfterHours = StationSettings.DefaultMarkAfterHours);
+        string? DocumentsFolder = null, int MarkAfterHours = StationSettings.DefaultMarkAfterHours,
+        bool? ShiftEndOn = null, int ShiftEndGraceMinutes = 0, FileShift? StandardShift = null);
 
     static readonly JsonSerializerOptions Options = new()
     {
@@ -29,7 +35,8 @@ public static class StationSettingsJson
     public static string Serialize(StationSettings s) => JsonSerializer.Serialize(
         new FileSettings(Version, s.Mode, s.ApiBaseUrl, s.AccountId, s.Username,
             [.. s.Stations.Select(t => new FileStation(t.Number, t.Name, t.Kind, t.MachineId, t.ScannerSerial, t.MaxActive, t.WorkMode.ToString()))],
-            s.DocumentsFolder, s.MarkAfterHours),
+            s.DocumentsFolder, s.MarkAfterHours, s.ShiftEndOn, s.ShiftEndGraceMinutes,
+            s.StandardShift is { } shift ? new FileShift(StandardShift.Time(shift.Start), StandardShift.Time(shift.End)) : null),
         Options);
 
     // Null when the text isn't settings at all; otherwise the settings, made whole (see Normalize).
@@ -50,6 +57,12 @@ public static class StationSettingsJson
             var stations = (f.Stations ?? []).Where(t => t is not null)
                 .Select(t => new StationSetup(t.Number, t.Name ?? "", t.Kind, t.MachineId, t.ScannerSerial, t.MaxActive, Mode(t))).ToList();
             if (unknown.Count > 0) log?.Invoke($"settings.json: unknown Arbejdsform read as Enkel ({string.Join(", ", unknown)})");
+            StandardShift? standard = null;
+            if (f.StandardShift is { } fs && (!string.IsNullOrWhiteSpace(fs.Start) || !string.IsNullOrWhiteSpace(fs.End)))
+            {
+                if (StandardShift.ParseTime(fs.Start) is { } start && StandardShift.ParseTime(fs.End) is { } end) standard = new(start, end);
+                else log?.Invoke($"settings.json: standard shift \"{fs.Start}\" to \"{fs.End}\" could not be read, none is used");
+            }
             return Normalize(new StationSettings(
                 f.Mode,
                 f.ApiBaseUrl ?? "",
@@ -57,7 +70,10 @@ public static class StationSettingsJson
                 f.Username,
                 stations,
                 f.DocumentsFolder,
-                f.MarkAfterHours));
+                f.MarkAfterHours,
+                f.ShiftEndOn ?? true,
+                f.ShiftEndGraceMinutes,
+                standard));
         }
         catch (JsonException) { return null; }
         catch (NotSupportedException) { return null; }
@@ -78,7 +94,9 @@ public static class StationSettingsJson
     // scanner sits on one station at most (the first). Blank texts become the default or null.
     // "Max i gang" is kept to 1 .. StationConfig.MaxActiveLimit, "Marker efter" to 1 .. 48 hours (0 or
     // less: the default 4). An Arbejdsform outside the enum is Enkel; Pakning stays, though not offered
-    // yet, so a newer app's file comes back as it was.
+    // yet, so a newer app's file comes back as it was. "Vent efter vagtslut" is kept to 15 .. 90 minutes
+    // (0 or less: the default 60); a standard shift is kept to whole minutes, and one that starts and ends
+    // at the same time is none.
     public static StationSettings Normalize(StationSettings s)
     {
         var given = s.Stations.GroupBy(t => t.Number).ToDictionary(g => g.Key, g => g.First());
@@ -104,7 +122,19 @@ public static class StationSettingsJson
         var user = string.IsNullOrWhiteSpace(s.Username) ? null : s.Username.Trim();
         var account = s.AccountId == Guid.Empty ? null : s.AccountId;
         var mark = s.MarkAfterHours <= 0 ? StationSettings.DefaultMarkAfterHours : Math.Min(s.MarkAfterHours, StationSettings.MaxMarkAfterHours);
-        return new StationSettings(s.Mode, url, account, user, stations, NormalizeFolder(s.DocumentsFolder), mark);
+        var grace = s.ShiftEndGraceMinutes <= 0 ? StationSettings.DefaultShiftEndGraceMinutes
+            : Math.Clamp(s.ShiftEndGraceMinutes, StationSettings.MinShiftEndGraceMinutes, StationSettings.MaxShiftEndGraceMinutes);
+        return new StationSettings(s.Mode, url, account, user, stations, NormalizeFolder(s.DocumentsFolder), mark,
+            s.ShiftEndOn, grace, NormalizeShift(s.StandardShift));
+    }
+
+    // Whole minutes; a shift that starts and ends at the same time is none.
+    public static StandardShift? NormalizeShift(StandardShift? shift)
+    {
+        if (shift is null) return null;
+        var start = new TimeOnly(shift.Start.Hour, shift.Start.Minute);
+        var end = new TimeOnly(shift.End.Hour, shift.End.Minute);
+        return start == end ? null : new StandardShift(start, end);
     }
 
     // A folder path as typed or pasted: trimmed, without quotes around it ("Copy as path" adds them)

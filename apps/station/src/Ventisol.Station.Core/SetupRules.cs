@@ -109,4 +109,40 @@ public static class SetupRules
                 warnings[t.Number] = w;
         return warnings;
     }
+
+    // ----- Vagtslut (docs/plan-shift-end.md §3.3)
+
+    public const string ShiftEndsBeforeStart = "Standardvagt slutter før den starter";
+    public const string ShiftNeedsStart = "Standardvagt mangler starttid";
+    public const string ShiftNeedsEnd = "Standardvagt mangler sluttid";
+    public const string ShiftStartIsEnd = "Standardvagt starter og slutter på samme tid";
+
+    // What stops a save in the standard shift as chosen: one time without the other, or both the same.
+    // Both blank is fine: no standard shift.
+    public static string? StandardShiftProblem(TimeOnly? start, TimeOnly? end) => (start, end) switch
+    {
+        (null, null) => null,
+        (null, _) => ShiftNeedsStart,
+        (_, null) => ShiftNeedsEnd,
+        var (a, b) when a == b => ShiftStartIsEnd,
+        _ => null,
+    };
+
+    // A note on the standard shift that doesn't stop a save: one that ends before it starts runs over
+    // midnight (a night shift is allowed). Null otherwise.
+    public static string? StandardShiftHint(StandardShift? shift) =>
+        shift is { } s && s.End < s.Start ? ShiftEndsBeforeStart : null;
+
+    public const string ShiftEndOff = "Stop ved vagtslut er slået fra";
+    public const string NoShifts = "Ingen vagter – stopper ikke ved vagtslut";
+
+    // Where a station's shifts come from, for its row in Opsætning. machineShifts is the station's
+    // machine's shifts in OptiPeople as a short text ("man–fre 06:00–14:00"), null when it has none or
+    // they are not known; the machine shifts are not read yet, so for now it is always null.
+    public static string ShiftSource(StationSettings s, string? machineShifts = null)
+    {
+        if (!s.ShiftEndOn) return ShiftEndOff;
+        if (!string.IsNullOrWhiteSpace(machineShifts)) return $"Vagter fra OptiPeople: {machineShifts.Trim()}";
+        return s.StandardShift is { } shift ? $"Bruger standardvagt {shift}" : NoShifts;
+    }
 }

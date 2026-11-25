@@ -309,4 +309,128 @@ public class StationSettingsTests
         Assert.Empty(SetupRules.ModeChanges(before, after, new Dictionary<int, int>()));
         Assert.Empty(SetupRules.Problems(after));
     }
+
+    // ----- Vagtslut
+
+    static readonly StandardShift Day = new(new TimeOnly(6, 0), new TimeOnly(14, 0));
+
+    [Fact]
+    public void A_file_without_vagtslut_reads_the_defaults()
+    {
+        var back = StationSettingsJson.Deserialize("""{ "version": 1, "mode": "Scan", "stations": [] }""");
+
+        Assert.NotNull(back);
+        Assert.True(back.ShiftEndOn);
+        Assert.Equal(60, back.ShiftEndGraceMinutes);
+        Assert.Null(back.StandardShift);
+        Assert.True(StationSettings.Default.ShiftEndOn);
+        Assert.Equal(60, StationSettings.Default.ShiftEndGraceMinutes);
+        Assert.Null(StationSettings.Default.StandardShift);
+    }
+
+    [Fact]
+    public void Vagtslut_survives_a_round_trip_through_json()
+    {
+        var s = Configured() with { ShiftEndOn = false, ShiftEndGraceMinutes = 45, StandardShift = Day };
+        var json = StationSettingsJson.Serialize(s);
+        var back = StationSettingsJson.Deserialize(json);
+
+        Assert.Contains("\"start\": \"06:00\"", json);
+        Assert.Contains("\"end\": \"14:00\"", json);
+        Assert.NotNull(back);
+        Assert.False(back.ShiftEndOn);
+        Assert.Equal(45, back.ShiftEndGraceMinutes);
+        Assert.Equal(Day, back.StandardShift);
+
+        var none = StationSettingsJson.Deserialize(StationSettingsJson.Serialize(Configured()));
+        Assert.True(none!.ShiftEndOn);
+        Assert.Null(none.StandardShift);
+    }
+
+    [Theory]
+    [InlineData(0, 60)]
+    [InlineData(-5, 60)]
+    [InlineData(1, 15)]
+    [InlineData(15, 15)]
+    [InlineData(37, 37)]
+    [InlineData(90, 90)]
+    [InlineData(500, 90)]
+    public void The_grace_is_kept_to_15_to_90_minutes(int given, int kept)
+    {
+        Assert.Equal(kept, StationSettingsJson.Normalize(StationSettings.Default with { ShiftEndGraceMinutes = given }).ShiftEndGraceMinutes);
+        var back = StationSettingsJson.Deserialize($$"""{ "version": 1, "mode": "Scan", "shiftEndGraceMinutes": {{given}} }""");
+        Assert.Equal(kept, back!.ShiftEndGraceMinutes);
+    }
+
+    [Fact]
+    public void A_standard_shift_that_cannot_be_read_is_none_and_logged()
+    {
+        var log = new List<string>();
+        var back = StationSettingsJson.Deserialize("""
+            { "version": 1, "mode": "Scan", "shiftEndOn": true, "standardShift": { "start": "6 om morgenen", "end": "14:00" } }
+            """, log.Add);
+
+        Assert.NotNull(back);
+        Assert.Null(back.StandardShift);
+        Assert.Contains("standard shift", Assert.Single(log));
+    }
+
+    [Fact]
+    public void A_standard_shift_is_kept_to_whole_minutes_and_one_of_no_length_is_none()
+    {
+        var odd = new StandardShift(new TimeOnly(6, 0, 30), new TimeOnly(14, 0, 59));
+        Assert.Equal(Day, StationSettingsJson.Normalize(StationSettings.Default with { StandardShift = odd }).StandardShift);
+        var empty = new StandardShift(new TimeOnly(6, 0), new TimeOnly(6, 0));
+        Assert.Null(StationSettingsJson.Normalize(StationSettings.Default with { StandardShift = empty }).StandardShift);
+    }
+
+    [Fact]
+    public void The_source_text_says_where_the_shifts_come_from()
+    {
+        var on = StationSettings.Default;
+        Assert.Equal("Ingen vagter – stopper ikke ved vagtslut", SetupRules.ShiftSource(on));
+        Assert.Equal("Bruger standardvagt 06:00–14:00", SetupRules.ShiftSource(on with { StandardShift = Day }));
+        Assert.Equal("Vagter fra OptiPeople: man–fre 06:00–14:00", SetupRules.ShiftSource(on with { StandardShift = Day }, "man–fre 06:00–14:00"));
+        Assert.Equal("Stop ved vagtslut er slået fra", SetupRules.ShiftSource(on with { ShiftEndOn = false, StandardShift = Day }));
+        Assert.Equal("Stop ved vagtslut er slået fra", SetupRules.ShiftSource(on with { ShiftEndOn = false }, "man–fre 06:00–14:00"));
+    }
+
+    [Fact]
+    public void A_standard_shift_that_ends_before_it_starts_gets_a_hint_not_a_refusal()
+    {
+        var night = new StandardShift(new TimeOnly(22, 0), new TimeOnly(6, 0));
+        var s = StationSettings.Default with { StandardShift = night };
+
+        Assert.Equal("Standardvagt slutter før den starter", SetupRules.StandardShiftHint(night));
+        Assert.Null(SetupRules.StandardShiftHint(Day));
+        Assert.Null(SetupRules.StandardShiftHint(null));
+        Assert.Empty(SetupRules.Problems(s));
+        Assert.Null(SetupRules.StandardShiftProblem(night.Start, night.End));
+        Assert.Equal("Bruger standardvagt 22:00–06:00", SetupRules.ShiftSource(s));
+    }
+
+    [Fact]
+    public void A_half_chosen_standard_shift_stops_a_save()
+    {
+        Assert.Null(SetupRules.StandardShiftProblem(null, null));
+        Assert.Null(SetupRules.StandardShiftProblem(Day.Start, Day.End));
+        Assert.Equal("Standardvagt mangler sluttid", SetupRules.StandardShiftProblem(Day.Start, null));
+        Assert.Equal("Standardvagt mangler starttid", SetupRules.StandardShiftProblem(null, Day.End));
+        Assert.Equal("Standardvagt starter og slutter på samme tid", SetupRules.StandardShiftProblem(Day.Start, Day.Start));
+    }
+
+    [Theory]
+    [InlineData("06:00", 6, 0)]
+    [InlineData("6:00", 6, 0)]
+    [InlineData(" 0630 ", 6, 30)]
+    [InlineData("22.15", 22, 15)]
+    public void Shift_times_are_read_as_typed(string text, int h, int m) =>
+        Assert.Equal(new TimeOnly(h, m), StandardShift.ParseTime(text));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("25:00")]
+    [InlineData("morgen")]
+    public void Other_text_is_no_shift_time(string? text) => Assert.Null(StandardShift.ParseTime(text));
 }
