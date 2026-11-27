@@ -33,7 +33,7 @@
 -- the new functions alike.
 
 -- 0: the list, 1: a BS list, 2: BS drawings.
-create function rpt.document_kind(p_prefix text)
+create or replace function rpt.document_kind(p_prefix text)
 returns integer
 language sql
 immutable
@@ -48,7 +48,7 @@ $$;
 
 -- The date a BS list is ranked by: the one in its file name, else the one in
 -- its header ("2026-11-27"). Null when neither is a date; never an error.
-create function rpt.bs_list_date(p_file_name text, p_header_date text)
+create or replace function rpt.bs_list_date(p_file_name text, p_header_date text)
 returns date
 language plpgsql
 immutable
@@ -78,7 +78,7 @@ $$;
 
 -- The list's positions, then the BS positions the list does not have.
 -- Anything that is no array counts as no positions.
-create function rpt.merged_positions(p_list jsonb, p_bs jsonb)
+create or replace function rpt.merged_positions(p_list jsonb, p_bs jsonb)
 returns jsonb
 language sql
 immutable
@@ -112,7 +112,7 @@ $$;
 --               week in a year: the list's print date, else when it was
 --               synced; for a BS list alone its date, else when it was synced.
 --   header      the list's; the BS list's when there is no list.
-create function rpt.order_positions()
+create or replace function rpt.order_positions()
 returns table (
   order_no   integer,
   print_date date,
