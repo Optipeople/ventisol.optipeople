@@ -118,6 +118,8 @@ The station app uploads the order PDFs (`OrderDocumentUpload`) and reads them ba
 
 - Only an element is recorded. A new scan must have the digits of a label, begin with 0, and have
   an order of 58000 or later, or an older order whose PDF is in the documents folder (a remake).
+  Orders of 4 digits or fewer (the short series, 2634 and so on, padded with 0s: `002634010301`)
+  are always read, as long as position, sub-position and piece are not 00.
   That keeps retail codes (EAN-13, UPC-A) out. The rule is for new scans only
   (`Barcode.TryParseScan`): what is already in the outbox, the journal or the table is read
   whatever its order (`Barcode.TryParse`), so nothing stored is dropped by it.

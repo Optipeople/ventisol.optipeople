@@ -118,6 +118,7 @@ export interface BarcodeParts {
 /**
  * 0 58556 05 01 03: leading 0, order (5), position (2), sub-position (2),
  * piece (2). Longer codes (the 14-digit Schirmer form) keep the same start.
+ * A short order (4 digits or fewer) is padded with 0s: 0 02634 01 03 01 is order 2634.
  */
 export function parseBarcode(barcode: string): BarcodeParts | null {
   const digits = barcode.trim();

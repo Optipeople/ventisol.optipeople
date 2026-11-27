@@ -10,9 +10,12 @@ public sealed record OrderHints(Func<int, bool>? Exists = null, int? Recent = nu
 
 // The 12-digit label barcode on every element, e.g. 058556050103:
 // a leading 0, the 5-digit order number, position, sub-position and piece number.
+// An order of 4 digits or fewer (the short series, e.g. 2634) is padded with 0s to 5 digits:
+// 002634010301 is order 2634, Pos. 1, sub-position 03, piece 01.
 // Profile labels from the saw (Schirmer) carry 14 digits in one of two layouts, both read as their element:
 //   05883003010114  order first:    0 + order + position + sub-position + piece + profile number
 //   03058830010105  position first: position + 0 + order + sub-position + piece + profile number
+//   00263401030102  order first, short order 2634 (Schirmer SchirmU49_2634.xml)
 // Both of these are order 58830, Pos. 3, piece 1. See Element for how the layout is chosen.
 public sealed record Barcode(string Raw, int Order, int Position, int SubPosition, int Piece)
 {
@@ -27,6 +30,13 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // The limit follows the orders as they grow, and there is none at all while the station knows no
     // order, so it can never shut real labels out.
     public const int NewestOrderMargin = 1000;
+
+    // Orders below this are the short series (4 digits or fewer, 2603 to 2635 in November 2026), numbered
+    // apart from the 5-digit orders. A new scan with such an order is an element, whatever the hints, as
+    // long as position, sub-position and piece are not 00 (which a label never has).
+    public const int ShortOrderLimit = 10000;
+
+    public static bool IsShortOrder(int order) => order is > 0 and < ShortOrderLimit;
 
     // A barcode that is already stored: an outbox file, a journal line, a row in OptiCloud. Anything
     // with the digits of an element is read, whatever its order: it was a scan once, and a rule made
@@ -78,7 +88,13 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
         {
             // The order has five digits, not six.
             if (raw[0] != '0') return false;
-            if (hints?.Exists?.Invoke(order) != true)
+            // No order is 0.
+            if (order == 0) return false;
+            if (IsShortOrder(order))
+            {
+                if (raw.AsSpan(6, 2) is "00" || raw.AsSpan(8, 2) is "00" || raw.AsSpan(10, 2) is "00") return false;
+            }
+            else if (hints?.Exists?.Invoke(order) != true)
             {
                 if (order < OldestOrder) return false;
                 if (NewestKnown(hints) is { } newest && order > newest + NewestOrderMargin) return false;
@@ -101,6 +117,10 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // The 12-digit element of a 14-digit profile label, or null if neither layout fits.
     // Order first fits when it starts with 0 and then the order (never 0). Position first fits when the
     // third digit is the 0 before the order and the position is not 00. Many labels fit only one way.
+    // A short order is padded with 0s, so order first may start 00 (00263401030102, order 2634): then
+    // position first can't fit (its position would be 00), and the order's position must not be 00.
+    // Position first with a short order (a 0 fourth digit) is not read: no such label has been seen,
+    // and it would fit order first too (01002634... as order 10026), with no rule yet to tell them apart.
     // Both fit when the position is below 10 in the position-first layout (03058830010105 also reads as
     // order 30588), or when the order's second digit is 0 in the order-first layout (60xxx, 70xxx ...).
     // Then, in turn: a reading whose order is older than OldestOrder loses; an order that exists beats
@@ -108,7 +128,7 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // the wrong reading is mostly far above the orders in production.
     static string? Element(string raw, OrderHints? hints)
     {
-        var orderFirst = raw[0] == '0' && raw[1] != '0' ? raw[..12] : null;
+        var orderFirst = raw[0] == '0' && (raw[1] != '0' || (raw[1..6] != "00000" && raw[6..8] != "00")) ? raw[..12] : null;
         var positionFirst = raw[2] == '0' && raw[3] != '0' && raw[..2] != "00" ? "0" + raw[3..8] + raw[..2] + raw[8..12] : null;
         if (orderFirst is null || positionFirst is null) return orderFirst ?? positionFirst;
 

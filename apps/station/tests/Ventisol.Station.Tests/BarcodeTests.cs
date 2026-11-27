@@ -103,6 +103,46 @@ public class BarcodeTests
         Assert.Equal(element, b.Raw);
     }
 
+    // The short series: orders of 4 digits or fewer, padded with 0s on the label. The two profile labels
+    // from SchirmU49_2634.xml (Pos:1.3, comments "001 003 OB" and "001 003 RE"), its 12-digit element,
+    // and the same for orders of fewer digits.
+    [Theory]
+    [InlineData("00263401030102", "002634010301", 2634, 1, 3, 1)]
+    [InlineData("00263401030104", "002634010301", 2634, 1, 3, 1)]
+    [InlineData("002634010301", "002634010301", 2634, 1, 3, 1)]
+    [InlineData("00260305020101", "002603050201", 2603, 5, 2, 1)]
+    [InlineData("000003010101", "000003010101", 3, 1, 1, 1)]
+    [InlineData("00000102010307", "000001020103", 1, 2, 1, 3)]
+    public void Reads_a_short_order(string text, string element, int order, int position, int sub, int piece)
+    {
+        var folder = new OrderHints(Exists: o => o is 58763 or 59043, Recent: 59040, Newest: 59043);
+        foreach (var hints in new OrderHints?[] { null, new OrderHints(), new OrderHints(Exists: _ => false), new OrderHints(Recent: 59040), folder })
+        {
+            Assert.True(Barcode.TryParseScan(text, out var b, hints));
+            Assert.Equal(element, b.Raw);
+            Assert.Equal(order, b.Order);
+            Assert.Equal(position, b.Position);
+            Assert.Equal(sub, b.SubPosition);
+            Assert.Equal(piece, b.Piece);
+
+            Assert.True(Barcode.TryParse(text, out var stored, hints));
+            Assert.Equal(b, stored);
+        }
+    }
+
+    [Theory]
+    [InlineData("002634000301")]   // position 00
+    [InlineData("002634010001")]   // sub-position 00
+    [InlineData("002634010300")]   // piece 00
+    [InlineData("000000010101")]   // order 0
+    [InlineData("00263400030102")] // 14 digits, position 00
+    [InlineData("00000001030102")] // 14 digits, order 0
+    public void An_incoming_short_order_with_a_00_part_is_refused(string text)
+    {
+        Assert.False(Barcode.TryParseScan(text, out _));
+        Assert.False(Barcode.TryParseScan(text, out _, new OrderHints(Exists: _ => true, Recent: 59040)));
+    }
+
     // Labels that fit both layouts once orders reach 60000, 70000 ...: the right reading must win.
     [Theory]
     [InlineData("06012345010114", "060123450101")] // order 60123 Pos. 45, order first: 12345 is too old
@@ -139,7 +179,8 @@ public class BarcodeTests
     }
 
     [Theory]
-    [InlineData("00058830010105")] // position 00, and order first would start 00
+    [InlineData("00000030010105")] // position 00, and order first would be order 0
+    [InlineData("00263400030102")] // position 00, and order first (short order 2634) would be Pos. 00
     [InlineData("10158830030101")] // neither layout: no 0 first, no 0 third
     public void Rejects_14_digits_that_fit_no_layout(string text)
     {

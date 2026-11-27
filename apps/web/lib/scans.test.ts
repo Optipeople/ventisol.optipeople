@@ -20,6 +20,10 @@ describe("parseBarcode", () => {
   it("reads the start of the 14-digit form the same way", () => {
     expect(parseBarcode("05866002010301")?.orderNo).toBe(58660);
   });
+  it("reads a short order padded with 0s (order 2634)", () => {
+    expect(parseBarcode("002634010301")).toEqual({ orderNo: 2634, position: 1, subPosition: 3, piece: 1 });
+    expect(parseBarcode("00263401030102")?.orderNo).toBe(2634);
+  });
   it("rejects anything else", () => {
     expect(parseBarcode("12345")).toBeNull();
     expect(parseBarcode("05855605010X")).toBeNull();
