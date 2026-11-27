@@ -20,6 +20,7 @@ import {
   clientIp,
   forgetAccountAttempts,
   loginLimits,
+  mfaLimits,
   TOO_MANY_ATTEMPTS,
 } from "@/lib/rate-limit";
 import { safeNextPath } from "@/lib/site";
@@ -94,8 +95,8 @@ export async function login(
   });
 
   if (!result.ok && result.reason === "mfa") {
-    // The password was right; the code is the second step. The tries at the
-    // account are not forgotten yet: they also limit the guesses at the code.
+    // The password was right; the code is the second step, with its own limits (mfaLimits).
+    await forgetAccountAttempts(loginLimits, ip, email);
     const id = randomUUID();
     await setPendingMfa({ ...result.challenge, id, email, remember });
     return {
@@ -134,13 +135,14 @@ export async function verifyMfa(_prev: MfaState, formData: FormData): Promise<Mf
   const next = safeNextPath(String(formData.get("next") ?? ""));
 
   const pending = await getPendingMfa();
-  if (!pending) return { error: MFA_EXPIRED };
+  // Another tab logged in again since this form was shown: its code belongs to the other challenge.
+  if (!pending || pending.id !== String(formData.get("challenge") ?? "")) return { error: MFA_EXPIRED };
   if (!code) return { error: recovery ? "Indtast en gendannelseskode." : "Indtast den 6-cifrede kode." };
   if (!recovery && !/^\d{6}$/.test(code)) return { error: "Indtast den 6-cifrede kode." };
 
-  // The same limits as the password: a code is six digits, so it must not be guessable either.
+  // A code is six digits, so it must not be guessable either.
   const ip = clientIp(await headers());
-  if (!(await allowAttempt(loginLimits, ip, pending.email))) {
+  if (!(await allowAttempt(mfaLimits, ip, pending.email))) {
     return { error: TOO_MANY_ATTEMPTS };
   }
 
@@ -159,7 +161,7 @@ export async function verifyMfa(_prev: MfaState, formData: FormData): Promise<Mf
     };
   }
 
-  await forgetAccountAttempts(loginLimits, ip, pending.email);
+  await forgetAccountAttempts(mfaLimits, ip, pending.email);
   return { error: await finishLogin(result.data, pending.email, pending.remember, next) };
 }
 
@@ -167,9 +169,9 @@ export async function verifyMfa(_prev: MfaState, formData: FormData): Promise<Mf
 export async function resendMfa(): Promise<{ ok: boolean; destination?: string }> {
   const pending = await getPendingMfa();
   if (!pending) return { ok: false };
-  // Counted like a login try, so the button cannot be used to flood a phone or a mailbox.
+  // Counted like a code try, so the button cannot be used to flood a phone or a mailbox.
   const ip = clientIp(await headers());
-  if (!(await allowAttempt(loginLimits, ip, pending.email))) return { ok: false };
+  if (!(await allowAttempt(mfaLimits, ip, pending.email))) return { ok: false };
   const sent = await resendUpstream(pending.mfaToken);
   if (sent === false) return { ok: false };
   return sent ? { ok: true, destination: sent } : { ok: true };

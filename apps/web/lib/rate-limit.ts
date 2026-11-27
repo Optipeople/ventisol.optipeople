@@ -173,6 +173,18 @@ export const loginLimits = createAttemptLimits({
   accountLimit: 5,
 });
 
+/**
+ * The two-factor step of a login (a code try or a new code sent): 20 per 10
+ * minutes per IP, 8 of them at one account. Its own count, so the password
+ * tries and several users behind one office address do not use it up.
+ */
+export const mfaLimits = createAttemptLimits({
+  name: "mfa",
+  windowMs: 10 * MINUTE,
+  ipLimit: 20,
+  accountLimit: 8,
+});
+
 /** Reset mails: 10 per hour per IP, 3 of them to one e-mail. */
 export const forgotLimits = createAttemptLimits({
   name: "forgot",

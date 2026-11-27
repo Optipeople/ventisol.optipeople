@@ -87,6 +87,7 @@ export function MfaForm({
     <form action={action} className={authCardClasses} onSubmit={() => setResendError(null)}>
       <AuthCardHeader eyebrow="Ventisol rapporter" title="Totrinsbekræftelse" />
       {next && <input type="hidden" name="next" value={next} />}
+      <input type="hidden" name="challenge" value={step.id} />
       <input type="hidden" name="recovery" value={recovery ? "1" : "0"} />
 
       <p className="pb-4 text-[14px] leading-[21px] text-black/90">{instruction}</p>
@@ -105,7 +106,9 @@ export function MfaForm({
           spellCheck={false}
           autoFocus
           required
-          disabled={disabled}
+          // Read-only, not disabled, while it is sent: a disabled field loses the focus, and the
+          // user would have to click it again after a wrong code.
+          readOnly={disabled}
           placeholder={placeholder}
           aria-label={placeholder}
           className={authInputClasses}
