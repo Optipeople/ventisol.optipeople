@@ -111,8 +111,14 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     }
 
     // The newest order the hints know of, never below OldestOrder; null when they know none.
+    // A short order says nothing about the 5-digit ones: after a scan of order 2634 the station still
+    // knows no newest order, and must not shut out the orders above OldestOrder + NewestOrderMargin.
     static int? NewestKnown(OrderHints? hints) =>
-        hints is null or { Recent: null, Newest: null } ? null : Math.Max(OldestOrder, Math.Max(hints.Recent ?? 0, hints.Newest ?? 0));
+        (FiveDigit(hints?.Recent), FiveDigit(hints?.Newest)) is (null, null) ? null
+            : Math.Max(OldestOrder, Math.Max(FiveDigit(hints?.Recent) ?? 0, FiveDigit(hints?.Newest) ?? 0));
+
+    // The order when it is one of the 5-digit series, null for none or for a short order.
+    static int? FiveDigit(int? order) => order is { } o && !IsShortOrder(o) ? o : null;
 
     // The 12-digit element of a 14-digit profile label, or null if neither layout fits.
     // Order first fits when it starts with 0 and then the order (never 0). Position first fits when the
@@ -124,8 +130,9 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
     // Both fit when the position is below 10 in the position-first layout (03058830010105 also reads as
     // order 30588), or when the order's second digit is 0 in the order-first layout (60xxx, 70xxx ...).
     // Then, in turn: a reading whose order is older than OldestOrder loses; an order that exists beats
-    // one that doesn't; the order nearer to the work going on now wins; else the lower order wins, since
-    // the wrong reading is mostly far above the orders in production.
+    // one that doesn't; the order nearer to the work going on now wins (unless that work is a short
+    // order, which is near neither); else the lower order wins, since the wrong reading is mostly far
+    // above the orders in production.
     static string? Element(string raw, OrderHints? hints)
     {
         var orderFirst = raw[0] == '0' && (raw[1] != '0' || (raw[1..6] != "00000" && raw[6..8] != "00")) ? raw[..12] : null;
@@ -135,7 +142,7 @@ public sealed record Barcode(string Raw, int Order, int Position, int SubPositio
         int a = int.Parse(raw.AsSpan(1, 5)), b = int.Parse(raw.AsSpan(3, 5));
         if ((a >= OldestOrder) != (b >= OldestOrder)) return a >= OldestOrder ? orderFirst : positionFirst;
         if (hints?.Exists is { } exists && exists(a) != exists(b)) return exists(a) ? orderFirst : positionFirst;
-        if (hints?.Recent is { } recent && Math.Abs(a - recent) != Math.Abs(b - recent))
+        if (FiveDigit(hints?.Recent) is { } recent && Math.Abs(a - recent) != Math.Abs(b - recent))
             return Math.Abs(a - recent) < Math.Abs(b - recent) ? orderFirst : positionFirst;
         return a <= b ? orderFirst : positionFirst;
     }

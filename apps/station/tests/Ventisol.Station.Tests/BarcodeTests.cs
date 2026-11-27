@@ -375,4 +375,39 @@ public class BarcodeTests
         Assert.False(Barcode.TryParseInProgress("057000010102", [other, old], out _, hints));
         Assert.False(Barcode.TryParseInProgress("057000010101", [], out _, hints));
     }
+
+    [Theory]
+    [InlineData("059001050103")]
+    [InlineData("05900103010114")]
+    [InlineData("059500010101")]
+    public void A_short_order_scanned_last_does_not_shut_out_newer_five_digit_orders(string text)
+    {
+        // The last scan was order 2634, the station reads its PDFs from OptiCloud (knows no folder).
+        var hints = new OrderHints(Exists: _ => false, Recent: 2634);
+        Assert.True(Barcode.TryParseScan(text, out var b, hints));
+        Assert.True(b.Order > Barcode.OldestOrder + Barcode.NewestOrderMargin);
+        // The same answer as with no scan before it.
+        Assert.True(Barcode.TryParseScan(text, out var c, new OrderHints(Exists: _ => false)));
+        Assert.Equal(b, c);
+    }
+
+    [Fact]
+    public void A_short_order_scanned_last_keeps_the_limit_of_the_newest_known_order()
+    {
+        var hints = new OrderHints(Exists: _ => false, Recent: 2634, Newest: 58802);
+        Assert.True(Barcode.TryParseScan("059001050103", out _, hints));
+        Assert.False(Barcode.TryParseScan("073108650047", out _, hints));
+    }
+
+    [Fact]
+    public void A_short_order_scanned_last_does_not_settle_a_label_both_layouts_can_read()
+    {
+        // Order 59030 Pos. 6, position first; order first would read 60590. The lower order wins,
+        // as with no scan before it; a 5-digit order in progress still decides.
+        Assert.True(Barcode.TryParse("06059030010105", out var none, new OrderHints()));
+        Assert.True(Barcode.TryParse("06059030010105", out var b, new OrderHints(Recent: 2634)));
+        Assert.Equal(none, b);
+        Assert.True(Barcode.TryParse("06059030010105", out var c, new OrderHints(Recent: 60590)));
+        Assert.Equal(60590, c.Order);
+    }
 }
