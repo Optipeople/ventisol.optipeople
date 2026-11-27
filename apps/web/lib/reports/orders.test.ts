@@ -241,6 +241,42 @@ describe("listAllOrders", () => {
     expect(all.find((r) => r.orderNo === 59997)).toMatchObject({ deliveryYear: null, deliveryWeek: null });
   });
 
+  it("counts the positions only the BS list has, and reads an order with BS files alone from its BS list", async () => {
+    const bs = (orderNo: number, date: string, positions: unknown[]) =>
+      JSON.stringify({ header: { orderNumber: orderNo, customer: ["BS Kunde"], deliveryWeek: 49, date }, positions });
+    await db.withService((tx) =>
+      tx.query(
+        `insert into raw.order_documents (file_name, order_no, prefix, print_date, synced_at, parsed)
+         values ('59999_20261110BS.pdf', 59999, 'BS', null, now(), $1::jsonb),
+                ('B S 59999_20261101.pdf', 59999, 'BS', null, now() + interval '1 hour', $2::jsonb),
+                ('59999_20261110BS tegninger.pdf', 59999, 'BS tegninger', null, now() + interval '2 hours', $3::jsonb),
+                ('B S 9996_20261112.pdf', 9996, 'BS', null, now(), $4::jsonb),
+                ('B S tegninger 9996_20261112.pdf', 9996, 'BS tegninger', null, now() + interval '2 hours', $5::jsonb)`,
+        [
+          // Position 3 is new; position 1 is the list's (2 pieces there).
+          bs(59999, "2026-11-10", [
+            { number: 3, subNumber: null, quantity: 4 },
+            { number: 1, subNumber: null, quantity: 50 },
+          ]),
+          bs(59999, "2026-11-01", [{ number: 8, subNumber: null, quantity: 100 }]),
+          JSON.stringify({ header: { orderNumber: 59999 }, positions: [] }),
+          bs(9996, "2026-11-12", [{ number: 2, subNumber: null, quantity: 5 }]),
+          JSON.stringify({ header: { orderNumber: 9996 }, positions: [] }),
+        ]
+      )
+    );
+    const all = (await listAllOrders(viewer, { pageSize: 100 })).rows;
+    expect(all.find((r) => r.orderNo === 59999)).toMatchObject({ customer: "Ny Kunde A/S", elements: 7, documentDate: "2026-11-10" });
+    expect(all.find((r) => r.orderNo === 9996)).toMatchObject({
+      customer: "BS Kunde",
+      elements: 5,
+      deliveryYear: 2026,
+      deliveryWeek: 49,
+      status: "not_started",
+      documentDate: "2026-11-12",
+    });
+  });
+
   it("filters on status, search and delivery week", async () => {
     expect(numbers((await listAllOrders(viewer, { status: "not_started" })).rows)).toEqual([59999, 59998]);
     expect(numbers((await listAllOrders(viewer, { search: "ny kunde" })).rows)).toEqual([59999]);

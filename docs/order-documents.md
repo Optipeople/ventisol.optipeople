@@ -122,6 +122,37 @@ set up OptiCloud. `OrderDocuments.Cloud` (`CloudDocumentSource`) then finds and 
 
 How upload, the temp link and deleting behave is in [`opticloud-scans.md`](opticloud-scans.md), "Files in a list".
 
+## An order's positions on the web (list plus BS list)
+
+The portal does not read one file per order. An order's positions are the newest list's positions
+plus the positions of its newest BS list that the list does not have. Order 58931: the list
+`58931_20261127.pdf` has positions 1 and 3, `58931_20261127BS.pdf` has position 2, so the order has three.
+
+- The kind of a stored file is read from `raw.order_documents.prefix`: the sync writes `BS` and
+  `BS tegninger` there, after any prefix of the order (`BE_BS`).
+- The list always wins: a position in both files is the list's. Positions are the same when their number
+  and sub-number are ("5" is not "5.1").
+- The newest list: newest `print_date`, then `synced_at`, then the file name.
+- The newest BS list: the date in its file name (the first `_` followed by exactly eight digits that make a
+  date), else the "Dato" in its header (`parsed.header.date`); a BS list with neither comes last. Then
+  `synced_at`, then the file name. `print_date` is empty for BS files and is not used.
+- An order with a BS list and no list: the BS list is its list (positions, customer, delivery week).
+- BS drawings never give positions or a header. Only parsed files count.
+
+Where it is used:
+
+- The read model (`loadOrderInfos` in `apps/web/lib/readmodel/write.ts`): the expected elements, the
+  element types and the pairing of a scan with its position (`058931020101` finds position 2).
+- The order page (`orderLists` in `apps/web/lib/orders-view/documents.ts`): the element count of an order
+  not scanned yet, and the BS positions listed after the list's own, marked "BS". The PDF shown is unchanged.
+- Ugeplan and Ordrer, "Alle ordrer": `rpt.order_positions()` behind `rpt.week_plan_documents` and
+  `rpt.all_orders_base` (migration `20261127100000_bs_positions.sql`).
+
+The rules live twice and must be changed together: `apps/web/lib/orderdoc/order-lists.ts` and the SQL
+helpers of that migration (`rpt.document_kind`, `rpt.bs_list_date`, `rpt.merged_positions`). A test in
+`order-lists.test.ts` holds them against each other. The document search (`doc.document_chunks`) still
+has one set of chunks per file.
+
 ## What a file looks like
 
 Landscape pages, 839 x 592 pt. Real text (Arial, Arial Bold, Arial Narrow) and vector lines, no form

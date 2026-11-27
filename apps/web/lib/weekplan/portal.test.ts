@@ -11,7 +11,7 @@ import { IN_PROGRESS_ORDERS, NOW, seedConfig, seedOctober } from "@/lib/reports/
 import { documentFrameType } from "./classify";
 import { handleWeekPlan } from "./handler";
 import { readWeekPlanTables } from "./mdb";
-import { initialsOf, mergeWeekPlans, orderFromDocument } from "./portal";
+import { initialsOf, mergeWeekPlans, orderFromDocument, portalWeekPlan } from "./portal";
 import { tables } from "./test-support";
 import type { WeekPlan } from "./types";
 import { defaultPlanWeek, mondayOf, parseWeekParam, shiftWeek, weekParam } from "./week";
@@ -268,6 +268,59 @@ describe("handleWeekPlan", () => {
     expect(kontor.find((r) => r[1] === packed)![3]).toBe(21528);
     expect(kontor.some((r) => r[1] === 58999)).toBe(true);
     expect(kontor.some((r) => r[1] === 58790)).toBe(true);
+  });
+
+  it("counts the positions only the BS list has, and an order with a BS list alone", async () => {
+    const list = productionList(58931);
+    const [door, windows, rail] = list.positions;
+    const drawings = (orderNo: number) => ({ header: { orderNumber: orderNo }, positions: [] });
+    const rows: { file_name: string; order_no: number; prefix: string; print_date: string | null; parsed: unknown }[] = [
+      // 58931: the list has the door and the rail, the BS list the two windows (and the door again, with another count).
+      { file_name: "58931_20261120.pdf", order_no: 58931, prefix: "", print_date: "2026-11-20", parsed: { ...list, positions: [door, rail] } },
+      {
+        file_name: "58931_20261120BS.pdf",
+        order_no: 58931,
+        prefix: "BS",
+        print_date: null,
+        parsed: { ...list, positions: [windows, { ...door, quantity: 9 }] },
+      },
+      // An older BS list and the drawings do not count.
+      {
+        file_name: "B S 58931_20261112.pdf",
+        order_no: 58931,
+        prefix: "BS",
+        print_date: null,
+        parsed: { ...list, positions: [{ ...windows, quantity: 7 }] },
+      },
+      { file_name: "58931_20261120BS tegninger.pdf", order_no: 58931, prefix: "BS tegninger", print_date: null, parsed: drawings(58931) },
+      // 8931, four digits: a BS list and its drawings, no list.
+      {
+        file_name: "B S 8931_20261112.pdf",
+        order_no: 8931,
+        prefix: "BS",
+        print_date: null,
+        parsed: { ...productionList(8931), positions: [windows] },
+      },
+      { file_name: "B S tegninger 8931_20261112.pdf", order_no: 8931, prefix: "BS tegninger", print_date: null, parsed: drawings(8931) },
+    ];
+    await db.withService((tx) =>
+      tx.query(
+        `insert into raw.order_documents (file_name, order_no, prefix, print_date, synced_at, parsed)
+         select file_name, order_no, prefix, print_date, timestamptz '2026-11-20 08:00:00+01', parsed
+           from jsonb_to_recordset($1::jsonb)
+                as d(file_name text, order_no integer, prefix text, print_date date, parsed jsonb)`,
+        [JSON.stringify(rows)]
+      )
+    );
+    const plan = await db.withUser(viewer, (tx) => portalWeekPlan(tx, 2026, 48));
+    const both = plan.orders.find((o) => o.orderNo === 58931)!;
+    // The list's door and rail, and the two windows of the BS list. The door is counted once.
+    expect(both.elements).toBe(4);
+    expect(both.types).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "TS", count: 2 }), expect.objectContaining({ count: 1 })])
+    );
+    const alone = plan.orders.find((o) => o.orderNo === 8931)!;
+    expect(alone).toMatchObject({ elements: 2, customer: "Kongerslev Trælast Aps" });
   });
 
   it("refuses: 401 signed out, 429 over the limit, 400 for no plan or no week, 413 too big", async () => {

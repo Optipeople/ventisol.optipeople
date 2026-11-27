@@ -10,7 +10,10 @@ all three, in one file, for one week.
 1. **The production lists (default).** The 3E production list PDFs the portal
    already reads (docs/order-documents.md). Pick a week (`/ugeplan?uge=2026-48`,
    next week by default) and download: `GET /api/ugeplan?uge=2026-48`.
-   `rpt.week_plan_documents(year, week)` takes each order's newest list and
+   `rpt.week_plan_documents(year, week)` takes each order's newest list,
+   adds the positions only its newest BS list has (bue/skrå, see
+   docs/order-documents.md, "An order's positions on the web"; an order with
+   a BS list alone is read from that), and
    then keeps the orders of that delivery week, also those not scanned yet
    (they have no row in `core.orders`). An order moved to another week leaves
    its old one. The week is the one `core.orders` gives the order when it has
