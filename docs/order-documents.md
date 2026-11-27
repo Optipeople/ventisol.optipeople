@@ -31,9 +31,10 @@ When an operator scans an element in, the station app can show the order's produ
 - An order can be printed again, and an older version may be kept beside the new one as history (with or
   without a prefix). The locator takes the order's list before its BS files, then the newest date in the
   name, then the newest write time. A BS file is the order's document only when it has no list.
-- When the scanned element's position is not in the order's list and the folder has a BS list for the
-  order, the station shows the BS list (`OrderDocuments.LoadAsync`). A PC reading from OptiCloud does not
-  do this yet: it shows the list.
+- When the scanned element's position is not in the order's list and the order has a BS list that holds
+  it, the station shows the BS list (`OrderDocuments.LoadAsync`), from the folder or from OptiCloud.
+- The order's newest BS drawings file comes along with the document (`OrderDocumentLoad.BsDrawings`), and
+  the screen offers it with "Vis BS-tegning" (see BS drawings, and On the station screen).
 - The upload writes `Prefix` as the prefix and the BS label (`BS`, `BE_BS tegninger` ...). The web stores BS
   files with that prefix and no `print_date`, so every reader ordering by `print_date desc nulls last`
   keeps the list first.
@@ -110,11 +111,14 @@ set up OptiCloud. `OrderDocuments.Cloud` (`CloudDocumentSource`) then finds and 
   rows whose `FileName` gives that order and that have a file. The newest date in the name wins, then
   the newest row. If the keyword search finds none, the whole list is read (at most every 2 minutes),
   as what the search matches on is not documented. The list is never made by a reader: no list, no document.
+- Besides the order's document, the lookup keeps the order's newest BS list and BS drawings
+  (`CloudDocumentLookup.Parts`), so the BS list answers for a position the list lacks and the drawings
+  come along, as from the share. They are fetched only when the order has them.
 - A row found is kept for 30 s, a miss for 5 s.
 - The file comes from `GET /api/MasterDataBlob/Get?path=<reference>` with the bearer token, at most
   50 MB (`MaxPdfBytes`), and is parsed like a file from the share. It is kept in memory by file name and
   `Sha256`, and saved as a copy on this PC under the made-up folder `OptiCloud`, so while OptiCloud can't
-  be reached the copy answers ("Gemt kopi").
+  be reached the copy answers ("Gemt kopi"); so do the copies of the BS list and the BS drawings.
 - Only what the scan PCs have uploaded can be shown: files printed in the last 60 days, a few minutes
   after 3E wrote them (see Uploading). A scan PC reaches the share and so does not read from OptiCloud.
 - The older-order rule at scan-in (`OrderHints.Exists`) needs the folder; a PC reading from OptiCloud
@@ -262,6 +266,27 @@ the 57 positions in the samples run over two pages. None runs over three.
 - A dot sits under the header rule on every page (x 284). It is ignored.
 - Two positions never share a page.
 
+## BS drawings
+
+`58931_20261127BS tegninger.pdf`, as found in the one real sample (order 58931, 27-11-2026): the same
+landscape page as the list, 839 x 592 pt, real text and vector lines. One page here, for the order's
+one BS position.
+
+- A page is headed "Produktions tegning" and `Ordrer nr.: 58931`, then one line: `Position : 2` (bold,
+  with a space before the colon), `Elementmål: 890,0 mm * 1655,0 mm` and the scale `1:15`.
+- Below it the drawing, at the left of an otherwise empty sheet and far bigger than the list's (1:15
+  against 1:50), with what the list's drawing leaves out: every angle (`110°`, `160°`), the heights to
+  where the slope starts and its rise (`1493,0`, `162,0`, `1655,0`), the widths to the top point
+  (`445,0`, `445,0`, `890,0`) and the sloped lengths (`473,6`).
+- No header block, no tables, no position data: the BS list holds those.
+- `OrderDocumentParser.DrawingPages(pdf)` gives a `BsDrawingPage` per page: the position on its
+  `Position :` line (spaced and cased any way; null when the page names none), the page size, and
+  `Content`, the box around everything drawn on the page (14 pt of room), so the screen can show that
+  part alone. It never throws; a file that is no PDF gives no pages.
+- `BsDrawings.PageFor(position)` is the first page that names the position.
+- Not seen yet: a file with several positions (taken to be a page each, as in the list), and an
+  old-style `B S tegninger` file. A page that names no position is still shown, see below.
+
 ## Barcode and sub-position
 
 The label barcode `058556050103` is order 58556, position 05, sub-position 01, piece 03.
@@ -328,6 +353,16 @@ progress at the station, else the last one finished there today, else an empty s
   hence the app's `net10.0-windows10.0.19041.0` target), in the screen's ink on the panel colour.
 - Cards (`ElementSheet`): Mål u/kobling, weight, colours, Karmhuller, one card per field; then the cutting
   list and hardware/accessories as tables. "Vis hele PDF" shows every page rendered, from the position's page.
+- "Vis BS-tegning", beside "Vis hele PDF" (and above the pages of the list), shows the order's BS
+  drawings in the same page viewer, at the page that names the element's position
+  (`OrderDocumentLoad.BsDrawingsPage`). It is there when a page names the position; with no such page,
+  when the element comes from the BS list or the drawings name no position at all (then from page 1).
+  An ordinary position of an order whose drawings are about other positions does not get the button.
+- A drawings page shows only the part that is drawn on, fitted to the screen, so the whole drawing and
+  its measurements are seen at once. A tap on it makes it as wide as the screen, to read from further
+  off; another tap fits it again. "Tilbage til elementet" leaves it.
+- The newest drawings file wins (date in the name, then write time). One that can't be read gives no
+  button and never fails the document. With the share gone, its copy answers like the list's.
 - States: feature off, folder unavailable, order not found (with "Prøv igen"), position not in the PDF
   (the whole PDF with a warning), and a warning when the parser reported problems.
 - Closes with "Luk", Esc, or after 3 minutes untouched. Scans go on while it is open; their answers show
@@ -359,5 +394,7 @@ A picture without tapping, with its own data folder so it never meets the runnin
 
 ```
 $env:VENTISOL_STATION_DATA = "$env:TEMP\vs-snap"
-VentisolStation.exe --snapshot-document <folder> 058721010101 out.png [--pages] [--size 1920x1080]
+VentisolStation.exe --snapshot-document <folder> 058721010101 out.png [--pages] [--bs] [--zoom] [--size 1920x1080]
 ```
+
+`--pages` shows "Vis hele PDF", `--bs` "Vis BS-tegning", and `--zoom` with `--bs` the drawing after a tap.
