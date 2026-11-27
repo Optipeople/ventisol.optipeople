@@ -77,10 +77,16 @@ export interface FrameType {
 const SCAN_TYPES = new Set(["26", "10", "16", "20", "41"]);
 
 /**
- * An interior door ("Indv. dør venstre wc") and a horse box door ("Hesteboks greb udv VU") count as
- * an industrial door, so SD. A guess until Ventisol says otherwise (27-11-2026).
+ * An interior door ("Indv. dør venstre wc") counts as an industrial door, so SD. A guess until
+ * Ventisol says otherwise (27-11-2026).
  */
-const INTERIOR_OR_HORSE_BOX = /^indv\.? ?dør|^indvendig dør|^hesteboks/;
+const INTERIOR_DOOR = /^indv\.? ?dør|^indvendig dør/;
+
+/**
+ * A horse box window ("Hesteboks greb udv VU"). Ventisol, 27-11-2026: it is a window, not a door.
+ * Read as a side hung sash, which outside Danline is the type DK.
+ */
+const HORSE_BOX = /^hesteboks/;
 
 /** Opens inwards: HI, VI, H.I., V.I. */
 const INWARD = /\b[HV]\.?\s?I\b\.?/i;
@@ -223,7 +229,7 @@ export function openingPart(opening: string | null | undefined): Part {
           ? "TD"
           : t.includes("facadedør") || t.includes("facade dør")
             ? "FD"
-            : t.includes("industridør") || t.includes("industri dør") || INTERIOR_OR_HORSE_BOX.test(t)
+            : t.includes("industridør") || t.includes("industri dør") || INTERIOR_DOOR.test(t)
               ? "ID"
               : t.includes("skydedør")
                 ? "KS"
@@ -233,7 +239,7 @@ export function openingPart(opening: string | null | undefined): Part {
                     ? "DK"
                     : t.includes("topstyret")
                       ? "TS"
-                      : t.includes("sidehængt")
+                      : t.includes("sidehængt") || HORSE_BOX.test(t)
                         ? "SH"
                         : null;
   // A turn and tilt terrace door ("d/k", "drej/kip", "dreje-kip") opens inwards.

@@ -81,10 +81,10 @@ DB type.
 
 The parts of a production list position are its fields' opening functions
 (`openingPart`): "Fast karm" FK, "Bundhængt SV" BH, "Industridør ..." and
-"Industridør stående" ID (so are "Indv. dør ..." and "Hesteboks ...", a guess
-until Ventisol says otherwise), "Facadedør ..." FD, "Terrassedør ..." TD (inwards
+"Industridør stående" ID (so is "Indv. dør ...", a guess until Ventisol says
+otherwise), "Facadedør ..." FD, "Terrassedør ..." TD (inwards
 with "d/k" or H.I./V.I.), "Drej Kip ..." DK, "Topstyret ..." TS, "Topvende" TV, "Kip / skydedør ..." KS,
-"Sidehængt ..." SH. The list prints a coupled element as one position, so it
+"Sidehængt ..." SH (so is "Hesteboks ...": a window, Ventisol 27-11-2026). The list prints a coupled element as one position, so it
 counts as one frame.
 
 The parts of a 3E position come from the first line of its text ("TS",

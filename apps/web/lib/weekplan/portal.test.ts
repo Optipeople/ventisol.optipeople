@@ -80,10 +80,11 @@ describe("from the production lists", () => {
     expect(t(["Topvende"], "DANLINE")).toBe("TV");
     expect(t(["Fast karm", "Kip / skydedør mod højre (indefra)", "Fast karm"], "SOFTLINE")).toBe("KS dør");
     expect(t(["Kip / skydedør mod venstre (indefra)"], "SOFTLINE")).toBe("KS dør");
-    // Orders 58859, 58579 and 58725: counted as SD for now.
+    // Orders 58859 and 58579: counted as SD for now.
     expect(t(["Indv. dør venstre wc"], "70 mm Industri")).toBe("SD");
     expect(t(["Indv. dør venstre hængt"], "70 mm Industri")).toBe("SD");
-    expect(t(["Hesteboks greb udv VU"], "70 mm Industri")).toBe("SD");
+    // Order 58725. Bente, 27-11-2026: a horse box is a window, not a door.
+    expect(t(["Hesteboks greb udv VU"], "70 mm Industri")).toBe("DK");
     expect(t(["Montageskinne"], "SOFTLINE")).toBeNull();
   });
 
