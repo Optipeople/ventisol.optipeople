@@ -28,7 +28,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SESSION_COOKIES } from "@/lib/auth-cookies";
+import { MFA_COOKIE, SESSION_COOKIES } from "@/lib/auth-cookies";
 import type { Claims } from "@/lib/db";
 import {
   FIXTURE_ACCOUNT_ID,
@@ -77,13 +77,35 @@ export type LoginResponse = {
   expires_in?: number;
 };
 
+/**
+ * What the login answers for a user with two-factor authentication on: no
+ * session, but a token for the second step. "email" and "sms" mean the
+ * backend sent a code and can send it again; anything else (in practice
+ * "totp") is an authenticator app.
+ */
+export type MfaChallenge = {
+  mfaToken: string;
+  method: string;
+  maskedDestination: string | null;
+};
+
 export type LoginResult =
   | { ok: true; data: LoginResponse }
-  | { ok: false; reason: "invalid" | "unavailable" };
+  | { ok: false; reason: "invalid" | "unavailable" }
+  /** Only from the password grant: the user must enter a code (grant_type "mfa"). */
+  | { ok: false; reason: "mfa"; challenge: MfaChallenge };
+
+type RawLoginResponse = Partial<LoginResponse> & {
+  mfa_required?: boolean;
+  mfa_token?: string;
+  mfa_method?: string;
+  masked_destination?: string;
+};
 
 /**
- * POST /api/Authentication/login, password or refresh_token grant. This is
- * the one response not wrapped in {data, errors, meta}.
+ * POST /api/Authentication/login: the password, refresh_token or mfa grant
+ * (mfa: { grant_type: "mfa", mfa_token, code, code_type: "otp" | "recovery_code" }).
+ * This is the one response not wrapped in {data, errors, meta}.
  */
 export async function optipeopleLogin(
   body: Record<string, string>
@@ -110,15 +132,53 @@ export async function optipeopleLogin(
   }
 
   // The body can still time out or be cut off after the headers arrived.
-  let data: LoginResponse;
+  let data: RawLoginResponse;
   try {
-    data = (await res.json()) as LoginResponse;
+    data = (await res.json()) as RawLoginResponse;
   } catch (err) {
     console.error("optipeopleLogin: unreadable response:", err);
     return { ok: false, reason: "unavailable" };
   }
+  if (data?.mfa_required && data.mfa_token) {
+    return {
+      ok: false,
+      reason: "mfa",
+      challenge: {
+        mfaToken: data.mfa_token,
+        method: data.mfa_method ?? "totp",
+        maskedDestination: data.masked_destination ?? null,
+      },
+    };
+  }
   if (!data?.access_token) return { ok: false, reason: "invalid" };
-  return { ok: true, data };
+  return { ok: true, data: data as LoginResponse };
+}
+
+/**
+ * POST /api/Authentication/mfa/resend: a new e-mail or SMS code for a login
+ * waiting on its second step. Returns where it went (masked), null when the
+ * backend does not say, or false when it could not be sent.
+ */
+export async function resendMfaCode(mfaToken: string): Promise<string | null | false> {
+  try {
+    const res = await fetch(`${API_URL}/api/Authentication/mfa/resend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mfa_token: mfaToken }),
+      cache: "no-store",
+      signal: upstreamTimeout(),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as {
+      data?: { maskedDestination?: string } | null;
+      errors?: unknown[] | null;
+    };
+    if (body.errors?.length) return false;
+    return body.data?.maskedDestination ?? null;
+  } catch (err) {
+    console.error("resendMfaCode: upstream failed:", err);
+    return false;
+  }
 }
 
 export type SessionUser = {
@@ -468,6 +528,49 @@ export async function setSessionCookies(
 export async function clearSessionCookies(): Promise<void> {
   const store = await cookies();
   for (const name of Object.values(SESSION_COOKIES)) store.delete(name);
+  store.delete(MFA_COOKIE);
+}
+
+/** A login between its two steps: the password was right, the code is still to come. */
+export type PendingMfa = MfaChallenge & {
+  /** Names this challenge to the form, so the token itself never reaches the page's script. */
+  id: string;
+  email: string;
+  remember: boolean;
+};
+
+/** As long as a code is good for upstream, with a margin. */
+const MFA_COOKIE_SECONDS = 10 * 60;
+
+export async function setPendingMfa(pending: PendingMfa): Promise<void> {
+  const store = await cookies();
+  store.set(MFA_COOKIE, JSON.stringify(pending), {
+    ...BASE_COOKIE_OPTIONS,
+    maxAge: MFA_COOKIE_SECONDS,
+  });
+}
+
+export async function getPendingMfa(): Promise<PendingMfa | null> {
+  const raw = (await cookies()).get(MFA_COOKIE)?.value;
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Partial<PendingMfa>;
+    if (typeof p.mfaToken !== "string" || typeof p.id !== "string" || typeof p.email !== "string") return null;
+    return {
+      id: p.id,
+      mfaToken: p.mfaToken,
+      method: typeof p.method === "string" ? p.method : "totp",
+      maskedDestination: typeof p.maskedDestination === "string" ? p.maskedDestination : null,
+      email: p.email,
+      remember: p.remember === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingMfa(): Promise<void> {
+  (await cookies()).delete(MFA_COOKIE);
 }
 
 // --- Password reset (same Optipeople endpoints as vola) ---

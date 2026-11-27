@@ -1,6 +1,12 @@
 // Session cookie names, shared between the server auth helpers (lib/auth.ts)
 // and proxy.ts. Kept dependency-free so proxy can import it.
 
+/**
+ * A login waiting for its two-factor code: the mfa token and what the login
+ * form chose. Not a session cookie: it gives no access by itself.
+ */
+export const MFA_COOKIE = "ventisol_mfa";
+
 export const SESSION_COOKIES = {
   /** Optipeople access token (opaque bearer string). */
   token: "ventisol_token",

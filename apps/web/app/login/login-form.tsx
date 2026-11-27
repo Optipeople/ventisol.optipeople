@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { login, type LoginState } from "@/app/login/actions";
+import { MfaForm } from "@/app/login/mfa-form";
 import { Button, Spinner } from "@optipeople/ui";
 import {
   AuthCardHeader,
@@ -18,6 +19,14 @@ export function LoginForm({ initialError, next }: { initialError?: string; next?
     undefined
   );
   const error = state?.error ?? initialError;
+  // The challenge the user went back from: the login form shows again until a new one comes.
+  const [left, setLeft] = useState<string | null>(null);
+
+  // The password was right and the user has two-factor authentication on: ask for the code.
+  if (state?.mfa && state.mfa.id !== left) {
+    const step = state.mfa;
+    return <MfaForm key={step.id} step={step} next={next} onBack={() => setLeft(step.id)} />;
+  }
 
   return (
     <form action={action} className={authCardClasses}>
