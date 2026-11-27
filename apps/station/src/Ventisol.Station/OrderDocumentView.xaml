@@ -326,9 +326,16 @@
                                RenderOptions.BitmapScalingMode="HighQuality" />
                         <TextBlock Grid.Row="1" Style="{StaticResource TextBase}" FontSize="20" Foreground="{StaticResource Quiet}"
                                    VerticalAlignment="Center" Text="{Binding DrawingNote}" />
-                        <Button Grid.Row="2" Style="{StaticResource BigButton}" Margin="20,0,20,20" Content="Vis hele PDF"
-                                Command="{Binding ShowPdfCommand}"
-                                Visibility="{Binding HasPdf, Converter={StaticResource Shown}}" />
+                        <!-- Side by side; a button that is not there leaves its room to the other -->
+                        <UniformGrid Grid.Row="2" Rows="1" Margin="14,0,14,20">
+                            <Button Style="{StaticResource BigButton}" Margin="6,0" Content="Vis hele PDF"
+                                    Command="{Binding ShowPdfCommand}"
+                                    Visibility="{Binding HasPdf, Converter={StaticResource Shown}}" />
+                            <!-- The order's drawings of its arched and bevelled positions, with their measurements and angles -->
+                            <Button Style="{StaticResource BigButton}" Margin="6,0" Content="Vis BS-tegning"
+                                    Command="{Binding ShowBsDrawingsCommand}"
+                                    Visibility="{Binding CanShowBsDrawings, Converter={StaticResource Shown}}" />
+                        </UniformGrid>
                     </Grid>
                 </Border>
 
@@ -528,25 +535,32 @@
                 </ScrollViewer>
             </Grid>
 
-            <!-- The whole PDF as printed, from the position's page -->
+            <!-- The whole PDF as printed, from the position's page: the list, or the order's BS drawings -->
             <DockPanel Visibility="{Binding ShowingPages, Converter={StaticResource Shown}}">
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-                    <Button DockPanel.Dock="Right" Style="{StaticResource BigButton}" Content="Tilbage til elementet"
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BigButton}" Content="{Binding BackText}"
                             Command="{Binding HidePdfCommand}"
                             Visibility="{Binding CanLeavePages, Converter={StaticResource Shown}}" />
-                    <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" Text="Hele produktionslisten" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource BigButton}" Margin="0,0,12,0" Content="Vis BS-tegning"
+                            Command="{Binding ShowBsDrawingsCommand}"
+                            Visibility="{Binding CanShowBsDrawings, Converter={StaticResource Shown}}" />
+                    <TextBlock Style="{StaticResource Left}" FontSize="24" FontWeight="Bold" Text="{Binding PagesTitle}" />
                 </DockPanel>
                 <!-- Every page keeps its place, but only the ones on screen and their neighbours hold a
                      picture: the view tells the view model which those are as it scrolls. -->
                 <ScrollViewer x:Name="PagesScroller" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly"
-                              ScrollChanged="OnPagesScrolled">
+                              ScrollChanged="OnPagesScrolled" SizeChanged="OnPagesSized">
                     <ItemsControl ItemsSource="{Binding Pages}" x:Name="PagesList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:PdfPageViewModel}">
                                 <StackPanel Margin="0,0,10,28" MaxWidth="1500">
-                                    <TextBlock x:Name="Caption" Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}"
-                                               Margin="0,0,0,8" Text="{Binding Caption}" />
-                                    <Border Background="White" CornerRadius="4">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <TextBlock x:Name="Caption" Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}"
+                                                   Text="{Binding Caption}" />
+                                        <TextBlock Style="{StaticResource Left}" FontSize="18" Foreground="{StaticResource Ink3}"
+                                                   Margin="20,0,0,0" Text="{Binding Hint}" />
+                                    </StackPanel>
+                                    <Border x:Name="Sheet" Background="White" CornerRadius="4" MouseLeftButtonUp="OnSheetTapped">
                                         <Viewbox Stretch="Uniform">
                                             <Grid Width="{Binding Width}" Height="{Binding Height}">
                                                 <Image Source="{Binding Image}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
@@ -557,6 +571,19 @@
                                     </Border>
                                 </StackPanel>
                                 <DataTemplate.Triggers>
+                                    <!-- A BS drawing is seen whole: as big as the screen has room for, no scrolling to its measurements -->
+                                    <DataTrigger Binding="{Binding FitsScreen}" Value="True">
+                                        <Setter TargetName="Sheet" Property="Cursor" Value="Hand" />
+                                    </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding FitsScreen}" Value="True" />
+                                            <Condition Binding="{Binding Zoomed}" Value="False" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter TargetName="Sheet" Property="HorizontalAlignment" Value="Left" />
+                                        <Setter TargetName="Sheet" Property="MaxHeight"
+                                                Value="{Binding PageFitHeight, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                    </MultiDataTrigger>
                                     <DataTrigger Binding="{Binding IsPosition}" Value="True">
                                         <Setter TargetName="Caption" Property="Foreground" Value="{StaticResource OkText}" />
                                         <Setter TargetName="Caption" Property="FontWeight" Value="Bold" />

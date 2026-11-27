@@ -1,4 +1,5 @@
 using System.Windows.Media.Imaging;
+using Ventisol.Station.Core.Documents;
 using Windows.Data.Pdf;
 using Windows.Storage.Streams;
 
@@ -21,8 +22,9 @@ sealed class PdfPages(byte[] pdf) : IDisposable
     Task<(PdfDocument Document, InMemoryRandomAccessStream Stream)>? _open;
     volatile bool _disposed;
 
-    // A whole page as printed, black on white. One render at a time, shared with the drawings.
-    public Task<BitmapSource> PageAsync(int pageIndex)
+    // A whole page as printed, black on white, or the part of it in crop (always the same part for
+    // a page). One render at a time, shared with the drawings.
+    public Task<BitmapSource> PageAsync(int pageIndex, PdfBox? crop = null)
     {
         lock (_cache)
         {
@@ -41,7 +43,7 @@ sealed class PdfPages(byte[] pdf) : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                var image = await RenderAsync(pageIndex).WaitAsync(PdfRender.Timeout).ConfigureAwait(false);
+                var image = await RenderAsync(pageIndex, crop).WaitAsync(PdfRender.Timeout).ConfigureAwait(false);
                 lock (_cache)
                 {
                     if (!_disposed)
@@ -57,10 +59,10 @@ sealed class PdfPages(byte[] pdf) : IDisposable
         });
     }
 
-    async Task<BitmapSource> RenderAsync(int pageIndex)
+    async Task<BitmapSource> RenderAsync(int pageIndex, PdfBox? crop)
     {
         var (document, _) = await Open().ConfigureAwait(false);
-        return await PdfRender.Render(document, pageIndex, null, PdfRender.PagePixels, null).ConfigureAwait(false);
+        return await PdfRender.Render(document, pageIndex, crop, PdfRender.PagePixels, null).ConfigureAwait(false);
     }
 
     // The open in flight or done. A failed one is not kept: the next page tries again.

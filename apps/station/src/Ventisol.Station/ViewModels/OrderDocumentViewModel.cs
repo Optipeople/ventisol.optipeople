@@ -14,16 +14,24 @@ public enum DocumentState { Empty, Loading, Message, Ready }
 // What a station's element is: in progress there now, or the last one done there.
 public sealed record DocumentTarget(string StationName, Barcode? Barcode, bool InProgress, DateTimeOffset? At);
 
-// A page of "Vis hele PDF": it has its picture while it is on screen or next to it, and lets it go
+// A page of "Vis hele PDF" or "Vis BS-tegning": it has its picture while it is on screen or next to it, and lets it go
 // when it is scrolled away, so a long PDF never holds more than a few pages' pictures.
-public sealed partial class PdfPageViewModel(int index, int count, bool isPosition, double width, double height) : ObservableObject
+// With a crop only that part of the page is shown, and it is fitted to the screen: a BS drawing, which
+// sits in a corner of its sheet, is seen whole and as big as the screen allows. A tap on it makes it
+// as wide as the screen (Zoomed), to read its measurements from further off; another tap fits it again.
+public sealed partial class PdfPageViewModel(int index, int count, bool isPosition, double width, double height, PdfBox? crop = null) : ObservableObject
 {
     public int Index => index;
     public string Caption => $"Side {index + 1} af {count}";
     public bool IsPosition => isPosition;
-    // The page's size in points, so it takes its place before its picture is there.
-    public double Width => width;
-    public double Height => height;
+    public PdfBox? Crop => crop;
+    public bool FitsScreen => crop is not null;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(Hint))] public partial bool Zoomed { get; set; }
+    // What a tap on the page does, after the caption. Empty for a page that is not fitted.
+    public string Hint => crop is null ? "" : Zoomed ? "Tryk på tegningen for at se hele tegningen" : "Tryk på tegningen for at forstørre";
+    // The size in points of what is shown, so it takes its place before its picture is there.
+    public double Width => crop?.Width ?? width;
+    public double Height => crop?.Height ?? height;
     [ObservableProperty] public partial ImageSource? Image { get; set; }
     [ObservableProperty] public partial bool Failed { get; set; }
 }
@@ -61,6 +69,12 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     PdfPages? _pdf, _rendering;
     // The pages on screen, as the view last said.
     int _viewFirst, _viewLast;
+    // The file Pages was built from, and its path for the log.
+    byte[]? _pagesOf;
+    string? _pagesPath;
+    // The position is not in the list, so the list's pages are the screen: they can't be left, and the
+    // BS drawings go back to them.
+    bool _listOnly;
 
     public DocumentTarget? Target { get; private set; }
 
@@ -99,8 +113,22 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     [ObservableProperty] public partial bool ShowingPages { get; private set; }
     [ObservableProperty] public partial bool CanLeavePages { get; private set; }
     public ObservableCollection<PdfPageViewModel> Pages { get; } = [];
-    // The page "Vis hele PDF" starts at: the position's first page.
+    // The page the pages open at: the position's first page.
     [ObservableProperty] public partial int StartPage { get; private set; }
+    // What the pages are: the whole list, or the order's BS drawings.
+    [ObservableProperty] public partial string PagesTitle { get; private set; } = ListTitle;
+    // Where the button that leaves the pages goes.
+    [ObservableProperty] public partial string BackText { get; private set; } = BackToElement;
+
+    // The order has BS drawings (of its arched and bevelled positions) that are for this element.
+    [ObservableProperty] public partial bool HasBsDrawings { get; private set; }
+    // The pages on screen are the BS drawings, not the list.
+    [ObservableProperty] public partial bool ShowingBsDrawings { get; private set; }
+    // "Vis BS-tegning" is offered: there are drawings, and they are not what is on screen.
+    [ObservableProperty] public partial bool CanShowBsDrawings { get; private set; }
+
+    const string ListTitle = "Hele produktionslisten";
+    const string BackToElement = "Tilbage til elementet";
 
     public void Show(DocumentTarget target)
     {
@@ -118,8 +146,9 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         Drawing = null;
         DrawingNote = "";
         HasPdf = false;
-        ClosePages();
-        Pages.Clear();
+        HasBsDrawings = false;
+        _listOnly = false;
+        ClearPages();
 
         if (target.Barcode is not { } barcode)
         {
@@ -182,8 +211,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     {
         _cts?.Cancel();
         _cts = null;
-        ClosePages();
-        Pages.Clear();
+        ClearPages();
         Drawing = null;
     }
 
@@ -194,12 +222,26 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
     }
 
     [RelayCommand]
-    void ShowPdf() => OpenPages(_load?.Position?.PageIndex ?? 0);
+    void ShowPdf() => OpenList();
+
+    // The order's BS drawings, at the page that draws this element's position.
+    [RelayCommand]
+    void ShowBsDrawings()
+    {
+        if (_load is not { BsDrawings: { } drawings, BsDrawingsPage: { } start } load) return;
+        var position = load.Barcode.Position;
+        var named = drawings.PageFor(position) is not null;
+        OpenPages(drawings.Pdf, drawings.Path, [.. drawings.Pages.Select(p => (p.Width, p.Height, p.Position == position, p.Content))], start,
+            canLeave: true, drawings: true,
+            named ? $"BS-tegning · position {position}" : "BS-tegninger");
+    }
 
     [RelayCommand]
     void HidePdf()
     {
-        if (CanLeavePages) ClosePages();
+        if (!CanLeavePages) return;
+        if (ShowingBsDrawings && _listOnly) OpenList();
+        else ClosePages();
     }
 
     // Fire and forget from Show, so nothing may escape: whatever goes wrong on the way is logged and
@@ -269,6 +311,8 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         }
         Sheet = ElementSheet.For(barcode, doc, load.Position);
         HasPdf = load.Pdf is not null;
+        HasBsDrawings = ShowsPages && load.BsDrawingsPage is not null;
+        CanShowBsDrawings = HasBsDrawings;
         HasSheetData = load.Position is not null;
         State = DocumentState.Ready;
         if (load.Position is null)
@@ -278,7 +322,8 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
                 : $"Position {Sheet.Position} står ikke i produktionslisten. Tryk for at se hele PDF'en.";
             // A widget has no pages to show, so its drawing area says where they are.
             if (!ShowsPages) DrawingNote = "Tryk for at se hele PDF'en";
-            OpenPages(0, canLeave: false);
+            _listOnly = true;
+            OpenList();
             return;
         }
         if (doc.Problems.Count > 0)
@@ -313,22 +358,39 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         }
     }
 
-    void OpenPages(int start, bool canLeave = true)
+    // The whole list, from the position's page.
+    void OpenList()
     {
-        if (!ShowsPages || _load is not { Pdf: { } pdf, Document: { } doc } load || _cts is null) return;
-        CanLeavePages = canLeave;
-        if (Pages.Count == 0)
+        if (_load is not { Pdf: { } pdf, Document: { } doc } load) return;
+        // Every page in the samples has the same size; the drawing box knows it.
+        var box = doc.Positions.Select(p => p.Drawing).FirstOrDefault(d => d is not null);
+        var (w, h) = box is null ? (839.0, 592.0) : (box.PageWidth, box.PageHeight);
+        var position = load.Position;
+        var pages = new (double, double, bool, PdfBox?)[doc.PageCount];
+        for (var i = 0; i < pages.Length; i++)
+            pages[i] = (w, h, position is not null && i >= position.PageIndex && i < position.PageIndex + position.PageCount, null);
+        OpenPages(pdf, load.Path, pages, position?.PageIndex ?? 0, canLeave: !_listOnly, drawings: false, ListTitle);
+    }
+
+    // Shows a PDF's pages, from page start. One file's pages at a time: another file takes over.
+    void OpenPages(byte[] pdf, string? path, IReadOnlyList<(double Width, double Height, bool IsPosition, PdfBox? Crop)> pages, int start,
+        bool canLeave, bool drawings, string title)
+    {
+        if (!ShowsPages || _cts is null) return;
+        if (!ReferenceEquals(_pagesOf, pdf))
         {
-            // Every page in the samples has the same size; the drawing box knows it.
-            var box = doc.Positions.Select(p => p.Drawing).FirstOrDefault(d => d is not null);
-            var (w, h) = box is null ? (839.0, 592.0) : (box.PageWidth, box.PageHeight);
-            var position = load.Position;
-            for (var i = 0; i < doc.PageCount; i++)
-            {
-                var isPosition = position is not null && i >= position.PageIndex && i < position.PageIndex + position.PageCount;
-                Pages.Add(new PdfPageViewModel(i, doc.PageCount, isPosition, w, h));
-            }
+            ClearPages();
+            for (var i = 0; i < pages.Count; i++)
+                Pages.Add(new PdfPageViewModel(i, pages.Count, pages[i].IsPosition, pages[i].Width, pages[i].Height, pages[i].Crop));
+            _pagesOf = pdf;
+            _pagesPath = path;
         }
+        CanLeavePages = canLeave;
+        PagesTitle = title;
+        // From the drawings of an element with nothing but the list's pages, the way back is to those.
+        BackText = drawings && _listOnly ? "Tilbage til produktionslisten" : BackToElement;
+        ShowingBsDrawings = drawings;
+        CanShowBsDrawings = HasBsDrawings && !drawings;
         StartPage = Math.Clamp(start, 0, Math.Max(0, Pages.Count - 1));
         _pdf ??= new PdfPages(pdf);
         ShowingPages = true;
@@ -336,10 +398,21 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
         PagesInView(StartPage, StartPage);
     }
 
+    // Closes the pages and forgets them, for another file or another element.
+    void ClearPages()
+    {
+        ClosePages();
+        Pages.Clear();
+        _pagesOf = null;
+        _pagesPath = null;
+    }
+
     // Hides the pages and lets go of their pictures and of the open PDF.
     void ClosePages()
     {
         ShowingPages = false;
+        ShowingBsDrawings = false;
+        CanShowBsDrawings = HasBsDrawings;
         _pdf?.Dispose();
         _pdf = null;
         foreach (var page in Pages)
@@ -382,7 +455,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
             {
                 try
                 {
-                    var image = await pdf.PageAsync(page.Index);
+                    var image = await pdf.PageAsync(page.Index, page.Crop);
                     if (_pdf != pdf) return;
                     // Scrolled away while it was drawn: PdfPages keeps it for a while, the page doesn't.
                     if (IsNear(page.Index)) page.Image = image;
@@ -390,7 +463,7 @@ public sealed partial class OrderDocumentViewModel : ObservableObject
                 catch (Exception ex)
                 {
                     if (_pdf != pdf) return;
-                    Log.Write($"Page {page.Index + 1} of {_load?.Path} failed: {ex.Message}");
+                    Log.Write($"Page {page.Index + 1} of {_pagesPath} failed: {ex.Message}");
                     page.Failed = true;
                 }
             }

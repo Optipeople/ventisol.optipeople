@@ -13,6 +13,11 @@ public partial class OrderDocumentView : UserControl
     public static readonly DependencyProperty ActionsProperty =
         DependencyProperty.Register(nameof(Actions), typeof(object), typeof(OrderDocumentView));
 
+    // The height a page fitted to the screen may take: the pages' room, less the page's caption and
+    // some air under it.
+    public static readonly DependencyProperty PageFitHeightProperty =
+        DependencyProperty.Register(nameof(PageFitHeight), typeof(double), typeof(OrderDocumentView), new PropertyMetadata(double.PositiveInfinity));
+
     OrderDocumentViewModel? _vm;
     // False from the pages opening until they are scrolled to the start page, so the top pages,
     // which are on screen for a moment before that, are not drawn for nothing.
@@ -33,6 +38,17 @@ public partial class OrderDocumentView : UserControl
     {
         get => GetValue(ActionsProperty);
         set => SetValue(ActionsProperty, value);
+    }
+
+    public double PageFitHeight
+    {
+        get => (double)GetValue(PageFitHeightProperty);
+        private set => SetValue(PageFitHeightProperty, value);
+    }
+
+    void OnPagesSized(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Height > 0) PageFitHeight = Math.Max(200, e.NewSize.Height - 50);
     }
 
     void OnChanged(object? sender, PropertyChangedEventArgs e)
@@ -67,6 +83,19 @@ public partial class OrderDocumentView : UserControl
     }
 
     void OnPagesScrolled(object sender, ScrollChangedEventArgs e) => ReportPagesInView();
+
+    // A tap on a page fitted to the screen (a BS drawing) makes it as wide as the screen, and back.
+    void OnSheetTapped(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: PdfPageViewModel { FitsScreen: true } page } sheet) return;
+        page.Zoomed = !page.Zoomed;
+        // The page keeps its place at the top of the screen as it grows or shrinks.
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            PagesScroller.UpdateLayout();
+            if (sheet.IsVisible) PagesScroller.ScrollToVerticalOffset(Math.Max(0, sheet.TranslatePoint(new Point(), PagesList).Y - 34));
+        });
+    }
 
     // Tells the view model which pages are on screen, so it draws those and lets the others go.
     void ReportPagesInView()
