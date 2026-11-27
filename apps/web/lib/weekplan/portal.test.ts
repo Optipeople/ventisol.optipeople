@@ -80,6 +80,10 @@ describe("from the production lists", () => {
     expect(t(["Topvende"], "DANLINE")).toBe("TV");
     expect(t(["Fast karm", "Kip / skydedør mod højre (indefra)", "Fast karm"], "SOFTLINE")).toBe("KS dør");
     expect(t(["Kip / skydedør mod venstre (indefra)"], "SOFTLINE")).toBe("KS dør");
+    // Orders 58859, 58579 and 58725: counted as SD for now.
+    expect(t(["Indv. dør venstre wc"], "70 mm Industri")).toBe("SD");
+    expect(t(["Indv. dør venstre hængt"], "70 mm Industri")).toBe("SD");
+    expect(t(["Hesteboks greb udv VU"], "70 mm Industri")).toBe("SD");
     expect(t(["Montageskinne"], "SOFTLINE")).toBeNull();
   });
 

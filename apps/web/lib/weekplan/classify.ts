@@ -76,6 +76,12 @@ export interface FrameType {
 
 const SCAN_TYPES = new Set(["26", "10", "16", "20", "41"]);
 
+/**
+ * An interior door ("Indv. dør venstre wc") and a horse box door ("Hesteboks greb udv VU") count as
+ * an industrial door, so SD. A guess until Ventisol says otherwise (27-11-2026).
+ */
+const INTERIOR_OR_HORSE_BOX = /^indv\.? ?dør|^indvendig dør|^hesteboks/;
+
 /** Opens inwards: HI, VI, H.I., V.I. */
 const INWARD = /\b[HV]\.?\s?I\b\.?/i;
 
@@ -217,7 +223,7 @@ export function openingPart(opening: string | null | undefined): Part {
           ? "TD"
           : t.includes("facadedør") || t.includes("facade dør")
             ? "FD"
-            : t.includes("industridør") || t.includes("industri dør")
+            : t.includes("industridør") || t.includes("industri dør") || INTERIOR_OR_HORSE_BOX.test(t)
               ? "ID"
               : t.includes("skydedør")
                 ? "KS"
