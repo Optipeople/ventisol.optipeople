@@ -50,7 +50,8 @@ public partial class MainWindow : Window
     // Per station, the stop time the log last told of.
     readonly Dictionary<int, DateTimeOffset> _shiftEndLogged = [];
     // Demo (Alt+V, a dev build): a shift that ended when it was pressed, at every station, with 1 minute's grace.
-    ShiftSchedule? _demoShift;
+    // Set only in a debug build: the "= null" keeps the release build from failing on a field never assigned (CS0649).
+    ShiftSchedule? _demoShift = null;
 
     static readonly string DataFolder = AppPaths.Data;
     readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMilliseconds(250) };
