@@ -293,6 +293,83 @@ describe("documents", () => {
     expect(order.customer).toBe("Nyeste Kunde A/S");
   });
 
+  it("adds the positions only the BS list has, and takes the BS list alone when there is no list", async () => {
+    const doc = documents.find((d) => d.parsed.positions.length >= 2)!;
+    const mine = rows.filter((r) => orderOf(r) === doc.orderNo);
+    await insertFixtureScans(db, mine, NOW);
+    const [kept, moved] = doc.parsed.positions;
+    const total = doc.parsed.positions.reduce((sum, p) => sum + (p.quantity ?? 0), 0);
+    const no = doc.orderNo;
+    const parsedWith = (customer: string, positions: unknown[]) =>
+      JSON.stringify({ ...doc.parsed, header: { ...doc.parsed.header, customer: [customer] }, positions });
+    const insert = (fileName: string, prefix: string, printDate: string | null, syncedAt: string, parsed: string) =>
+      query(
+        `insert into raw.order_documents (file_name, order_no, prefix, print_date, synced_at, parsed, parsed_at)
+         values ($1, $2, $3, $4::date, $5::timestamptz, $6::jsonb, $5::timestamptz)`,
+        [fileName, no, prefix, printDate, syncedAt, parsed]
+      );
+    // The list has every position but one.
+    await insert(
+      `${no}_20261127.pdf`,
+      "",
+      "2026-11-27",
+      "2026-11-27T08:00:00Z",
+      parsedWith("Listens Kunde", doc.parsed.positions.filter((p) => p !== moved))
+    );
+    // The newest BS list has that one, and a position of the list with another count: the list wins.
+    await insert(
+      `${no}_20261127BS.pdf`,
+      "BS",
+      null,
+      "2026-11-27T08:00:00Z",
+      parsedWith("BS Kunde", [moved, { ...kept, quantity: (kept.quantity ?? 0) + 40 }])
+    );
+    // An older BS list synced later, and the drawings: neither counts.
+    await insert(
+      `B S ${no}_20261112.pdf`,
+      "BS",
+      null,
+      "2026-11-27T10:00:00Z",
+      parsedWith("Gammel BS", [{ ...moved, quantity: (moved.quantity ?? 0) + 70 }])
+    );
+    await insert(
+      `${no}_20261127BS tegninger.pdf`,
+      "BS tegninger",
+      null,
+      "2026-11-27T11:00:00Z",
+      JSON.stringify({ header: { orderNumber: no }, positions: [] })
+    );
+
+    await applyScanChanges(changedOf(mine), NOW);
+    const order = await one<{ customer: string; elements_expected: number; expected_source: string }>(
+      "select customer, elements_expected, expected_source from core.orders where order_no = $1",
+      [no]
+    );
+    expect(order).toMatchObject({ customer: "Listens Kunde", elements_expected: total, expected_source: "document" });
+    // The scans of the BS position find their line: every element is in the documents, with a type.
+    const elements = await one<{ total: number; in_document: number; typed: number; moved: number }>(
+      `select count(*) as total, count(*) filter (where in_document) as in_document, count(element_type_id) as typed,
+              count(*) filter (where position = $2) as moved
+         from core.elements where order_no = $1`,
+      [no, moved.number]
+    );
+    expect(Number(elements.moved)).toBeGreaterThan(0);
+    expect(Number(elements.in_document)).toBe(Number(elements.total));
+    expect(Number(elements.typed)).toBe(Number(elements.total));
+
+    // Without the list the newest BS list is the order's list, never the drawings.
+    await query("delete from raw.order_documents where file_name = $1", [`${no}_20261127.pdf`]);
+    await applyDocumentChanges([no], NOW);
+    const alone = await one<{ customer: string; elements_expected: number }>(
+      "select customer, elements_expected from core.orders where order_no = $1",
+      [no]
+    );
+    expect(alone).toMatchObject({
+      customer: "BS Kunde",
+      elements_expected: (moved.quantity ?? 0) + (kept.quantity ?? 0) + 40,
+    });
+  });
+
   it("onElementTypesChanged works the types out again", async () => {
     await seedAll();
     await rebuildAll(NOW, { restart: true });

@@ -7,7 +7,7 @@ import { OrderDocuments } from "@/components/orders/order-documents";
 import { ElementsTable, PassesTable } from "@/components/orders/order-tables";
 import { RouteGantt, StepsTable } from "@/components/orders/route-gantt";
 import { requireCapability } from "@/lib/auth";
-import { pickDocument } from "@/lib/orders-view/documents";
+import { orderLists, pickDocument } from "@/lib/orders-view/documents";
 import { CLOCK_LABELS, ordersHref } from "@/lib/orders-view/params";
 import {
   formatCount,
@@ -159,9 +159,11 @@ function NotStartedOrder({
   clock: Clock | undefined;
 }) {
   const document = pickDocument(documents, wantedDoc);
-  const header = documents.find((d) => d.header)?.header ?? null;
-  const customer = header?.customer.filter(Boolean)[0] ?? null;
-  const pieces = document?.positions.reduce((sum, p) => sum + (p.quantity ?? 0), 0) ?? 0;
+  // The order as a whole, whichever file is shown: its list, plus the positions only its BS list has.
+  const lists = orderLists(documents);
+  const header = lists.main?.header ?? documents.find((d) => d.header)?.header ?? null;
+  const customer = header?.customer?.filter(Boolean)[0] ?? null;
+  const pieces = lists.positions.reduce((sum, p) => sum + (p.quantity ?? 0), 0);
   return (
     <PageShell width="wide">
       <PageHeader

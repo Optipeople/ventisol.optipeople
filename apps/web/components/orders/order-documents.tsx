@@ -11,7 +11,7 @@ import {
   DataTableRow,
 } from "@optipeople/ui";
 import { EmptyState, TableFrame } from "@optipeople/ui/blocks";
-import { documentPdfHref } from "@/lib/orders-view/documents";
+import { documentPdfHref, orderLists } from "@/lib/orders-view/documents";
 import { formatDayTime, formatNumber, NO_DATA } from "@/lib/reports/format";
 import type { OrderDocumentInfo } from "@/lib/reports/types";
 import { formatDisplayDay } from "@/lib/time";
@@ -45,6 +45,9 @@ export function OrderDocuments({
   }
 
   const pdf = selected.blobReference ? documentPdfHref(orderNo, selected.fileName) : null;
+  // With the order's list shown, the positions only its BS list has are listed after the list's own.
+  const lists = orderLists(documents);
+  const extra = lists.bs && lists.main?.fileName === selected.fileName ? lists.bsPositions : [];
 
   return (
     <div className="space-y-6">
@@ -124,12 +127,30 @@ export function OrderDocuments({
         </p>
       )}
 
-      {selected.positions.length > 0 && <PositionsTable positions={selected.positions} />}
+      {selected.positions.length + extra.length > 0 && (
+        <PositionsTable positions={selected.positions} extra={extra} extraHref={lists.bs ? hrefFor(lists.bs.fileName) : null} />
+      )}
+      {extra.length > 0 && lists.bs && (
+        <p className={`text-[14px] leading-[21px] ${muted}`}>
+          {extra.length === 1 ? "Position" : "Positionerne"} {extra.map((p) => p.label).join(", ")} står kun i BS-listen{" "}
+          {lists.bs.fileName} (bue/skrå) og tæller med i ordrens elementer.
+        </p>
+      )}
     </div>
   );
 }
 
-function PositionsTable({ positions }: { positions: OrderDocumentInfo["positions"] }) {
+function PositionsTable({
+  positions,
+  extra,
+  extraHref,
+}: {
+  positions: OrderDocumentInfo["positions"];
+  /** Positions from the order's BS list, shown after the document's own. */
+  extra: OrderDocumentInfo["positions"];
+  extraHref: string | null;
+}) {
+  const rows = [...positions.map((p) => ({ p, bs: false })), ...extra.map((p) => ({ p, bs: true }))];
   return (
     <TableFrame>
       <DataTable stickyHeader>
@@ -144,9 +165,16 @@ function PositionsTable({ positions }: { positions: OrderDocumentInfo["positions
           <DataTableHeader align="right">Side</DataTableHeader>
         </DataTableHead>
         <DataTableBody>
-          {positions.map((p) => (
-            <DataTableRow key={`${p.label}-${p.pageIndex}`}>
-              <DataTableCell className="font-bold tabular-nums">{p.label}</DataTableCell>
+          {rows.map(({ p, bs }) => (
+            <DataTableRow key={`${bs ? "bs-" : ""}${p.label}-${p.pageIndex}`}>
+              <DataTableCell className="whitespace-nowrap font-bold tabular-nums">
+                {p.label}
+                {bs && extraHref && (
+                  <Link href={extraHref} scroll={false} className="ml-2 font-normal text-[var(--ds-midnight-green)] hover:underline">
+                    BS
+                  </Link>
+                )}
+              </DataTableCell>
               <DataTableCell>{p.system ?? ""}</DataTableCell>
               <DataTableCell align="right" className="tabular-nums">
                 {p.quantity ?? ""}

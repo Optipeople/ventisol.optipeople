@@ -28,6 +28,7 @@ import {
 import { eventField, type Scan } from "@/lib/scans";
 import { addDays, dayEnd, dayStart } from "@/lib/time";
 import type { ReadModelConfig } from "./config";
+import { mergeBsPositions, pickOrderLists } from "@/lib/orderdoc/order-lists";
 import { orderInfoFromDocument, type SeenElement } from "./orderinfo";
 
 /**
@@ -130,11 +131,13 @@ export async function loadScans(db: Db, orderNos: number[]): Promise<Scan[]> {
 }
 
 /**
- * OrderInfo per order from its newest parsed document: newest print date,
- * then newest synced_at. Rows with no parsed object are ignored. Only the
- * header and, per position, what the mapping reads are fetched: a parsed
- * list with its cutting and hardware tables is far too heavy to pull for
- * every order in progress every minute.
+ * OrderInfo per order from its parsed documents: the newest list, plus the
+ * positions only the order's newest BS list has (lib/orderdoc/order-lists.ts
+ * has the rules). An order with a BS list and no list takes the BS list. BS
+ * drawings and rows with no parsed object are ignored. Only the header and,
+ * per position, what the mapping reads are fetched: a parsed list with its
+ * cutting and hardware tables is far too heavy to pull for every order in
+ * progress every minute.
  */
 export async function loadOrderInfos(
   db: Db,
@@ -143,9 +146,20 @@ export async function loadOrderInfos(
   rules: ReadModelConfig["rules"]
 ): Promise<OrderInfo[]> {
   if (orderNos.length === 0) return [];
-  const rows = await db.query<{ order_no: number; header: unknown; positions: unknown }>(
-    `select distinct on (d.order_no)
-            d.order_no,
+  const docs = await db.query<{
+    order_no: number;
+    file_name: string;
+    prefix: string | null;
+    print_date: string | null;
+    synced_at: string | null;
+    header: unknown;
+    positions: unknown;
+  }>(
+    `select d.order_no,
+            d.file_name,
+            d.prefix,
+            d.print_date::text as print_date,
+            to_char(d.synced_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as synced_at,
             d.parsed -> 'header' as header,
             (select jsonb_agg(jsonb_build_object(
                       'number', p.value -> 'number',
@@ -165,9 +179,38 @@ export async function loadOrderInfos(
                     ) with ordinality as p) as positions
        from raw.order_documents d
       where d.order_no = any($1::int[]) and jsonb_typeof(d.parsed) = 'object'
-      order by d.order_no, d.print_date desc nulls last, d.synced_at desc, d.file_name desc`,
+        and coalesce(d.prefix, '') !~* '(^|_)BS tegninger$'
+      order by d.order_no, d.file_name`,
     [orderNos]
   );
+  const byOrder = new Map<number, typeof docs>();
+  for (const d of docs) {
+    const list = byOrder.get(d.order_no);
+    if (list) list.push(d);
+    else byOrder.set(d.order_no, [d]);
+  }
+  const positionsOf = (d: { positions: unknown } | null) => (d && Array.isArray(d.positions) ? (d.positions as object[]) : []);
+  const rows: { order_no: number; header: unknown; positions: unknown[] }[] = [];
+  for (const [orderNo, files] of byOrder) {
+    const picked = pickOrderLists(
+      files.map((d) => ({
+        fileName: d.file_name,
+        prefix: d.prefix,
+        printDate: d.print_date,
+        syncedAt: d.synced_at,
+        headerDate: (d.header as { date?: unknown } | null)?.date,
+        parsed: true,
+        doc: d,
+      }))
+    );
+    const main = picked.list ?? picked.bs;
+    if (!main) continue;
+    rows.push({
+      order_no: orderNo,
+      header: main.doc.header,
+      positions: mergeBsPositions(positionsOf(picked.list?.doc ?? null), positionsOf(picked.bs?.doc ?? null)),
+    });
+  }
   const seen = new Map<number, Map<string, SeenElement>>();
   for (const s of scans) {
     let byBarcode = seen.get(s.orderNo);
@@ -178,7 +221,7 @@ export async function loadOrderInfos(
   }
   const infos: OrderInfo[] = [];
   for (const row of rows) {
-    const parsed = { header: row.header ?? {}, positions: row.positions ?? [] };
+    const parsed = { header: row.header ?? {}, positions: row.positions };
     const info = orderInfoFromDocument(row.order_no, parsed, [...(seen.get(row.order_no)?.values() ?? [])], rules);
     if (info) infos.push(info);
   }

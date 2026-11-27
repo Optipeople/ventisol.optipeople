@@ -90,7 +90,8 @@ export function parseOrderFileName(name: string): OrderFileName | null {
   };
 }
 
-function parseCompactDate(s: string): string | null {
+/** "20261127" as "2026-11-27". Null when it is no real date. */
+export function parseCompactDate(s: string): string | null {
   const m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
   if (!m) return null;
   const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
