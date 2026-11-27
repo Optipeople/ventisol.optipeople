@@ -10,7 +10,7 @@
 
 import type { ElementType, FrameBase } from "./types";
 
-export type PartCode = "FK" | "FR" | "BH" | "ID" | "FD" | "TD" | "DK" | "TS" | "SH";
+export type PartCode = "FK" | "FR" | "BH" | "ID" | "FD" | "TD" | "DK" | "TS" | "SH" | "TV" | "KS";
 
 export interface Part {
   code: PartCode | null;
@@ -44,6 +44,8 @@ function partCode(text: string): PartCode | null {
   if (/^DK\b/.test(t)) return "DK";
   if (/^TS\b/.test(t)) return "TS";
   if (/^SH\b/.test(t) || /^SIDEH/.test(t)) return "SH";
+  if (/^TV\b/.test(t) || /^TOPVENDE/.test(t)) return "TV";
+  if (/^KS\b/.test(t) || t.includes("SKYDED")) return "KS";
   return null;
 }
 
@@ -119,6 +121,13 @@ export function frameType(parts: Part[], facts: PositionFacts): FrameType | null
     case "SH":
       // A side hung sash outside Danline is the industrial turn window.
       return danline ? { type: db("SH", "DB SH"), base: "SH" } : { type: db("DK", "DB DK"), base: "DK" };
+    case "TV":
+      // A top swing window ("Topvende": the sash turns right round). Counted with the turn and tilt
+      // windows, in Danline too, as Kontor's sheet does.
+      return { type: "TV", base: "DK" };
+    case "KS":
+      // A tilt and slide door ("Kip / skydedør": the sash slides over the fixed light beside it).
+      return { type: "KS dør", base: "TD" };
     default:
       return null;
   }
@@ -190,7 +199,8 @@ export const WELDS_PER_TYPE: Record<ElementType, number> = {
 
 /**
  * A field of the 3E production list as a part, from its opening function
- * ("Åbningsfunktion"): "Topstyret ud" is TS, "Industridør stående" the
+ * ("Åbningsfunktion"): "Topstyret ud" is TS, "Topvende" TV, "Kip / skydedør
+ * mod højre" KS, "Industridør stående" the
  * standing leaf of a two-leaf industrial door, "Fast karm" a fixed light.
  * Text is compared without regard to case.
  */
@@ -209,13 +219,17 @@ export function openingPart(opening: string | null | undefined): Part {
             ? "FD"
             : t.includes("industridør") || t.includes("industri dør")
               ? "ID"
-              : /^drej/.test(t) || t.includes("drej kip")
-                ? "DK"
-                : t.includes("topstyret")
-                  ? "TS"
-                  : t.includes("sidehængt")
-                    ? "SH"
-                    : null;
+              : t.includes("skydedør")
+                ? "KS"
+                : t.includes("topvende")
+                  ? "TV"
+                  : /^drej/.test(t) || t.includes("drej kip")
+                    ? "DK"
+                    : t.includes("topstyret")
+                      ? "TS"
+                      : t.includes("sidehængt")
+                        ? "SH"
+                        : null;
   // A turn and tilt terrace door ("d/k", "drej/kip", "dreje-kip") opens inwards.
   const turnTilt = code === "TD" && (t.includes("d/k") || t.includes("drej")) && !INWARD.test(text);
   return { code, text: turnTilt ? `${text} H.I.` : text };

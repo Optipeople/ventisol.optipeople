@@ -79,7 +79,7 @@ DB type.
 The parts of a production list position are its fields' opening functions
 (`openingPart`): "Fast karm" FK, "Bundhængt SV" BH, "Industridør ..." and
 "Industridør stående" ID, "Facadedør ..." FD, "Terrassedør ..." TD (inwards
-with "d/k" or H.I./V.I.), "Drej Kip ..." DK, "Topstyret ..." TS,
+with "d/k" or H.I./V.I.), "Drej Kip ..." DK, "Topstyret ..." TS, "Topvende" TV, "Kip / skydedør ..." KS,
 "Sidehængt ..." SH. The list prints a coupled element as one position, so it
 counts as one frame.
 
@@ -97,6 +97,8 @@ element is typed frame by frame. The Scan types come from `Typnummer`.
 | TD opening in (HI, VI, d/k) | DK TD |
 | DK | DK |
 | TS | TS |
+| TV ("Topvende") | TV |
+| KS ("Kip / skydedør") | KS dør |
 | SH in Danline | SH |
 | SH or "Sideh." elsewhere | DK |
 | 3E Typnummer "Scan type 26/10/16/20/41" | T26 ... T41 |

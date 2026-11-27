@@ -76,6 +76,10 @@ describe("from the production lists", () => {
     expect(t(["Sidehængt V.U. med anverfer", "Sidehængt H.U. med anverfer"], "DANLINE")).toBe("DB SH");
     expect(t(["Sidehængt højre ud"], "70 mm Industri")).toBe("DK");
     expect(t(["Fast karm"], "DANLINE")).toBe("FK DL");
+    // Bente, 27-11-2026: orders 58830, 59000 and 58774.
+    expect(t(["Topvende"], "DANLINE")).toBe("TV");
+    expect(t(["Fast karm", "Kip / skydedør mod højre (indefra)", "Fast karm"], "SOFTLINE")).toBe("KS dør");
+    expect(t(["Kip / skydedør mod venstre (indefra)"], "SOFTLINE")).toBe("KS dør");
     expect(t(["Montageskinne"], "SOFTLINE")).toBeNull();
   });
 
