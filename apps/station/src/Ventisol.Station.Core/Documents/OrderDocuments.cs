@@ -36,6 +36,26 @@ public sealed record OrderDocumentLoad(
 
     // The copy is another file than the one the folder lists for the order now: an older version.
     public bool OlderVersion { get; init; }
+
+    // What the file is: the order's list, or its BS list when that is where the position stands.
+    public OrderDocumentKind Kind { get; init; }
+
+    // The order's BS drawings, when it has a file of them that could be read.
+    public BsDrawings? BsDrawings { get; init; }
+
+    // The page (0-based) of the BS drawings to show for this element, or null when they are not for
+    // it. The page that names its position; with none, the first page when the element comes from the
+    // BS list or the drawings name no positions at all (then nothing says they are not for it).
+    public int? BsDrawingsPage => BsDrawings switch
+    {
+        null or { Pages.Count: 0 } => null,
+        var d when d.PageFor(Barcode.Position) is { } page => page,
+        var d when Kind == OrderDocumentKind.BsList || !d.NamesPositions => 0,
+        _ => null,
+    };
+
+    // Set when the file is a BS drawings file: its pages.
+    internal IReadOnlyList<BsDrawingPage>? DrawingPages { get; init; }
 }
 
 // A PDF bigger than OrderDocuments.MaxPdfBytes: not read. An IOException, so it is handled as a
@@ -68,7 +88,11 @@ public sealed class OrderDocuments
 
     // Path is the file read; IsCopy when that is a copy in Cache, not the share's file.
     sealed record Read(OrderDocument Document, byte[] Pdf, string Key, string Path, bool IsCopy, int Order, DateOnly? Date,
-        OrderDocumentKind Kind = OrderDocumentKind.List);
+        OrderDocumentKind Kind = OrderDocumentKind.List)
+    {
+        // A BS drawings file's pages, read the first time they are asked for.
+        public Lazy<IReadOnlyList<BsDrawingPage>> DrawingPages { get; } = new(() => OrderDocumentParser.DrawingPages(Pdf));
+    }
 
     readonly OrderDocumentLocator _locator;
     readonly Func<string, byte[]> _readFile;
@@ -127,16 +151,49 @@ public sealed class OrderDocuments
 
     // The order's document (its list), and the element's position in it. An order with arched or
     // bevelled elements has those positions in a BS list of their own ("58931_20261127BS.pdf"): when the
-    // list doesn't hold the element's position and the folder has a BS list that does, that one answers.
+    // list doesn't hold the element's position and there is a BS list that does, that one answers.
+    // The order's BS drawings come along (BsDrawings), when it has a file of them.
     public async Task<OrderDocumentLoad> LoadAsync(Barcode barcode, CancellationToken ct = default)
     {
-        if (Folder is null && Cloud is { } cloud) return await LoadFromCloudAsync(cloud, barcode, ct).ConfigureAwait(false);
-        var load = await LoadFromShareAsync(barcode, null, ct).ConfigureAwait(false);
-        if (load is not { Status: OrderDocumentLoadStatus.Ready, Position: null }) return load;
-        var bs = _locator.KnownPath(barcode.Order, OrderDocumentKind.BsList);
-        if (bs is null || string.Equals(bs, load.Path, StringComparison.OrdinalIgnoreCase)) return load;
-        var part = await LoadFromShareAsync(barcode, OrderDocumentKind.BsList, ct).ConfigureAwait(false);
-        return part is { Status: OrderDocumentLoadStatus.Ready, Position: not null } ? part : load;
+        var load = await LoadKindAsync(barcode, null, ct).ConfigureAwait(false);
+        if (load.Status != OrderDocumentLoadStatus.Ready) return load;
+        // OptiCloud just failed to answer for the list: its BS files are not waited for too, their copies answer.
+        var copies = load.FromCopy && Folder is null;
+        if (load.Position is null && load.Kind == OrderDocumentKind.List && Knows(barcode.Order, OrderDocumentKind.BsList))
+        {
+            var part = await LoadKindAsync(barcode, OrderDocumentKind.BsList, ct, copies).ConfigureAwait(false);
+            if (part is { Status: OrderDocumentLoadStatus.Ready, Position: not null, Kind: OrderDocumentKind.BsList }) load = part;
+        }
+        return load with { BsDrawings = await LoadBsDrawingsAsync(barcode, copies, ct).ConfigureAwait(false) };
+    }
+
+    Task<OrderDocumentLoad> LoadKindAsync(Barcode barcode, OrderDocumentKind? kind, CancellationToken ct, bool copiesOnly = false) =>
+        Folder is null && Cloud is { } cloud ? LoadFromCloudAsync(cloud, barcode, kind, copiesOnly, ct) : LoadFromShareAsync(barcode, kind, ct);
+
+    // Whether to look for the order's file of that kind. The folder is not listed again to learn there is
+    // none: the last index answers. OptiCloud's answer for the order is kept, so asking again costs nothing.
+    bool Knows(int order, OrderDocumentKind kind) =>
+        Folder is null ? Cloud is not null : _locator.KnownPath(order, kind) is not null;
+
+    // The order's BS drawings, or null: it has none, or the file can't be read now. It never fails the document.
+    async Task<BsDrawings?> LoadBsDrawingsAsync(Barcode barcode, bool copiesOnly, CancellationToken ct)
+    {
+        if (!Knows(barcode.Order, OrderDocumentKind.BsDrawings)) return null;
+        try
+        {
+            var load = await LoadKindAsync(barcode, OrderDocumentKind.BsDrawings, ct, copiesOnly).ConfigureAwait(false);
+            return load is { Status: OrderDocumentLoadStatus.Ready, Pdf: { } pdf, Path: { } path, FileKey: { } key, DrawingPages: { Count: > 0 } pages }
+                ? new BsDrawings(pdf, path, key, pages, load.FromCopy)
+                : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     async Task<OrderDocumentLoad> LoadFromShareAsync(Barcode barcode, OrderDocumentKind? kind, CancellationToken ct)
@@ -147,14 +204,14 @@ public sealed class OrderDocuments
             case OrderDocumentStatus.Off: return new(barcode, OrderDocumentLoadStatus.Off);
             case OrderDocumentStatus.NotFound: return new(barcode, OrderDocumentLoadStatus.NotFound);
             case OrderDocumentStatus.FolderUnavailable:
-                return await FromCopyAsync(barcode, null, ct).ConfigureAwait(false)
+                return await FromCopyAsync(barcode, null, kind, ct).ConfigureAwait(false)
                     ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Error: lookup.Error);
         }
 
         var path = lookup.Path!;
         // The share hung or was gone a moment ago: don't make every scan wait for it again.
         if (_locator.IsDown)
-            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+            return await FromCopyAsync(barcode, path, kind, ct).ConfigureAwait(false)
                 ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Path: path, Error: _locator.LastError ?? "Mappen svarer ikke");
 
         // Even the file's write time is a trip to the share, so all of it runs in the background.
@@ -169,7 +226,7 @@ public sealed class OrderDocuments
             // The share hangs: copies answer for a while, or until this read gets through after all.
             _locator.ShareDown("Mappen svarer ikke");
             _ = reading.ContinueWith(t => { if (t.IsCompletedSuccessfully) _locator.ShareAnswered(); }, TaskScheduler.Default);
-            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+            return await FromCopyAsync(barcode, path, kind, ct).ConfigureAwait(false)
                 ?? new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: "Filen svarer ikke");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -186,16 +243,19 @@ public sealed class OrderDocuments
             }
             // The share is gone, not the file: keep the index for when it is back, and answer from a copy meanwhile.
             _locator.ShareDown("Mappen kan ikke nås");
-            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+            return await FromCopyAsync(barcode, path, kind, ct).ConfigureAwait(false)
                 ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Path: path, Error: "Mappen kan ikke nås");
         }
 
         return Loaded(barcode, read, fromCopy: false);
     }
 
-    // The order's PDF from the OptiCloud list. While OptiCloud can't be reached, a copy answers, as for the share.
-    async Task<OrderDocumentLoad> LoadFromCloudAsync(CloudDocumentSource cloud, Barcode barcode, CancellationToken ct)
+    // The order's PDF from the OptiCloud list: its document, or with a kind its newest file of that kind.
+    // While OptiCloud can't be reached, a copy answers, as for the share.
+    async Task<OrderDocumentLoad> LoadFromCloudAsync(CloudDocumentSource cloud, Barcode barcode, OrderDocumentKind? kind, bool copiesOnly, CancellationToken ct)
     {
+        if (copiesOnly)
+            return await FromCopyAsync(barcode, null, kind, ct).ConfigureAwait(false) ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable);
         CloudDocumentLookup lookup;
         // A slow OptiCloud (a login, a full read of the list) must not keep the screen waiting: the copy answers.
         try { lookup = await cloud.FindAsync(barcode.Order, CancellationToken.None).WaitAsync(ReadTimeout, ct).ConfigureAwait(false); }
@@ -204,11 +264,11 @@ public sealed class OrderDocuments
         {
             case CloudDocumentStatus.NotFound: return new(barcode, OrderDocumentLoadStatus.NotFound);
             case CloudDocumentStatus.Unavailable:
-                return await FromCopyAsync(barcode, null, ct).ConfigureAwait(false)
+                return await FromCopyAsync(barcode, null, kind, ct).ConfigureAwait(false)
                     ?? new(barcode, OrderDocumentLoadStatus.FolderUnavailable, Error: lookup.Error);
         }
 
-        var doc = lookup.Document!;
+        if ((kind is { } k ? lookup.Part(k) : lookup.Document) is not { } doc) return new(barcode, OrderDocumentLoadStatus.NotFound);
         var path = System.IO.Path.Combine(CloudFolder, doc.FileName);
         var reading = ReadCloudCached(cloud, doc, path);
         Read read;
@@ -230,7 +290,7 @@ public sealed class OrderDocuments
                 OrderDocumentTooLargeException => $"Filen er for stor (over {MaxPdfBytes / (1024 * 1024)} MB)",
                 _ => "Filen kan ikke hentes fra OptiCloud",
             };
-            return await FromCopyAsync(barcode, path, ct).ConfigureAwait(false)
+            return await FromCopyAsync(barcode, path, kind, ct).ConfigureAwait(false)
                 ?? new(barcode, OrderDocumentLoadStatus.Unreadable, Path: path, Error: why);
         }
         _ = Task.Run(() => Keep(read));
@@ -282,14 +342,20 @@ public sealed class OrderDocuments
         var doc = read.Document;
         // Nothing read at all (not a PDF, or every page failed): the file is there but useless.
         if (doc.PageCount == 0)
-            return new(barcode, OrderDocumentLoadStatus.Unreadable, doc, Path: read.Path, Error: "Filen kan ikke læses som PDF") { FileKey = read.Key, FromCopy = fromCopy };
-        return new(barcode, OrderDocumentLoadStatus.Ready, doc, doc.PositionFor(barcode), read.Pdf, read.Path) { FileKey = read.Key, FromCopy = fromCopy };
+            return new(barcode, OrderDocumentLoadStatus.Unreadable, doc, Path: read.Path, Error: "Filen kan ikke læses som PDF") { FileKey = read.Key, FromCopy = fromCopy, Kind = read.Kind };
+        return new(barcode, OrderDocumentLoadStatus.Ready, doc, doc.PositionFor(barcode), read.Pdf, read.Path)
+        {
+            FileKey = read.Key,
+            FromCopy = fromCopy,
+            Kind = read.Kind,
+            DrawingPages = read.Kind == OrderDocumentKind.BsDrawings ? read.DrawingPages.Value : null,
+        };
     }
 
     // The order's document as kept: in memory first, then on this PC. The version the index points to
     // (path) if there is one, else the newest by the date in the name, marked OlderVersion when the index
-    // points to another file. Null when there's none.
-    async Task<OrderDocumentLoad?> FromCopyAsync(Barcode barcode, string? path, CancellationToken ct)
+    // points to another file. With a kind, only a copy of that kind. Null when there's none.
+    async Task<OrderDocumentLoad?> FromCopyAsync(Barcode barcode, string? path, OrderDocumentKind? kind, CancellationToken ct)
     {
         Read? best = null;
         lock (_gate)
@@ -297,6 +363,7 @@ public sealed class OrderDocuments
             foreach (var (_, task) in _cache)
             {
                 if (!task.IsCompletedSuccessfully || task.Result is not { } r || r.Order != barcode.Order || r.Document.PageCount == 0) continue;
+                if (kind is { } k && r.Kind != k) continue;
                 if (best is null || Better(r, best, path)) best = r;
             }
         }
@@ -307,11 +374,11 @@ public sealed class OrderDocuments
         {
             try
             {
-                var copy = await Task.Run(() => cache.Find(barcode.Order, path), CancellationToken.None).WaitAsync(ReachTimeout, ct).ConfigureAwait(false);
+                var copy = await Task.Run(() => cache.Find(barcode.Order, path, kind), CancellationToken.None).WaitAsync(ReachTimeout, ct).ConfigureAwait(false);
                 if (copy is not null)
                 {
                     var read = await ReadAndKeep(copy, isCopy: true).WaitAsync(ReadTimeout, ct).ConfigureAwait(false);
-                    if (read.Document.PageCount > 0) return Copy(barcode, read, path);
+                    if (read.Document.PageCount > 0 && (kind is null || read.Kind == kind)) return Copy(barcode, read, path);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -500,8 +567,8 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
     }
 
     // The copy for an order: the copy of that file on the share if there is one, else the order's list before
-    // its BS files, then the newest date in the name.
-    public string? Find(int order, string? sourcePath = null)
+    // its BS files, then the newest date in the name. With a kind, only a copy of that kind.
+    public string? Find(int order, string? sourcePath = null, OrderDocumentKind? kind = null)
     {
         if (!Directory.Exists(Folder)) return null;
         if (sourcePath is not null)
@@ -515,6 +582,7 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
         foreach (var f in new DirectoryInfo(Folder).EnumerateFiles("*_*.pdf"))
         {
             if (!OrderDocumentLocator.TryParseFileName(f.Name, out OrderFileName name) || name.Order != order) continue;
+            if (kind is { } k && name.Kind != k) continue;
             var written = f.LastWriteTimeUtc;
             var rank = best is null ? 1 : OrderDocumentLocator.Ranks(name.Kind, name.Date, bestName.Kind, bestName.Date);
             if (rank > 0 || rank == 0 && written > bestWritten)

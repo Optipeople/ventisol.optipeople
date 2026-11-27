@@ -14,7 +14,15 @@ public sealed record CloudDocument(string FileName, int Order, DateOnly? Date, s
 
 public enum CloudDocumentStatus { Found, NotFound, Unavailable }
 
-public sealed record CloudDocumentLookup(CloudDocumentStatus Status, CloudDocument? Document = null, string? Error = null);
+// Document is the order's document: its list, else its BS list, else its BS drawings. Parts holds the
+// order's newest file of each kind, Document first.
+public sealed record CloudDocumentLookup(CloudDocumentStatus Status, CloudDocument? Document = null, string? Error = null)
+{
+    public IReadOnlyList<CloudDocument> Parts { get; init; } = [];
+
+    // The order's newest file of that kind, or null when it has none.
+    public CloudDocument? Part(OrderDocumentKind kind) => Parts.FirstOrDefault(p => p.Kind == kind);
+}
 
 // Reads the order PDFs from OptiCloud instead of the documents folder, for a PC that can't reach the
 // share. The scan PCs put every new PDF in the list (OrderDocumentUpload); this only reads it.
@@ -22,7 +30,7 @@ public sealed record CloudDocumentLookup(CloudDocumentStatus Status, CloudDocume
 // is up, a lookup answers Unavailable ("Ikke forbundet til OptiCloud endnu").
 // A lookup asks OptiCloud's keyword search for the order and keeps rows whose file name gives that
 // order and that have a file; the order's list wins over its BS files, then the newest date in the
-// name, then the newest row. Answers are
+// name, then the newest row. The newest BS list and BS drawings are kept beside it (Parts). Answers are
 // kept for RefreshAfter (30 s), a miss for MissRefreshAfter (5 s). The list is never made here.
 public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid AccountId)?> connection)
 {
@@ -32,10 +40,11 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
     public const int SearchPageSize = 50;
 
     readonly object _gate = new();
-    (IReadOnlyDictionary<int, CloudDocument> Best, DateTimeOffset At)? _all;
-    Task<IReadOnlyDictionary<int, CloudDocument>>? _reading;
+    // Per order, its newest file of each kind, the order's document first. No files: a miss.
+    (IReadOnlyDictionary<int, IReadOnlyList<CloudDocument>> Parts, DateTimeOffset At)? _all;
+    Task<IReadOnlyDictionary<int, IReadOnlyList<CloudDocument>>>? _reading;
     readonly Dictionary<int, Task<CloudDocumentLookup>> _finding = [];
-    readonly Dictionary<int, (CloudDocument? Document, DateTimeOffset At)> _known = [];
+    readonly Dictionary<int, (IReadOnlyList<CloudDocument> Parts, DateTimeOffset At)> _known = [];
     Guid? _tableId;
     Guid _tableAccount;
 
@@ -46,8 +55,8 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
         var now = Clock();
         lock (_gate)
         {
-            if (_known.TryGetValue(order, out var k) && now - k.At < (k.Document is null ? MissRefreshAfter : RefreshAfter))
-                return k.Document is { } d ? new(CloudDocumentStatus.Found, d) : new(CloudDocumentStatus.NotFound);
+            if (_known.TryGetValue(order, out var k) && now - k.At < (k.Parts.Count == 0 ? MissRefreshAfter : RefreshAfter))
+                return Answer(k.Parts);
         }
 
         if (connection() is not { } c) return new(CloudDocumentStatus.Unavailable, Error: "Ikke forbundet til OptiCloud endnu");
@@ -71,16 +80,14 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
         try
         {
             if (await TableAsync(c.Client, c.AccountId, ct) is not { } table)
-                return Remember(order, null, now);
+                return Remember(order, [], now);
             var page = await c.Client.GetRowsPagedAsync(table, 1, SearchPageSize, "PrintDate", ascending: false,
                 keyword: order.ToString(CultureInfo.InvariantCulture), ct: ct);
-            CloudDocument? best = null;
-            foreach (var row in page.Rows)
-                if (ToDocument(row) is { } d && d.Order == order && (best is null || Newer(d, best))) best = d;
+            var parts = Newest(page.Rows.Select(ToDocument).Where(d => d is not null && d.Order == order)!);
             // What the keyword search matches on is not documented: on a miss the whole list answers,
             // read at most every FullReadEvery.
-            best ??= (await AllAsync(c.Client, table, now)).GetValueOrDefault(order);
-            return Remember(order, best, now);
+            if (parts.Count == 0) parts = (await AllAsync(c.Client, table, now)).GetValueOrDefault(order) ?? [];
+            return Remember(order, parts, now);
         }
         catch (OptiCloudException x)
         {
@@ -111,41 +118,58 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
         }
     }
 
-    CloudDocumentLookup Remember(int order, CloudDocument? document, DateTimeOffset now)
+    CloudDocumentLookup Remember(int order, IReadOnlyList<CloudDocument> parts, DateTimeOffset now)
     {
         lock (_gate)
         {
-            _known[order] = (document, now);
+            _known[order] = (parts, now);
             // Kept small: a viewer looks at the orders of the day.
             if (_known.Count > 500)
                 foreach (var old in _known.Where(p => now - p.Value.At > RefreshAfter).Select(p => p.Key).ToList()) _known.Remove(old);
         }
-        return document is null ? new(CloudDocumentStatus.NotFound) : new(CloudDocumentStatus.Found, document);
+        return Answer(parts);
+    }
+
+    static CloudDocumentLookup Answer(IReadOnlyList<CloudDocument> parts) =>
+        parts.Count == 0 ? new(CloudDocumentStatus.NotFound) : new(CloudDocumentStatus.Found, parts[0]) { Parts = parts };
+
+    // The newest file of each kind, the list first, then the BS list, then the BS drawings.
+    static IReadOnlyList<CloudDocument> Newest(IEnumerable<CloudDocument> documents)
+    {
+        var newest = new SortedDictionary<OrderDocumentKind, CloudDocument>();
+        foreach (var d in documents)
+            if (!newest.TryGetValue(d.Kind, out var have) || Newer(d, have)) newest[d.Kind] = d;
+        return [.. newest.Values];
     }
 
     // One full read at a time, shared by every lookup that missed.
-    Task<IReadOnlyDictionary<int, CloudDocument>> AllAsync(OptiCloudClient client, Guid table, DateTimeOffset now)
+    Task<IReadOnlyDictionary<int, IReadOnlyList<CloudDocument>>> AllAsync(OptiCloudClient client, Guid table, DateTimeOffset now)
     {
         lock (_gate)
         {
-            if (_all is { } all && now - all.At < FullReadEvery) return Task.FromResult(all.Best);
+            if (_all is { } all && now - all.At < FullReadEvery) return Task.FromResult(all.Parts);
             if (_reading is { IsCompleted: false } reading) return reading;
             return _reading = ReadAllAsync(client, table, now);
         }
     }
 
-    async Task<IReadOnlyDictionary<int, CloudDocument>> ReadAllAsync(OptiCloudClient client, Guid table, DateTimeOffset now)
+    async Task<IReadOnlyDictionary<int, IReadOnlyList<CloudDocument>>> ReadAllAsync(OptiCloudClient client, Guid table, DateTimeOffset now)
     {
         var ct = CancellationToken.None;
-        var best = new Dictionary<int, CloudDocument>();
+        var found = new Dictionary<int, List<CloudDocument>>();
         for (var p = 1; p <= OrderDocumentUpload.MaxPages; p++)
         {
             var page = await client.GetRowsPagedAsync(table, p, OrderDocumentUpload.PageSize, "FileName", ascending: true, ct: ct);
             foreach (var row in page.Rows)
-                if (ToDocument(row) is { } d && (!best.TryGetValue(d.Order, out var have) || Newer(d, have))) best[d.Order] = d;
+            {
+                if (ToDocument(row) is not { } d) continue;
+                if (!found.TryGetValue(d.Order, out var have)) found[d.Order] = have = [];
+                have.Add(d);
+            }
             if (page.Rows.Count == 0) break;
             if (page.TotalPages is { } total ? p >= total : page.Rows.Count < OrderDocumentUpload.PageSize) break;
         }
+        IReadOnlyDictionary<int, IReadOnlyList<CloudDocument>> best = found.ToDictionary(p => p.Key, p => Newest(p.Value));
         lock (_gate) _all = (best, now);
         return best;
     }
