@@ -115,6 +115,47 @@ describe("parseOrderFileName", () => {
     expect(parseOrderFileName(name)).toEqual({ orderNumber, prefix, printDate, kind });
   });
 
+  // A BS label is read with any mix of spaces, "_" and "-" around its parts, and text after a label that
+  // follows the date (a copy mark, "rev2") never turns the file into the list.
+  it.each([
+    ["58931_20261127BS (1).pdf", 58931, "", "2026-11-27", "bs"],
+    ["58931_20261127BS - Kopi.pdf", 58931, "", "2026-11-27", "bs"],
+    ["58931_20261127BS - Copy.pdf", 58931, "", "2026-11-27", "bs"],
+    ["58931_20261127BS tegninger (1).pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127BS tegninger - Kopi.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127BS tegninger rev2.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127 B S - Kopi (2).pdf", 58931, "", "2026-11-27", "bs"],
+    ["BE_58931_20261127BS (1).pdf", 58931, "BE", "2026-11-27", "bs"],
+    ["BS_tegninger_58931_20261127.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["BE_BS_tegninger_58931_20261127.pdf", 58931, "BE", "2026-11-27", "bs-drawings"],
+    ["58931_20261127BS_tegninger.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127_BS_tegninger.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127BS-tegninger.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127BS tegning.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127 B_S.pdf", 58931, "", "2026-11-27", "bs"],
+    ["B  S 58931_20261112.pdf", 58931, "", "2026-11-12", "bs"],
+    ["B  S  tegninger  58931_20261112.pdf", 58931, "", "2026-11-12", "bs-drawings"],
+    ["B_S_58931_20261112.pdf", 58931, "", "2026-11-12", "bs"],
+    ["B-S-58931_20261112.pdf", 58931, "", "2026-11-12", "bs"],
+    ["B S_tegninger_58931_20261112.pdf", 58931, "", "2026-11-12", "bs-drawings"],
+    ["BS-tegning-58931_20261112.pdf", 58931, "", "2026-11-12", "bs-drawings"],
+    ["B S tegning 58931_20261112.pdf", 58931, "", "2026-11-12", "bs-drawings"],
+    ["b_s_TEGNINGER_2634_20261112.pdf", 2634, "", "2026-11-12", "bs-drawings"],
+    // A prefix that only ends in BS is a prefix.
+    ["ABS_58931_20261127.pdf", 58931, "ABS", "2026-11-27", "list"],
+    ["LBS_58931_20261127.pdf", 58931, "LBS", "2026-11-27", "list"],
+    ["BE_58931_20261127_BS.pdf", 58931, "BE", "2026-11-27", "bs"],
+    // A copy of an old name: still a BS file, the date is not read (as for a copy of the list).
+    ["B S 58931_20261112 (1).pdf", 58931, "", null, "bs"],
+    ["B S tegninger 58931_20261112 - Kopi.pdf", 58931, "", null, "bs-drawings"],
+    // A copy of the list is the list with no date.
+    ["58931_20261127 (1).pdf", 58931, "", null, "list"],
+    ["58931_20261127 - Kopi.pdf", 58931, "", null, "list"],
+    ["58931_20261127 - Copy.pdf", 58931, "", null, "list"],
+  ] as const)("%s keeps its kind with other separators and copy marks", (name, orderNumber, prefix, printDate, kind) => {
+    expect(parseOrderFileName(name)).toEqual({ orderNumber, prefix, printDate, kind });
+  });
+
   it.each([
     "58721.pdf",
     "BE_20261022.pdf",
@@ -127,6 +168,10 @@ describe("parseOrderFileName", () => {
     "mappe/58721_20261022.pdf",
     "BS_20261127.pdf",
     "B S tegninger.pdf",
+    "58931_BS.pdf",
+    "58931_BS tegninger.pdf",
+    "BS58931_20261127.pdf",
+    "BS_tegninger_20261127.pdf",
     "",
   ])("%s is not", (name) => {
     expect(parseOrderFileName(name)).toBeNull();

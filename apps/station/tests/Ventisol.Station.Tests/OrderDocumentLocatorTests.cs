@@ -74,6 +74,49 @@ public sealed class OrderDocumentLocatorTests : IDisposable
         Assert.Equal(new OrderFileName(order, DateOnly.Parse(date), kind, prefix), name);
     }
 
+    // A BS label is read with any mix of spaces, "_" and "-" around its parts, and text after a label that
+    // follows the date (a copy mark, "rev2") never turns the file into the list.
+    [Theory]
+    [InlineData("58931_20261127BS (1).pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("58931_20261127BS - Kopi.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("58931_20261127BS - Copy.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("58931_20261127BS tegninger (1).pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127BS tegninger - Kopi.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127BS tegninger rev2.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127 B S - Kopi (2).pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("BE_58931_20261127BS (1).pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "BE")]
+    [InlineData("BS_tegninger_58931_20261127.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("BE_BS_tegninger_58931_20261127.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "BE")]
+    [InlineData("58931_20261127BS_tegninger.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127_BS_tegninger.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127BS-tegninger.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127BS tegning.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127 B_S.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("B  S 58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsList, "")]
+    [InlineData("B  S  tegninger  58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("B_S_58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsList, "")]
+    [InlineData("B-S-58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsList, "")]
+    [InlineData("B S_tegninger_58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("BS-tegning-58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("B S tegning 58931_20261112.pdf", 58931, "2026-11-12", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("b_s_TEGNINGER_2634_20261112.pdf", 2634, "2026-11-12", OrderDocumentKind.BsDrawings, "")]
+    // A prefix that only ends in BS is a prefix.
+    [InlineData("ABS_58931_20261127.pdf", 58931, "2026-11-27", OrderDocumentKind.List, "ABS")]
+    [InlineData("LBS_58931_20261127.pdf", 58931, "2026-11-27", OrderDocumentKind.List, "LBS")]
+    [InlineData("BE_58931_20261127_BS.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "BE")]
+    // A copy of an old name: still a BS file, the date is not read (as for a copy of the list).
+    [InlineData("B S 58931_20261112 (1).pdf", 58931, null, OrderDocumentKind.BsList, "")]
+    [InlineData("B S tegninger 58931_20261112 - Kopi.pdf", 58931, null, OrderDocumentKind.BsDrawings, "")]
+    // A copy of the list is the list with no date.
+    [InlineData("58931_20261127 (1).pdf", 58931, null, OrderDocumentKind.List, "")]
+    [InlineData("58931_20261127 - Kopi.pdf", 58931, null, OrderDocumentKind.List, "")]
+    [InlineData("58931_20261127 - Copy.pdf", 58931, null, OrderDocumentKind.List, "")]
+    public void File_names_give_the_kind_with_other_separators_and_copy_marks(string file, int order, string? date, OrderDocumentKind kind, string prefix)
+    {
+        Assert.True(OrderDocumentLocator.TryParseFileName(file, out OrderFileName name));
+        Assert.Equal(new OrderFileName(order, date is null ? null : DateOnly.Parse(date), kind, prefix), name);
+    }
+
     [Theory]
     [InlineData("58721.pdf")]
     [InlineData("BE_20261022.pdf")]
@@ -85,6 +128,10 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     [InlineData("58721_2_20261022.pdf")]
     [InlineData("BS_20261127.pdf")]
     [InlineData("B S tegninger.pdf")]
+    [InlineData("58931_BS.pdf")]
+    [InlineData("58931_BS tegninger.pdf")]
+    [InlineData("BS58931_20261127.pdf")]
+    [InlineData("BS_tegninger_20261127.pdf")]
     public void Other_files_are_not_order_documents(string name) =>
         Assert.False(OrderDocumentLocator.TryParseFileName(name, out _, out _));
 

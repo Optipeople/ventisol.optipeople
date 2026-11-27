@@ -22,13 +22,23 @@ export function kindLabel(kind: OrderFileKind): string {
   return kind === "bs" ? "BS" : kind === "bs-drawings" ? "BS tegninger" : "";
 }
 
-// "B S", "BS", "BS tegninger", "BS-tegning" ...
-const LABEL = String.raw`B ?S(?:[ \-]*tegning(?:er)?)?`;
-/** A label after the date: "58931_20261127BS", "58931_20261127 BS tegninger", "58931_20261127_BS". */
-const TRAILING_LABEL = new RegExp(String.raw`^(.*\d)[ _\-]*(${LABEL})$`, "i");
-/** A label before the order, in the same part: "B S tegninger 58931". */
-const LEADING_LABEL = new RegExp(String.raw`^(${LABEL})[ \-]+(\d+)$`, "i");
-const WHOLE_LABEL = new RegExp(String.raw`^${LABEL}$`, "i");
+// "B S", "BS", "BS tegninger", "BS-tegning", "B_S_tegninger" ...: spaces, "_" and "-" may stand between
+// B, S and "tegning(er)", any number of them.
+const LABEL = String.raw`B[ _\-]*S(?:[ _\-]*tegning(?:er)?)?`;
+/** A label that ends the name: "58931_20261127BS", "58931_20261127 BS tegninger", "58931_20261127_BS". */
+const TRAILING_LABEL = new RegExp(String.raw`^(?<rest>.*\d)[ _\-]*(?<label>${LABEL})$`, "i");
+/**
+ * A label right after the date with more behind it: "58931_20261127BS (1)", "58931_20261127BS - Kopi",
+ * "58931_20261127BS tegninger rev2". Whatever follows, the file is a BS file and never the list.
+ */
+const LABEL_AFTER_DATE = new RegExp(String.raw`^(?<rest>.*_\d{8})[ _\-]*(?<label>${LABEL})`, "i");
+/** The order and what stands around it: "<head><order>_<last>", where the last part has no "_". */
+const ORDER_AND_LAST = new RegExp(String.raw`^(?<head>.*?)(?<order>\d+)\s*_(?<last>[^_]*)$`);
+/**
+ * A label before the order: a prefix part of its own ("BS_", "BS_tegninger_", "B_S_") or the text right
+ * before the number ("B S tegninger 58931", "B  S 58931", "BS-58931"). Not the end of another prefix ("ABS_").
+ */
+const LEADING_LABEL = new RegExp(String.raw`(?<=^|_) *(?<label>${LABEL})(?:[ _\-]*_|[ \-]+$)`, "gi");
 
 const RANK: Record<OrderFileKind, number> = { list: 0, bs: 1, "bs-drawings": 2 };
 
@@ -44,7 +54,8 @@ function strongest(a: OrderFileKind | null, b: OrderFileKind): OrderFileKind {
 /**
  * Reads a file name (no folders). The name is parts split by "_": the last is the date, the one
  * before it the order (all digits), and every part before that is a prefix that must hold a letter.
- * A BS label after the date, before the order or as a part of its own makes it a BS file.
+ * A BS label after the date, before the order or as a part of its own makes it a BS file, also when a
+ * copy mark or other text follows the label after the date ("58931_20261127BS (1).pdf").
  * Null when the name is not an order document: no ".pdf", no order, or two numbers before the date.
  */
 export function parseOrderFileName(name: string): OrderFileName | null {
@@ -53,33 +64,28 @@ export function parseOrderFileName(name: string): OrderFileName | null {
   let stem = m[1].trim();
   let kind: OrderFileKind | null = null;
 
-  const tail = TRAILING_LABEL.exec(stem);
-  if (tail) {
-    kind = kindOf(tail[2]);
-    stem = tail[1];
+  const tail = TRAILING_LABEL.exec(stem) ?? LABEL_AFTER_DATE.exec(stem);
+  if (tail?.groups) {
+    kind = kindOf(tail.groups.label);
+    stem = tail.groups.rest;
   }
 
-  const parts = stem.split("_");
-  if (parts.length < 2) return null;
-  let orderPart = parts[parts.length - 2].trim();
-  const lead = LEADING_LABEL.exec(orderPart);
-  if (lead) {
-    kind = strongest(kind, kindOf(lead[1]));
-    orderPart = lead[2];
-  }
-  const prefixes: string[] = [];
-  for (const p of parts.slice(0, -2)) {
-    if (WHOLE_LABEL.test(p.trim())) kind = strongest(kind, kindOf(p));
-    else if (/\p{L}/u.test(p)) prefixes.push(p);
-    else return null;
-  }
+  const found = ORDER_AND_LAST.exec(stem);
+  if (!found?.groups) return null;
+  const { head, order: orderPart, last } = found.groups;
+  for (const lead of head.matchAll(LEADING_LABEL)) kind = strongest(kind, kindOf(lead.groups!.label));
+  // What is left of the head is the prefix parts, each ending in "_" and holding a letter.
+  const rest = head.replace(LEADING_LABEL, "").trimEnd();
+  if (rest !== "" && !rest.endsWith("_")) return null;
+  const prefixes = rest === "" ? [] : rest.slice(0, -1).split("_");
+  if (prefixes.some((p) => !/\p{L}/u.test(p))) return null;
   if (!/^0*\d{1,9}$/.test(orderPart)) return null;
   const orderNumber = Number(orderPart);
   if (orderNumber > 2147483647) return null;
   return {
     orderNumber,
     prefix: prefixes.join("_"),
-    printDate: parseCompactDate(parts[parts.length - 1].trim()),
+    printDate: parseCompactDate(last.trim()),
     kind: kind ?? "list",
   };
 }

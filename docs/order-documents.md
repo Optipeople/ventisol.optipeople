@@ -19,6 +19,15 @@ When an operator scans an element in, the station app can show the order's produ
   `B S tegninger 58931_20261112.pdf`. The BS label ("BS", "B S", "BS tegninger", any case) may stand after
   the date, before the order or as a part of its own (`BS_58931_...`); it gives the kind
   (`OrderDocumentKind`: List, BsList, BsDrawings) and is not part of the prefix.
+- The label is read loosely: B, S, "tegninger" (or "tegning") and the number may be held apart by spaces,
+  `_` or `-`, one or more (`BS_tegninger_58931_20261127.pdf`, `58931_20261127BS_tegninger.pdf`,
+  `B  S 58931_20261112.pdf`). Before the order there must be at least one of them (`BS58931_...` is not
+  read). A prefix that only ends in BS (`ABS_`, `LBS_`) is a prefix, not a label.
+- Text after a label that follows the date keeps the kind and the date: `58931_20261127BS (1).pdf`,
+  `58931_20261127BS - Kopi.pdf` and `58931_20261127BS tegninger rev2.pdf` are BS files, never the list.
+  A copy mark right after the date (`58931_20261127 (1).pdf`, `B S 58931_20261112 (1).pdf`) keeps the kind
+  too, but the date is then not read, so the file loses to one with a date. A name with no date part
+  (`58931_BS.pdf`) is not read.
 - An order can be printed again, and an older version may be kept beside the new one as history (with or
   without a prefix). The locator takes the order's list before its BS files, then the newest date in the
   name, then the newest write time. A BS file is the order's document only when it has no list.

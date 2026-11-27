@@ -302,6 +302,8 @@ public sealed partial class OrderDocumentLocator
     // A BS label ("BS", "B S", "BS tegninger", any case) makes it a BS file (OrderDocumentKind): after the
     // date ("58931_20261127BS.pdf", "58931_20261127 BS tegninger.pdf", "58931_20261127_BS.pdf"), before
     // the order ("B S tegninger 58931_20261112.pdf") or as a prefix part of its own ("BS_58931_20261127.pdf").
+    // Text after a label that follows the date ("58931_20261127BS (1).pdf", "... - Kopi") keeps the kind:
+    // such a name is never the list.
     public static bool TryParseFileName(string fileName, out int order, out DateOnly? date)
     {
         var ok = TryParseFileName(fileName, out OrderFileName name);
@@ -318,31 +320,27 @@ public sealed partial class OrderDocumentLocator
         OrderDocumentKind? kind = null;
 
         var tail = TrailingLabelRegex().Match(stem);
+        if (!tail.Success) tail = LabelAfterDateRegex().Match(stem);
         if (tail.Success)
         {
             kind = KindOf(tail.Groups["label"].Value);
             stem = tail.Groups["rest"].Value;
         }
 
-        var parts = stem.Split('_');
-        if (parts.Length < 2) return false;
-        var orderPart = parts[^2].Trim();
-        var lead = LeadingLabelRegex().Match(orderPart);
-        if (lead.Success)
-        {
+        var found = OrderAndLastRegex().Match(stem);
+        if (!found.Success) return false;
+        var head = found.Groups["head"].Value;
+        var orderPart = found.Groups["order"].Value;
+        foreach (Match lead in LeadingLabelRegex().Matches(head))
             kind = Strongest(kind, KindOf(lead.Groups["label"].Value));
-            orderPart = lead.Groups["rest"].Value;
-        }
-        var prefixes = new List<string>();
-        foreach (var p in parts[..^2])
-        {
-            if (WholeLabelRegex().IsMatch(p.Trim())) kind = Strongest(kind, KindOf(p));
-            else if (p.Any(char.IsLetter)) prefixes.Add(p);
-            else return false;
-        }
+        // What is left of the head is the prefix parts, each ending in "_" and holding a letter.
+        var rest = LeadingLabelRegex().Replace(head, "").TrimEnd();
+        if (rest.Length > 0 && !rest.EndsWith('_')) return false;
+        string[] prefixes = rest.Length == 0 ? [] : rest[..^1].Split('_');
+        if (prefixes.Any(p => !p.Any(char.IsLetter))) return false;
         if (!OrderPartRegex().IsMatch(orderPart)) return false;
         if (!int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return false;
-        DateOnly? d = DateOnly.TryParseExact(parts[^1].Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
+        DateOnly? d = DateOnly.TryParseExact(found.Groups["last"].Value.Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
         name = new OrderFileName(number, d, kind ?? OrderDocumentKind.List, string.Join('_', prefixes));
         return true;
     }
@@ -383,17 +381,25 @@ public sealed partial class OrderDocumentLocator
     [GeneratedRegex(@"^0*\d{1,9}$", RegexOptions.CultureInvariant)]
     private static partial Regex OrderPartRegex();
 
-    // "B S", "BS", "BS tegninger", "BS-tegning" ...
-    const string Label = @"B ?S(?:[ \-]*tegning(?:er)?)?";
+    // "B S", "BS", "BS tegninger", "BS-tegning", "B_S_tegninger" ...: spaces, "_" and "-" may stand between
+    // B, S and "tegning(er)", any number of them.
+    const string Label = @"B[ _\-]*S(?:[ _\-]*tegning(?:er)?)?";
 
-    // A label after the date: "58931_20261127BS", "58931_20261127 BS tegninger", "58931_20261127_BS".
+    // A label that ends the name: "58931_20261127BS", "58931_20261127 BS tegninger", "58931_20261127_BS".
     [GeneratedRegex(@"^(?<rest>.*\d)[ _\-]*(?<label>" + Label + @")$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TrailingLabelRegex();
 
-    // A label before the order, in the same part: "B S tegninger 58931".
-    [GeneratedRegex(@"^(?<label>" + Label + @")[ \-]+(?<rest>\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex LeadingLabelRegex();
+    // A label right after the date with more behind it: "58931_20261127BS (1)", "58931_20261127BS - Kopi",
+    // "58931_20261127BS tegninger rev2". Whatever follows, the file is a BS file and never the list.
+    [GeneratedRegex(@"^(?<rest>.*_\d{8})[ _\-]*(?<label>" + Label + @")", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LabelAfterDateRegex();
 
-    [GeneratedRegex(@"^" + Label + @"$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex WholeLabelRegex();
+    // The order and what stands around it: "<head><order>_<last>", where the last part has no "_".
+    [GeneratedRegex(@"^(?<head>.*?)(?<order>\d+)\s*_(?<last>[^_]*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex OrderAndLastRegex();
+
+    // A label before the order: a prefix part of its own ("BS_", "BS_tegninger_", "B_S_") or the text right
+    // before the number ("B S tegninger 58931", "B  S 58931", "BS-58931"). Not the end of another prefix ("ABS_").
+    [GeneratedRegex(@"(?<=^|_) *(?<label>" + Label + @")(?:[ _\-]*_|[ \-]+$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LeadingLabelRegex();
 }
