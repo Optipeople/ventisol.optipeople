@@ -328,6 +328,32 @@ describe("the newest document of an order", () => {
   });
 });
 
+describe("BS files", () => {
+  it("keep the order's list first, whatever the station wrote, and get their kind as prefix", async () => {
+    cloud.addDocument("58931_20261112.pdf", "Fast");
+    // A newer station writes PrintDate and Prefix; the first rows of 27-11-2026 had neither.
+    cloud.addDocument("58931_20261127BS.pdf", "Fast", { orderNo: 58931, printDate: "2026-11-27T00:00:00Z", prefix: "BS" });
+    cloud.addDocument("58931_20261127BS tegninger.pdf", "Fast", { orderNo: 58931, printDate: "2026-11-27T00:00:00Z" });
+    cloud.addDocument("B S tegninger 58931_20261127.pdf", "Fast");
+    await run(NOW);
+    const rows = await db.withService((q) =>
+      q.query(
+        `select file_name, order_no, prefix, print_date::text as print_date from raw.order_documents
+          where order_no = 58931 order by ${NEWEST_DOCUMENT_ORDER}`
+      )
+    );
+    expect(rows[0]).toEqual({ file_name: "58931_20261112.pdf", order_no: 58931, prefix: null, print_date: "2026-11-12" });
+    expect(rows.slice(1)).toEqual(
+      expect.arrayContaining([
+        { file_name: "58931_20261127BS.pdf", order_no: 58931, prefix: "BS", print_date: null },
+        { file_name: "58931_20261127BS tegninger.pdf", order_no: 58931, prefix: "BS tegninger", print_date: null },
+        { file_name: "B S tegninger 58931_20261127.pdf", order_no: 58931, prefix: "BS tegninger", print_date: null },
+      ])
+    );
+    expect(rows).toHaveLength(4);
+  });
+});
+
 describe("writeChunks", () => {
   const embed = (fileName: string) =>
     db.withService((q) =>

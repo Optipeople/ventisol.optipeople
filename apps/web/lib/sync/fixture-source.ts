@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fixturePageLoader } from "@/lib/fixtures";
-import { parseOrderFileName } from "@/lib/orderdoc/file-name";
+import { kindLabel, parseOrderFileName } from "@/lib/orderdoc/file-name";
 import { PAGE_SIZE } from "@/lib/paging";
 import { SCAN_TABLE_NAME, type MasterDataRow } from "@/lib/scans";
 import { BlobTooLargeError, DOCUMENT_TABLE_NAME, type OptiCloudSource } from "./opticloud-service";
@@ -51,7 +51,7 @@ async function documentRow(name: string): Promise<MasterDataRow> {
     values: {
       FileName: name,
       OrderNo: parts?.orderNumber ?? null,
-      Prefix: parts?.prefix ?? "",
+      Prefix: parts ? [parts.prefix, kindLabel(parts.kind)].filter((p) => p.length > 0).join("_") : "",
       PrintDate: parts?.printDate ? `${parts.printDate}T00:00:00Z` : null,
       File: { name, contentType: "application/pdf", reference: `${REFERENCE_PREFIX}${name}` },
       SizeBytes: info.size,

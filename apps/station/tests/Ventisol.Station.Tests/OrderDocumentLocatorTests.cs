@@ -48,6 +48,33 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     }
 
     [Theory]
+    [InlineData("58721_20261022.pdf", 58721, "2026-10-22", OrderDocumentKind.List, "")]
+    [InlineData("BE_58721_20261022.pdf", 58721, "2026-10-22", OrderDocumentKind.List, "BE")]
+    // The names Ventisol gives the BS files since 27-11-2026.
+    [InlineData("58931_20261127BS.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("58931_20261127BS tegninger.pdf", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127 bs Tegninger.PDF", 58931, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("58931_20261127_BS.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("BE_58931_20261127BS.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "BE")]
+    // The names before.
+    [InlineData("B S tegninger 59029_20261125.pdf", 59029, "2026-11-25", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("B S 59029_20261125.pdf", 59029, "2026-11-25", OrderDocumentKind.BsList, "")]
+    [InlineData("BS tegninger 59029_20261125.pdf", 59029, "2026-11-25", OrderDocumentKind.BsDrawings, "")]
+    [InlineData("BS_59029_20261125.pdf", 59029, "2026-11-25", OrderDocumentKind.BsList, "")]
+    // Four digit orders.
+    [InlineData("2634_20261127.pdf", 2634, "2026-11-27", OrderDocumentKind.List, "")]
+    [InlineData("2634_20261127BS.pdf", 2634, "2026-11-27", OrderDocumentKind.BsList, "")]
+    [InlineData("B S tegninger 2634_20261127.pdf", 2634, "2026-11-27", OrderDocumentKind.BsDrawings, "")]
+    // A copy on this PC carries a hash prefix.
+    [InlineData("c1a2b3c4d_B S tegninger 59029_20261125.pdf", 59029, "2026-11-25", OrderDocumentKind.BsDrawings, "c1a2b3c4d")]
+    [InlineData("c1a2b3c4d_58931_20261127BS.pdf", 58931, "2026-11-27", OrderDocumentKind.BsList, "c1a2b3c4d")]
+    public void File_names_give_the_kind(string file, int order, string date, OrderDocumentKind kind, string prefix)
+    {
+        Assert.True(OrderDocumentLocator.TryParseFileName(file, out OrderFileName name));
+        Assert.Equal(new OrderFileName(order, DateOnly.Parse(date), kind, prefix), name);
+    }
+
+    [Theory]
     [InlineData("58721.pdf")]
     [InlineData("BE_20261022.pdf")]
     [InlineData("BE_X_20261022.pdf")]
@@ -56,6 +83,8 @@ public sealed class OrderDocumentLocatorTests : IDisposable
     [InlineData("2_58721_20261022.pdf")]
     [InlineData("BE_2_58721_20261022.pdf")]
     [InlineData("58721_2_20261022.pdf")]
+    [InlineData("BS_20261127.pdf")]
+    [InlineData("B S tegninger.pdf")]
     public void Other_files_are_not_order_documents(string name) =>
         Assert.False(OrderDocumentLocator.TryParseFileName(name, out _, out _));
 
@@ -98,6 +127,32 @@ public sealed class OrderDocumentLocatorTests : IDisposable
         Assert.Equal(special, (await locator.FindAsync(58800)).Path);
         Assert.Equal(newer, (await locator.FindAsync(58801)).Path);
         Assert.Equal(3, locator.IndexedOrders);
+    }
+
+    [Fact]
+    public async Task The_list_wins_over_the_BS_files_and_each_kind_is_found_apart()
+    {
+        var list = Touch("58931_20261112.pdf", new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc));
+        // Newer, and written later: still not the order's document.
+        var bs = Touch("58931_20261127BS.pdf", new DateTime(2026, 11, 27, 7, 9, 0, DateTimeKind.Utc));
+        var drawings = Touch("58931_20261127BS tegninger.pdf", new DateTime(2026, 11, 27, 7, 9, 0, DateTimeKind.Utc));
+        Touch("B S tegninger 58931_20261112.pdf", new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc));
+        // Only BS files: the BS list is the document, not the drawings.
+        Touch("58925_20261127BS tegninger.pdf", new DateTime(2026, 11, 27, 7, 10, 0, DateTimeKind.Utc));
+        var onlyBs = Touch("58925_20261127BS.pdf", new DateTime(2026, 11, 27, 7, 9, 0, DateTimeKind.Utc));
+        var old = Touch("B S tegninger 59029_20261125.pdf");
+
+        var locator = new OrderDocumentLocator(_root);
+
+        Assert.Equal(list, (await locator.FindAsync(58931)).Path);
+        Assert.Equal(bs, (await locator.FindAsync(58931, OrderDocumentKind.BsList)).Path);
+        Assert.Equal(drawings, (await locator.FindAsync(58931, OrderDocumentKind.BsDrawings)).Path);
+        Assert.Equal(onlyBs, (await locator.FindAsync(58925)).Path);
+        Assert.Equal(old, (await locator.FindAsync(59029)).Path);
+        Assert.Equal(OrderDocumentStatus.NotFound, (await locator.FindAsync(59029, OrderDocumentKind.BsList)).Status);
+        Assert.Equal(bs, locator.KnownPath(58931, OrderDocumentKind.BsList));
+        Assert.Equal(3, locator.IndexedOrders);
+        Assert.Equal(7, locator.IndexedFiles!.Count);
     }
 
     [Fact]

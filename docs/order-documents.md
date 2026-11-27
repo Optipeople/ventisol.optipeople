@@ -13,8 +13,21 @@ When an operator scans an element in, the station app can show the order's produ
   (`TE_`, `RKK_` ...). The name is parts split by `_`: the last part is the date, the part before it is the
   order (all digits), and every part before that is a prefix that must hold a letter. A name with two
   numbers before the date (`2_58721_20261022.pdf`) is not taken as an order document.
+- Orders with arched or bevelled elements ("bue/skrå", BS) have two more files, named by Ventisol: a
+  production list of the BS positions alone and their drawings. Since 27-11-2026 they are
+  `58931_20261127BS.pdf` and `58931_20261127BS tegninger.pdf`; before that `B S 58931_20261112.pdf` and
+  `B S tegninger 58931_20261112.pdf`. The BS label ("BS", "B S", "BS tegninger", any case) may stand after
+  the date, before the order or as a part of its own (`BS_58931_...`); it gives the kind
+  (`OrderDocumentKind`: List, BsList, BsDrawings) and is not part of the prefix.
 - An order can be printed again, and an older version may be kept beside the new one as history (with or
-  without a prefix). The locator takes the newest date in the name, then the newest write time.
+  without a prefix). The locator takes the order's list before its BS files, then the newest date in the
+  name, then the newest write time. A BS file is the order's document only when it has no list.
+- When the scanned element's position is not in the order's list and the folder has a BS list for the
+  order, the station shows the BS list (`OrderDocuments.LoadAsync`). A PC reading from OptiCloud does not
+  do this yet: it shows the list.
+- The upload writes `Prefix` as the prefix and the BS label (`BS`, `BE_BS tegninger` ...). The web stores BS
+  files with that prefix and no `print_date`, so every reader ordering by `print_date desc nulls last`
+  keeps the list first.
 - The folder is a setting on the setup screen, "Mappe med ordredokumenter" (`StationSettings.DocumentsFolder`).
   Empty: the PDFs come from OptiCloud instead (see Reading from OptiCloud), or the feature is off when
   OptiCloud isn't set up either.

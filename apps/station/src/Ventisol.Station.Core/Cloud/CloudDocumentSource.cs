@@ -5,7 +5,8 @@ using Ventisol.Station.Core.Documents;
 namespace Ventisol.Station.Core.Cloud;
 
 // An order document in the OptiCloud list VentisolOrderDocuments (see OrderDocumentUpload).
-public sealed record CloudDocument(string FileName, int Order, DateOnly? Date, string Reference, string? Sha256, DateTimeOffset? Created)
+public sealed record CloudDocument(string FileName, int Order, DateOnly? Date, string Reference, string? Sha256, DateTimeOffset? Created,
+    OrderDocumentKind Kind = OrderDocumentKind.List)
 {
     // Changes when the file in the row changes: a key for the parsed and rendered caches.
     public string Key => $"opticloud|{FileName}|{Sha256 ?? Reference}";
@@ -20,7 +21,8 @@ public sealed record CloudDocumentLookup(CloudDocumentStatus Status, CloudDocume
 // It uses the app's own connection (CloudSync.Connection), so there is no second login: until that
 // is up, a lookup answers Unavailable ("Ikke forbundet til OptiCloud endnu").
 // A lookup asks OptiCloud's keyword search for the order and keeps rows whose file name gives that
-// order and that have a file; the newest date in the name wins, then the newest row. Answers are
+// order and that have a file; the order's list wins over its BS files, then the newest date in the
+// name, then the newest row. Answers are
 // kept for RefreshAfter (30 s), a miss for MissRefreshAfter (5 s). The list is never made here.
 public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid AccountId)?> connection)
 {
@@ -159,7 +161,7 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
     }
 
     static bool Newer(CloudDocument a, CloudDocument b) =>
-        (a.Date ?? DateOnly.MinValue).CompareTo(b.Date ?? DateOnly.MinValue) switch
+        OrderDocumentLocator.Ranks(a.Kind, a.Date, b.Kind, b.Date) switch
         {
             > 0 => true,
             < 0 => false,
@@ -171,11 +173,11 @@ public sealed class CloudDocumentSource(Func<(OptiCloudClient Client, Guid Accou
     {
         if (!row.Values.TryGetValue("FileName", out var name) || string.IsNullOrWhiteSpace(name)) return null;
         name = name.Trim();
-        if (!OrderDocumentLocator.TryParseFileName(name, out var order, out var date)) return null;
+        if (!OrderDocumentLocator.TryParseFileName(name, out OrderFileName parsed)) return null;
         row.Values.TryGetValue("File", out var file);
         if (Reference(file) is not { } reference) return null;
         row.Values.TryGetValue("Sha256", out var sha);
-        return new CloudDocument(name, order, date, reference, string.IsNullOrWhiteSpace(sha) ? null : sha.Trim(), row.Created);
+        return new CloudDocument(name, parsed.Order, parsed.Date, reference, string.IsNullOrWhiteSpace(sha) ? null : sha.Trim(), row.Created, parsed.Kind);
     }
 
     // A Blob value reads back as { contentType, name, reference }, all null when the row has no file;

@@ -67,7 +67,8 @@ public sealed class OrderDocuments
     static readonly TimeSpan ReachTimeout = TimeSpan.FromSeconds(3);
 
     // Path is the file read; IsCopy when that is a copy in Cache, not the share's file.
-    sealed record Read(OrderDocument Document, byte[] Pdf, string Key, string Path, bool IsCopy, int Order, DateOnly? Date);
+    sealed record Read(OrderDocument Document, byte[] Pdf, string Key, string Path, bool IsCopy, int Order, DateOnly? Date,
+        OrderDocumentKind Kind = OrderDocumentKind.List);
 
     readonly OrderDocumentLocator _locator;
     readonly Func<string, byte[]> _readFile;
@@ -124,10 +125,23 @@ public sealed class OrderDocuments
     }
     public TimeSpan ReadTimeout { get; init; } = DefaultReadTimeout;
 
+    // The order's document (its list), and the element's position in it. An order with arched or
+    // bevelled elements has those positions in a BS list of their own ("58931_20261127BS.pdf"): when the
+    // list doesn't hold the element's position and the folder has a BS list that does, that one answers.
     public async Task<OrderDocumentLoad> LoadAsync(Barcode barcode, CancellationToken ct = default)
     {
         if (Folder is null && Cloud is { } cloud) return await LoadFromCloudAsync(cloud, barcode, ct).ConfigureAwait(false);
-        var lookup = await _locator.FindAsync(barcode.Order, ct).ConfigureAwait(false);
+        var load = await LoadFromShareAsync(barcode, null, ct).ConfigureAwait(false);
+        if (load is not { Status: OrderDocumentLoadStatus.Ready, Position: null }) return load;
+        var bs = _locator.KnownPath(barcode.Order, OrderDocumentKind.BsList);
+        if (bs is null || string.Equals(bs, load.Path, StringComparison.OrdinalIgnoreCase)) return load;
+        var part = await LoadFromShareAsync(barcode, OrderDocumentKind.BsList, ct).ConfigureAwait(false);
+        return part is { Status: OrderDocumentLoadStatus.Ready, Position: not null } ? part : load;
+    }
+
+    async Task<OrderDocumentLoad> LoadFromShareAsync(Barcode barcode, OrderDocumentKind? kind, CancellationToken ct)
+    {
+        var lookup = await _locator.FindAsync(barcode.Order, kind, ct).ConfigureAwait(false);
         switch (lookup.Status)
         {
             case OrderDocumentStatus.Off: return new(barcode, OrderDocumentLoadStatus.Off);
@@ -253,7 +267,7 @@ public sealed class OrderDocuments
                     try { cache.Save(path, bytes); }
                     catch (Exception) { }
                 }
-                return new Read(parsed, bytes, key, path, IsCopy: false, doc.Order, doc.Date);
+                return new Read(parsed, bytes, key, path, IsCopy: false, doc.Order, doc.Date, doc.Kind);
             });
             _cache.Add((key, task));
             if (_cache.Count > MaxCached) _cache.RemoveAt(0);
@@ -326,7 +340,7 @@ public sealed class OrderDocuments
     bool Better(Read a, Read b, string? path)
     {
         if (path is not null && IsVersion(a, path) != IsVersion(b, path)) return IsVersion(a, path);
-        return (a.Date ?? DateOnly.MinValue) > (b.Date ?? DateOnly.MinValue);
+        return OrderDocumentLocator.Ranks(a.Kind, a.Date, b.Kind, b.Date) > 0;
     }
 
     // Whether the documents folder answers at all (in the background, a few seconds at most).
@@ -386,14 +400,14 @@ public sealed class OrderDocuments
             {
                 var bytes = _readFile(path);
                 var doc = OrderDocumentParser.Parse(bytes, path);
-                OrderDocumentLocator.TryParseFileName(System.IO.Path.GetFileName(path), out var order, out var date);
+                OrderDocumentLocator.TryParseFileName(System.IO.Path.GetFileName(path), out OrderFileName name);
                 // A copy on this PC for when the share can't be reached. A failed copy only means no copy.
                 if (cache is not null && doc.PageCount > 0)
                 {
                     try { cache.Save(path, bytes); }
                     catch (Exception) { }
                 }
-                return new Read(doc, bytes, key, path, isCopy, order, date);
+                return new Read(doc, bytes, key, path, isCopy, name.Order, name.Date, name.Kind);
             });
             _cache.Add((key, task));
             if (_cache.Count > MaxCached) _cache.RemoveAt(0);
@@ -485,7 +499,8 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
         if (now - File.GetLastWriteTimeUtc(copyPath) > TouchEvery) File.SetLastWriteTimeUtc(copyPath, now);
     }
 
-    // The copy for an order: the copy of that file on the share if there is one, else the newest date in the name.
+    // The copy for an order: the copy of that file on the share if there is one, else the order's list before
+    // its BS files, then the newest date in the name.
     public string? Find(int order, string? sourcePath = null)
     {
         if (!Directory.Exists(Folder)) return null;
@@ -495,15 +510,15 @@ public sealed class OrderDocumentCache(string folder, TimeProvider? time = null)
             if (File.Exists(named)) return named;
         }
         string? best = null;
-        var bestDate = DateOnly.MinValue;
+        OrderFileName bestName = default;
         var bestWritten = DateTime.MinValue;
         foreach (var f in new DirectoryInfo(Folder).EnumerateFiles("*_*.pdf"))
         {
-            if (!OrderDocumentLocator.TryParseFileName(f.Name, out var o, out var date) || o != order) continue;
-            var d = date ?? DateOnly.MinValue;
+            if (!OrderDocumentLocator.TryParseFileName(f.Name, out OrderFileName name) || name.Order != order) continue;
             var written = f.LastWriteTimeUtc;
-            if (best is null || d > bestDate || d == bestDate && written > bestWritten)
-                (best, bestDate, bestWritten) = (f.FullName, d, written);
+            var rank = best is null ? 1 : OrderDocumentLocator.Ranks(name.Kind, name.Date, bestName.Kind, bestName.Date);
+            if (rank > 0 || rank == 0 && written > bestWritten)
+                (best, bestName, bestWritten) = (f.FullName, name, written);
         }
         return best;
     }

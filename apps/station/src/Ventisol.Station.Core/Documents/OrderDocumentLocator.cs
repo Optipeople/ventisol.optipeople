@@ -13,6 +13,31 @@ public enum OrderDocumentStatus
     FolderUnavailable,
 }
 
+// What a file is to its order. 3E writes the order's production list; orders with arched or bevelled
+// elements ("bue/skrå", BS) also get a production list of those positions alone and a file of their
+// drawings, named by Ventisol: "58931_20261127BS.pdf" and "58931_20261127BS tegninger.pdf" since
+// 27-11-2026, "B S 58931_20261112.pdf" and "B S tegninger 58931_20261112.pdf" before. The order is
+// ranked in this order: the list first, the BS list next, the drawings last.
+public enum OrderDocumentKind
+{
+    List = 0,
+    BsList = 1,
+    BsDrawings = 2,
+}
+
+// An order document's file name as read by OrderDocumentLocator.TryParseFileName. Prefix is "BE", "TE",
+// "BE_X" ..., empty for an ordinary order; it never holds the BS label (that is Kind).
+public readonly record struct OrderFileName(int Order, DateOnly? Date, OrderDocumentKind Kind, string Prefix)
+{
+    // The label the kind carries in a file name, for the OptiCloud row: "BS", "BS tegninger", or empty.
+    public string KindLabel => Kind switch
+    {
+        OrderDocumentKind.BsList => "BS",
+        OrderDocumentKind.BsDrawings => "BS tegninger",
+        _ => "",
+    };
+}
+
 public sealed record OrderDocumentLookup(int Order, OrderDocumentStatus Status, string? Path = null, string? Error = null);
 
 // What a look through the folder found: how many orders have a document, or why it couldn't look.
@@ -20,8 +45,9 @@ public sealed record OrderDocumentFolderStatus(bool Available, int Orders, int F
 
 // Finds the PDF 3E wrote for an order in the documents folder: "<order>_<yyyyMMdd>.pdf", or with a
 // prefix such as "BE_<order>_<yyyyMMdd>.pdf", in the folder or any folder below it. With more than one
-// for an order (an older one kept as history, prefixed or not), the newest date in the name wins,
-// then the newest write time. The folder is a network share on site, so it is never read on the
+// for an order (an older one kept as history, prefixed or not), the order's list wins over its BS
+// files (OrderDocumentKind), then the newest date in the name, then the newest write time. The BS
+// files are found apart with FindAsync(order, kind). The folder is a network share on site, so it is never read on the
 // caller's thread: the files are listed in the background into an index, kept for RefreshAfter
 // (30 s), and listed again when that is up or when an order isn't in the index (at most every
 // MissRefreshAfter, 3 s). A listing that takes longer than Timeout (10 s) answers FolderUnavailable,
@@ -39,11 +65,15 @@ public sealed partial class OrderDocumentLocator
     public static readonly TimeSpan DefaultDownFor = TimeSpan.FromSeconds(45);
 
     // A file found in the folder.
-    public sealed record Entry(string Path, int Order, DateOnly? Date, DateTime WriteTimeUtc);
+    public sealed record Entry(string Path, int Order, DateOnly? Date, DateTime WriteTimeUtc, OrderDocumentKind Kind = OrderDocumentKind.List);
 
-    sealed record Index(IReadOnlyDictionary<int, Entry> Best, IReadOnlyList<Entry> All, DateTimeOffset At)
+    // Best: the order's document (the list if there is one). Parts: the newest file of each kind.
+    sealed record Index(IReadOnlyDictionary<int, Entry> Best, IReadOnlyDictionary<(int, OrderDocumentKind), Entry> Parts, IReadOnlyList<Entry> All, DateTimeOffset At)
     {
         public int Files => All.Count;
+
+        public Entry? Pick(int order, OrderDocumentKind? kind) =>
+            kind is { } k ? Parts.GetValueOrDefault((order, k)) : Best.GetValueOrDefault(order);
     }
 
     readonly Func<string, CancellationToken, IReadOnlyList<Entry>> _list;
@@ -98,7 +128,17 @@ public sealed partial class OrderDocumentLocator
         }
     }
 
-    public async Task<OrderDocumentLookup> FindAsync(int order, CancellationToken ct = default)
+    // Where the last index has the order's file of that kind, without listing the folder. Null when unknown.
+    public string? KnownPath(int order, OrderDocumentKind kind)
+    {
+        lock (_gate) return _index?.Pick(order, kind)?.Path;
+    }
+
+    // The order's document: its list, else its BS list, else its BS drawings.
+    public Task<OrderDocumentLookup> FindAsync(int order, CancellationToken ct = default) => FindAsync(order, null, ct);
+
+    // With a kind, only a file of that kind (the newest) is found.
+    public async Task<OrderDocumentLookup> FindAsync(int order, OrderDocumentKind? kind, CancellationToken ct = default)
     {
         if (Folder is null) return new(order, OrderDocumentStatus.Off);
 
@@ -110,11 +150,11 @@ public sealed partial class OrderDocumentLocator
 
         if (index is not null && now - index.At < RefreshAfter)
         {
-            if (index.Best.TryGetValue(order, out var hit)) return Found(order, hit);
+            if (index.Pick(order, kind) is { } hit) return Found(order, hit);
             if (now - index.At < MissRefreshAfter) return new(order, OrderDocumentStatus.NotFound);
         }
 
-        var known = index?.Best.GetValueOrDefault(order);
+        var known = index?.Pick(order, kind);
         // The share failed or hung a moment ago: don't wait for it again, the last index answers until DownFor is up.
         if (down) return known is not null ? Found(order, known) : new(order, OrderDocumentStatus.FolderUnavailable, Error: lastError);
         // A listing is under way and the last index knows the order: no need to wait for it.
@@ -122,7 +162,7 @@ public sealed partial class OrderDocumentLocator
 
         var (fresh, error) = await ListAsync(ct).ConfigureAwait(false);
         if (fresh is not null)
-            return fresh.Best.TryGetValue(order, out var e) ? Found(order, e) : new(order, OrderDocumentStatus.NotFound);
+            return fresh.Pick(order, kind) is { } e ? Found(order, e) : new(order, OrderDocumentStatus.NotFound);
 
         // No new listing in time: the last one still says where the file was, if it knew.
         return known is not null ? Found(order, known) : new(order, OrderDocumentStatus.FolderUnavailable, Error: error);
@@ -212,9 +252,13 @@ public sealed partial class OrderDocumentLocator
         {
             var files = _list(folder, CancellationToken.None);
             var best = new Dictionary<int, Entry>();
+            var parts = new Dictionary<(int, OrderDocumentKind), Entry>();
             foreach (var f in files)
+            {
                 if (!best.TryGetValue(f.Order, out var have) || Newer(f, have)) best[f.Order] = f;
-            var index = new Index(best, files, _time.GetUtcNow());
+                if (!parts.TryGetValue((f.Order, f.Kind), out var part) || Newer(f, part)) parts[(f.Order, f.Kind)] = f;
+            }
+            var index = new Index(best, parts, files, _time.GetUtcNow());
             lock (_gate) (_index, _lastError, _downUntil) = (index, null, null);
             return index;
         }
@@ -229,13 +273,17 @@ public sealed partial class OrderDocumentLocator
 
     public string? LastError { get { lock (_gate) return _lastError; } }
 
-    static bool Newer(Entry a, Entry b) =>
-        (a.Date ?? DateOnly.MinValue).CompareTo(b.Date ?? DateOnly.MinValue) switch
-        {
-            > 0 => true,
-            < 0 => false,
-            _ => a.WriteTimeUtc > b.WriteTimeUtc,
-        };
+    static bool Newer(Entry a, Entry b) => Ranks(a.Kind, a.Date, b.Kind, b.Date) switch
+    {
+        > 0 => true,
+        < 0 => false,
+        _ => a.WriteTimeUtc > b.WriteTimeUtc,
+    };
+
+    // Above 0 when a goes before b as the order's document: the list before the BS files
+    // (OrderDocumentKind), then the newer date in the name. 0 when that doesn't tell them apart.
+    public static int Ranks(OrderDocumentKind aKind, DateOnly? aDate, OrderDocumentKind bKind, DateOnly? bDate) =>
+        aKind != bKind ? (bKind - aKind) : (aDate ?? DateOnly.MinValue).CompareTo(bDate ?? DateOnly.MinValue);
 
     static OrderDocumentLookup Found(int order, Entry e) => new(order, OrderDocumentStatus.Found, e.Path);
 
@@ -251,20 +299,59 @@ public sealed partial class OrderDocumentLocator
     // "BE_58721_20261022.pdf" (or TE_, RKK_ ...) both give order 58721 and 22 October 2026, while
     // "2_58721_20261022.pdf" is no order document (which number would be the order?).
     // A last part that isn't a date still counts, with no date.
+    // A BS label ("BS", "B S", "BS tegninger", any case) makes it a BS file (OrderDocumentKind): after the
+    // date ("58931_20261127BS.pdf", "58931_20261127 BS tegninger.pdf", "58931_20261127_BS.pdf"), before
+    // the order ("B S tegninger 58931_20261112.pdf") or as a prefix part of its own ("BS_58931_20261127.pdf").
     public static bool TryParseFileName(string fileName, out int order, out DateOnly? date)
     {
-        order = 0;
-        date = null;
+        var ok = TryParseFileName(fileName, out OrderFileName name);
+        (order, date) = (name.Order, name.Date);
+        return ok;
+    }
+
+    public static bool TryParseFileName(string fileName, out OrderFileName name)
+    {
+        name = default;
         var m = FileNameRegex().Match(fileName);
         if (!m.Success) return false;
-        var parts = m.Groups[1].Value.Split('_');
+        var stem = m.Groups[1].Value.Trim();
+        OrderDocumentKind? kind = null;
+
+        var tail = TrailingLabelRegex().Match(stem);
+        if (tail.Success)
+        {
+            kind = KindOf(tail.Groups["label"].Value);
+            stem = tail.Groups["rest"].Value;
+        }
+
+        var parts = stem.Split('_');
         if (parts.Length < 2) return false;
-        var orderPart = parts[^2];
-        if (!OrderPartRegex().IsMatch(orderPart) || !parts[..^2].All(p => p.Any(char.IsLetter))) return false;
-        if (!int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out order)) return false;
-        if (DateOnly.TryParseExact(parts[^1], "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) date = d;
+        var orderPart = parts[^2].Trim();
+        var lead = LeadingLabelRegex().Match(orderPart);
+        if (lead.Success)
+        {
+            kind = Strongest(kind, KindOf(lead.Groups["label"].Value));
+            orderPart = lead.Groups["rest"].Value;
+        }
+        var prefixes = new List<string>();
+        foreach (var p in parts[..^2])
+        {
+            if (WholeLabelRegex().IsMatch(p.Trim())) kind = Strongest(kind, KindOf(p));
+            else if (p.Any(char.IsLetter)) prefixes.Add(p);
+            else return false;
+        }
+        if (!OrderPartRegex().IsMatch(orderPart)) return false;
+        if (!int.TryParse(orderPart, NumberStyles.None, CultureInfo.InvariantCulture, out var number)) return false;
+        DateOnly? d = DateOnly.TryParseExact(parts[^1].Trim(), "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ? parsed : null;
+        name = new OrderFileName(number, d, kind ?? OrderDocumentKind.List, string.Join('_', prefixes));
         return true;
     }
+
+    static OrderDocumentKind KindOf(string label) =>
+        label.Contains("tegning", StringComparison.OrdinalIgnoreCase) ? OrderDocumentKind.BsDrawings : OrderDocumentKind.BsList;
+
+    // Two labels in one name ("BS_58931_20261127BS tegninger.pdf"): the drawings say more.
+    static OrderDocumentKind Strongest(OrderDocumentKind? a, OrderDocumentKind b) => a is { } k && k > b ? k : b;
 
     // Every "[prefix_]<order>_*.pdf" in the folder and the folders below it, skipping what can't be read.
     // Throws when the folder itself can't be read.
@@ -284,8 +371,8 @@ public sealed partial class OrderDocumentLocator
         foreach (var f in dir.EnumerateFiles("*_*.pdf", options))
         {
             ct.ThrowIfCancellationRequested();
-            if (TryParseFileName(f.Name, out var order, out var date))
-                result.Add(new Entry(f.FullName, order, date, f.LastWriteTimeUtc));
+            if (TryParseFileName(f.Name, out OrderFileName name))
+                result.Add(new Entry(f.FullName, name.Order, name.Date, f.LastWriteTimeUtc, name.Kind));
         }
         return result;
     }
@@ -295,4 +382,18 @@ public sealed partial class OrderDocumentLocator
 
     [GeneratedRegex(@"^0*\d{1,9}$", RegexOptions.CultureInvariant)]
     private static partial Regex OrderPartRegex();
+
+    // "B S", "BS", "BS tegninger", "BS-tegning" ...
+    const string Label = @"B ?S(?:[ \-]*tegning(?:er)?)?";
+
+    // A label after the date: "58931_20261127BS", "58931_20261127 BS tegninger", "58931_20261127_BS".
+    [GeneratedRegex(@"^(?<rest>.*\d)[ _\-]*(?<label>" + Label + @")$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingLabelRegex();
+
+    // A label before the order, in the same part: "B S tegninger 58931".
+    [GeneratedRegex(@"^(?<label>" + Label + @")[ \-]+(?<rest>\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LeadingLabelRegex();
+
+    [GeneratedRegex(@"^" + Label + @"$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WholeLabelRegex();
 }

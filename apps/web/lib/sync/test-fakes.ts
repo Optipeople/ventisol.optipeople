@@ -50,7 +50,15 @@ export function scanRows(count: number, newest: number, stepMs = HOUR): MasterDa
 
 export function documentRow(
   fileName: string,
-  options: { sha256?: string | null; reference?: string | null; orderNo?: number; size?: number } = {}
+  options: {
+    sha256?: string | null;
+    reference?: string | null;
+    orderNo?: number;
+    size?: number;
+    /** The PrintDate column; by default read off the end of the name. */
+    printDate?: string;
+    prefix?: string;
+  } = {}
 ): MasterDataRow {
   const reference = options.reference === undefined ? `masterdata/acc/tbl/${fileName}` : options.reference;
   return {
@@ -58,8 +66,9 @@ export function documentRow(
     values: {
       FileName: fileName,
       OrderNo: options.orderNo ?? Number(/(\d+)_\d{8}\.pdf$/.exec(fileName)?.[1] ?? 0),
-      Prefix: "",
-      PrintDate: `${fileName.slice(-12, -8)}-${fileName.slice(-8, -6)}-${fileName.slice(-6, -4)}T00:00:00Z`,
+      Prefix: options.prefix ?? "",
+      PrintDate:
+        options.printDate ?? `${fileName.slice(-12, -8)}-${fileName.slice(-8, -6)}-${fileName.slice(-6, -4)}T00:00:00Z`,
       ...(reference === null ? {} : { File: { name: fileName, contentType: "application/pdf", reference } }),
       SizeBytes: options.size ?? 1000,
       Sha256: options.sha256 === undefined ? "" : options.sha256,

@@ -61,6 +61,40 @@ public sealed class OrderDocumentsTests : IDisposable
     }
 
     [SamplesFact]
+    public async Task A_position_the_list_lacks_comes_from_the_BS_list()
+    {
+        // Two real lists stand in for an order's list and its BS list: the BS one has a position the other lacks.
+        var main = OrderDocSamples.File(58721);
+        var mainMax = OrderDocSamples.Parse(58721).Positions.Max(p => p.Number);
+        var other = Directory.GetFiles(OrderDocSamples.Folder!, "*.pdf")
+            .Select(f => (File: f, Doc: OrderDocumentParser.Parse(f)))
+            .First(x => x.Doc.Positions.Any(p => p.Number > mainMax && p.Number < 100));
+        var extra = other.Doc.Positions.First(p => p.Number > mainMax).Number;
+        File.Copy(main, Path.Combine(_root, "58721_20261022.pdf"));
+        var bsPath = Path.Combine(_root, "58721_20261022BS.pdf");
+        File.Copy(other.File, bsPath);
+        Touch("58721_20261022BS tegninger.pdf");
+
+        var docs = new OrderDocuments(new OrderDocumentLocator(_root));
+
+        var inList = await docs.LoadAsync(Code("058721010101"));
+        Assert.Equal(Path.Combine(_root, "58721_20261022.pdf"), inList.Path);
+        Assert.Equal(1, inList.Position!.Number);
+
+        var inBs = await docs.LoadAsync(Code($"058721{extra:00}0101"));
+        Assert.Equal(OrderDocumentLoadStatus.Ready, inBs.Status);
+        Assert.Equal(bsPath, inBs.Path);
+        Assert.Equal(extra, inBs.Position!.Number);
+
+        // In neither: the list answers, without a position.
+        var nowhere = await docs.LoadAsync(Code("058721990101"));
+        Assert.Equal(Path.Combine(_root, "58721_20261022.pdf"), nowhere.Path);
+        Assert.Null(nowhere.Position);
+    }
+
+    void Touch(string name) => File.WriteAllText(Path.Combine(_root, name), "%PDF-1.4");
+
+    [SamplesFact]
     public async Task A_sample_loads_with_its_position_and_bytes_and_the_second_load_is_the_cached_one()
     {
         var reads = 0;

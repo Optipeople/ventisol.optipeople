@@ -4,7 +4,7 @@
 export type * from "./types";
 export { PARSER_VERSION } from "./version";
 export { parseOrderDocument } from "./parse";
-export { type OrderFileName, parseOrderFileName } from "./file-name";
+export { kindLabel, type OrderFileKind, type OrderFileName, parseOrderFileName } from "./file-name";
 export { type BarcodeParts, parseElementBarcode, positionFor, positionForBarcode } from "./position";
 export {
   type ElementTypeId,

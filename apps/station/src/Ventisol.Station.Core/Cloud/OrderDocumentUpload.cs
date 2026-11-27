@@ -376,12 +376,14 @@ public sealed class OrderDocumentUpload
     // Everything but the file itself, so a value OptiCloud won't take is refused before anything is stored.
     Dictionary<string, object?> Describe(Candidate f, byte[] bytes)
     {
-        var parts = Path.GetFileNameWithoutExtension(f.Name).Split('_');
+        // The prefix and the BS label, "BE", "BS", "BE_BS tegninger" ... The web reads the kind from the file name.
+        OrderDocumentLocator.TryParseFileName(f.Name, out OrderFileName name);
+        var prefix = string.Join('_', new[] { name.Prefix, name.KindLabel }.Where(p => p.Length > 0));
         var values = new Dictionary<string, object?>
         {
             ["FileName"] = f.Name,
             ["OrderNo"] = f.Entry.Order,
-            ["Prefix"] = parts.Length > 2 ? string.Join('_', parts[..^2]) : "",
+            ["Prefix"] = prefix,
             ["SizeBytes"] = bytes.Length,
             ["Sha256"] = Sha(bytes),
             ["Device"] = _device,

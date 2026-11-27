@@ -35,6 +35,13 @@
 // (the date in the name), then newest claimed_at, then the file name. See
 // NEWEST_DOCUMENT_ORDER.
 //
+// BS FILES ("58931_20261127BS.pdf", "B S tegninger 58931_20261112.pdf", see
+// lib/orderdoc/file-name.ts) are an order's arched and bevelled positions and
+// their drawings, beside its list. They are stored with prefix "BS" or "BS
+// tegninger" and always without a print_date, so every reader that orders by
+// print_date desc nulls last keeps the order's own list first; a BS file only
+// stands for the order when it has nothing else.
+//
 // Element type rules come from config.element_types.recognition when that
 // table has active rows with rules, else DEFAULT_ELEMENT_TYPE_RULES.
 //
@@ -48,6 +55,7 @@ import {
   DEFAULT_ELEMENT_TYPE_RULES,
   PARSER_VERSION,
   parseOrderDocument,
+  kindLabel,
   parseOrderFileName,
   toSearchChunks,
   type ElementTypeRule,
@@ -172,11 +180,15 @@ export function toRawDocument(row: MasterDataRow): RawDocument | null {
       : typeof file === "string"
         ? { reference: file }
         : {};
-  const printDate = asIsoTime(getValue(v, "PrintDate"))?.slice(0, 10) ?? name?.printDate ?? null;
+  // A BS file has no print_date (see BS FILES above): the station writes one, the readers must not see it.
+  const bs = name !== null && name.kind !== "list";
+  const printDate = bs ? null : (asIsoTime(getValue(v, "PrintDate"))?.slice(0, 10) ?? name?.printDate ?? null);
+  const namePrefix = name ? [name.prefix, kindLabel(name.kind)].filter((p) => p.length > 0).join("_") : "";
   return {
     file_name: fileName,
     order_no: asInt(getValue(v, "OrderNo")) ?? name?.orderNumber ?? null,
-    prefix: asText(getValue(v, "Prefix")) ?? (name?.prefix ? name.prefix : null),
+    // Rows put up before the BS names were known have an empty Prefix: the name gives it.
+    prefix: (bs ? null : asText(getValue(v, "Prefix"))) ?? (namePrefix || null),
     print_date: printDate,
     blob_reference: asText(getValue(blob, "reference")),
     blob_name: asText(getValue(blob, "name")),

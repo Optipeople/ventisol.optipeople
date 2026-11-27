@@ -94,7 +94,25 @@ describe("parseOrderFileName", () => {
     ["order_58721_20261022.pdf", 58721, "order", "2026-10-22"],
     ["BE_X_58721_20261022.pdf", 58721, "BE_X", "2026-10-22"],
   ])("%s is an order document", (name, orderNumber, prefix, printDate) => {
-    expect(parseOrderFileName(name)).toEqual({ orderNumber, prefix, printDate });
+    expect(parseOrderFileName(name)).toEqual({ orderNumber, prefix, printDate, kind: "list" });
+  });
+
+  it.each([
+    // The names Ventisol gives the BS files since 27-11-2026.
+    ["58931_20261127BS.pdf", 58931, "", "2026-11-27", "bs"],
+    ["58931_20261127BS tegninger.pdf", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127 bs Tegninger.PDF", 58931, "", "2026-11-27", "bs-drawings"],
+    ["58931_20261127_BS.pdf", 58931, "", "2026-11-27", "bs"],
+    ["BE_58931_20261127BS.pdf", 58931, "BE", "2026-11-27", "bs"],
+    // The names before.
+    ["B S tegninger 59029_20261125.pdf", 59029, "", "2026-11-25", "bs-drawings"],
+    ["B S 59029_20261125.pdf", 59029, "", "2026-11-25", "bs"],
+    ["BS_59029_20261125.pdf", 59029, "", "2026-11-25", "bs"],
+    // Four digit orders.
+    ["2634_20261127.pdf", 2634, "", "2026-11-27", "list"],
+    ["2634_20261127BS.pdf", 2634, "", "2026-11-27", "bs"],
+  ])("%s is a BS file or a list", (name, orderNumber, prefix, printDate, kind) => {
+    expect(parseOrderFileName(name)).toEqual({ orderNumber, prefix, printDate, kind });
   });
 
   it.each([
@@ -107,6 +125,8 @@ describe("parseOrderFileName", () => {
     "BE_2_58721_20261022.pdf",
     "58721_2_20261022.pdf",
     "mappe/58721_20261022.pdf",
+    "BS_20261127.pdf",
+    "B S tegninger.pdf",
     "",
   ])("%s is not", (name) => {
     expect(parseOrderFileName(name)).toBeNull();
