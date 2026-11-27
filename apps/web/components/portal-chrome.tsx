@@ -3,10 +3,9 @@ import {
   AppHeader,
   AppHeaderBadge,
   SectionNav,
-  UserMenu,
 } from "@optipeople/ui/blocks";
-import { logout } from "@/app/login/actions";
 import { ChatDock } from "@/components/chat/chat-dock";
+import { PortalUserMenu } from "@/components/portal-user-menu";
 import { getPortalAccess, getSession } from "@/lib/auth";
 import { FIXTURE_USER, fixturesEnabled } from "@/lib/fixtures-flag";
 import { navItemsFor } from "@/lib/portal/nav";
@@ -29,7 +28,7 @@ export async function PortalChrome({ children }: { children: ReactNode }) {
       <AppHeader appName="Ventisol">
         {fixtures && <AppHeaderBadge>Eksempeldata</AppHeaderBadge>}
         {user && (
-          <UserMenu
+          <PortalUserMenu
             user={{ email: user.email, name: user.name }}
             details={[
               {
@@ -40,7 +39,6 @@ export async function PortalChrome({ children }: { children: ReactNode }) {
               },
               { label: "Konto", value: user.accountName },
             ]}
-            logoutAction={logout}
             labels={{
               welcome: "Velkommen, {name}",
               loggedInAs: "Logget ind som",
